@@ -27,7 +27,8 @@ powershell -Command "Start-Process powershell -Verb RunAs -ArgumentList '-NoProf
 [CmdletBinding()]
 param(
     [switch]$SkipVSInstall,
-    [string]$PGVECTOR_TAG = 'v0.8.6'
+    [string]$PGVECTOR_TAG = 'v0.8.6',
+    [int]$PGPort = 5433
 )
 
 $ErrorActionPreference = 'Stop'
@@ -183,21 +184,36 @@ if (-not (Test-Path (Join-Path $RepoDir 'Makefile.win'))) { Fail 'Makefile.win m
 # ── 3. build and install ─────────────────────────────────────────────────────
 # Run under cmd so the Makefile's `for %f in (...)` install loop works, with the
 # MSVC environment sourced first. PGROOT is what the Makefile reads.
+#
+# Redirection is done by cmd itself, not via Start-Process
+# -RedirectStandardOutput. That combination deadlocks under PowerShell 5.1's
+# -Wait: the process exits but the redirection handle never releases, so the
+# script hangs with no output after the build has already succeeded.
 Write-Log 'building with nmake'
-$cmdLine = 'call "{0}" >nul && set "PGROOT={1}" && nmake /NOLOGO /F Makefile.win && nmake /NOLOGO /F Makefile.win install' -f $vcvars, $PGROOT
-
 $buildLog = Join-Path $SrcDir 'nmake.log'
-$proc = Start-Process -FilePath 'cmd.exe' `
-                      -ArgumentList '/c', $cmdLine `
-                      -WorkingDirectory $RepoDir `
-                      -RedirectStandardOutput $buildLog `
-                      -RedirectStandardError (Join-Path $SrcDir 'nmake.err.log') `
-                      -Wait -PassThru -NoNewWindow
+$errLog   = Join-Path $SrcDir 'nmake.err.log'
+$cmdLine  = 'call "{0}" >nul && set "PGROOT={1}" && (nmake /NOLOGO /F Makefile.win && nmake /NOLOGO /F Makefile.win install) > "{2}" 2> "{3}"' -f $vcvars, $PGROOT, $buildLog, $errLog
+
+# nmake resolves src\*.c and Makefile.win relative to the working directory, and
+# the call operator has no -WorkingDirectory, so step in and come back.
+Push-Location -LiteralPath $RepoDir
+try {
+    # $LASTEXITCODE is cmd's real exit status. The call operator writes nothing to
+    # the console here, so it cannot trip ErrorActionPreference the way git's
+    # stderr did, but relax it anyway and judge success by the exit code alone.
+    $ErrorActionPreference = 'Continue'
+    & cmd.exe /c $cmdLine
+    $nmakeExit = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+} finally {
+    Pop-Location
+}
+
 Get-Content -LiteralPath $buildLog -ErrorAction SilentlyContinue | ForEach-Object { Write-Log "  $_" }
-if ($proc.ExitCode -ne 0) {
-    Get-Content -LiteralPath (Join-Path $SrcDir 'nmake.err.log') -ErrorAction SilentlyContinue |
+if ($nmakeExit -ne 0) {
+    Get-Content -LiteralPath $errLog -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Log "  stderr: $_" }
-    Fail "nmake exited with code $($proc.ExitCode); see $buildLog"
+    Fail "nmake exited with code $nmakeExit; see $buildLog"
 }
 Write-Log 'nmake build and install succeeded'
 
@@ -225,26 +241,47 @@ Write-Log "upstream tag                   = $PGVECTOR_TAG"
 if ($expected -ne $tagVersion) { Fail "version mismatch: vector.control says $expected, tag $PGVECTOR_TAG says $tagVersion" }
 if ($makeVersion -ne $tagVersion) { Fail "version mismatch: Makefile.win says $makeVersion, tag $PGVECTOR_TAG says $tagVersion" }
 
-# The extension is not activated here: CREATE EXTENSION needs no admin and is
-# run separately against a database, so this script stays free of credentials.
+# Files on disk only prove the copy happened. Ask the server whether it can
+# actually load the extension, which is what a wrong-arch DLL would break.
 $psql = Join-Path $PGROOT 'bin\psql.exe'
+$ErrorActionPreference = 'Continue'
 $available = (& $psql --version) 2>&1
+$ErrorActionPreference = 'Stop'
 Write-Log "psql reports: $available"
+
+$ErrorActionPreference = 'Continue'
+$serverSide = (& $psql -h localhost -p $PGPort -U postgres -d postgres -Atc `
+    "SELECT name || '|' || default_version FROM pg_available_extensions WHERE name = 'vector'" 2>&1) | Out-String
+$ErrorActionPreference = 'Stop'
+$serverSide = $serverSide.Trim()
+
+if ($serverSide -notmatch '^vector\|') {
+    Fail "the server does not list vector as an available extension. It was: '$serverSide'. Check that the running server is $PGROOT."
+}
+Write-Log "server reports available: $serverSide"
+if ($serverSide -ne "vector|$expected") {
+    Fail "server offers vector $($serverSide.Split('|')[1]) but the built version is $expected"
+}
 
 $summary = @"
 OK
 pgvector_version=$expected
 pgvector_tag=$PGVECTOR_TAG
 postgresql_root=$PGROOT
+postgresql_port=$PGPort
 msvc_cl=$clPath
+windows_sdk=$sdkDir
+server_reports=$serverSide
 "@
 Set-Content -LiteralPath $ResultFile -Value $summary
 
 Write-Host ''
 Write-Host '  Build and install complete.' -ForegroundColor Green
 Write-Host "  pgvector $expected is installed into $PGROOT"
+Write-Host "  the running server on port $PGPort lists it as available"
 Write-Host ''
-Write-Host '  Next: activate it per database and run the round-trip test.'
+Write-Host '  Not yet activated: CREATE EXTENSION is per database and needs credentials,'
+Write-Host '  so it is deliberately not done here.'
 Write-Host '    CREATE EXTENSION vector;'
 Write-Host ''
 exit 0
