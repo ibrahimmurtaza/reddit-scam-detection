@@ -3,3 +3,12 @@
 # comparison failed on anything but the machine that generated it. The generated files
 # are LF and must stay LF, whatever the local checkout settings are.
 *.jsonl text eol=lf
+
+# The same argument for the CAFC report, which a test holds to what the cache
+# produces. Scoped to that one file rather than every markdown file, so that adding
+# it does not re-check-out the whole tree.
+docs/cafc-base-rates.md text eol=lf
+
+# The cached CAFC extract is a gzip stream, not text. Left to text rules, a
+# checkout can mangle a byte in it and the recorded digest then no longer matches.
+*.csv.gz binary

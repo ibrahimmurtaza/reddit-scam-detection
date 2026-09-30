@@ -1,0 +1,39 @@
+{"base_rate":0.228544,"category":"Identity Fraud","reports":80073}
+{"base_rate":0.093558,"category":"Extortion","reports":32779}
+{"base_rate":0.08602,"category":"Phishing","reports":30138}
+{"base_rate":0.081704,"category":"Personal Info","reports":28626}
+{"base_rate":0.076955,"category":"Service","reports":26962}
+{"base_rate":0.058209,"category":"Investments","reports":20394}
+{"base_rate":0.052574,"category":"Merchandise","reports":18420}
+{"base_rate":0.043195,"category":"Bank Investigator","reports":15134}
+{"base_rate":0.040515,"category":"Job","reports":14195}
+{"base_rate":0.038523,"category":"Counterfeit Merchandise","reports":13497}
+{"base_rate":0.030469,"category":"Other","reports":10675}
+{"base_rate":0.02883,"category":"Vendor Fraud","reports":10101}
+{"base_rate":0.027452,"category":"Unknown","reports":9618}
+{"base_rate":0.022774,"category":"Emergency (Jail, Accident, Hospital, Help)","reports":7979}
+{"base_rate":0.019349,"category":"Romance","reports":6779}
+{"base_rate":0.018021,"category":"Spear Phishing","reports":6314}
+{"base_rate":0.013515,"category":"Prize","reports":4735}
+{"base_rate":0.006199,"category":"False Billing","reports":2172}
+{"base_rate":0.00588,"category":"Recovery Pitch","reports":2060}
+{"base_rate":0.005574,"category":"Loan","reports":1953}
+{"base_rate":0.005118,"category":"GRANT","reports":1793}
+{"base_rate":0.004826,"category":"Foreign Money Offer","reports":1691}
+{"base_rate":0.00429,"category":"Collection Agency","reports":1503}
+{"base_rate":0.002052,"category":"Incomplete","reports":719}
+{"base_rate":0.001344,"category":"Charity / Donation","reports":471}
+{"base_rate":0.000853,"category":"Pyramid","reports":299}
+{"base_rate":0.000631,"category":"Timeshare","reports":221}
+{"base_rate":0.000588,"category":"Spoofing","reports":206}
+{"base_rate":0.000491,"category":"Vacation","reports":172}
+{"base_rate":0.000485,"category":"Psychics","reports":170}
+{"base_rate":0.000323,"category":"Survey","reports":113}
+{"base_rate":0.000283,"category":"Unauthorized Charge","reports":99}
+{"base_rate":0.000265,"category":"Telecom Fraud","reports":93}
+{"base_rate":0.000223,"category":"Health","reports":78}
+{"base_rate":0.00018,"category":"Credit Card","reports":63}
+{"base_rate":0.000143,"category":"Directory","reports":50}
+{"base_rate":2.9e-05,"category":"Office Supplies","reports":10}
+{"base_rate":1.1e-05,"category":"Fraudulent Cheque","reports":4}
+{"base_rate":6e-06,"category":"Modem-Hijacking","reports":2}
