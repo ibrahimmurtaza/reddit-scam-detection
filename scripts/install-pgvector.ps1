@@ -166,9 +166,17 @@ if (Test-Path (Join-Path $RepoDir '.git')) {
     Write-Log "reusing existing clone at $RepoDir"
 } else {
     Write-Log "cloning pgvector $PGVECTOR_TAG"
-    & git clone --depth 1 --branch $PGVECTOR_TAG https://github.com/pgvector/pgvector.git $RepoDir 2>&1 |
+    # git writes progress to stderr, which $ErrorActionPreference='Stop' would
+    # otherwise promote to a terminating error even on a successful clone.
+    # Redirect to a file and read it back, then trust the exit code.
+    $gitLog = Join-Path $SrcDir 'git-clone.log'
+    $proc = Start-Process -FilePath 'git.exe' `
+                          -ArgumentList @('clone', '--depth', '1', '--branch', $PGVECTOR_TAG, 'https://github.com/pgvector/pgvector.git', $RepoDir) `
+                          -Wait -PassThru -NoNewWindow `
+                          -RedirectStandardError $gitLog
+    Get-Content -LiteralPath $gitLog -ErrorAction SilentlyContinue |
         ForEach-Object { Write-Log "  git: $_" }
-    if ($LASTEXITCODE -ne 0) { Fail "git clone failed with exit code $LASTEXITCODE" }
+    if ($proc.ExitCode -ne 0) { Fail "git clone failed with exit code $($proc.ExitCode); see $gitLog" }
 }
 if (-not (Test-Path (Join-Path $RepoDir 'Makefile.win'))) { Fail 'Makefile.win missing from the clone' }
 
