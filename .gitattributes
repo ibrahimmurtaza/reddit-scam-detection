@@ -1,0 +1,5 @@
+# The Corpus is committed, and a test compares its bytes against freshly generated
+# output. Git checked it out with CRLF on a fresh clone (core.autocrlf=true), so the
+# comparison failed on anything but the machine that generated it. The generated files
+# are LF and must stay LF, whatever the local checkout settings are.
+*.jsonl text eol=lf
