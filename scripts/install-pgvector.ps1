@@ -95,11 +95,21 @@ foreach ($p in @("$PGROOT\bin\postgres.exe", "$PGROOT\include\server\postgres.h"
 Write-Log "PostgreSQL 18 present at $PGROOT"
 
 # ── 1. MSVC toolset + Windows SDK ────────────────────────────────────────────
-$clPath = Get-ChildItem -Path (Join-Path $VSPath 'VC\Tools\MSVC') -Recurse -Filter 'cl.exe' -ErrorAction SilentlyContinue |
-          Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1 -ExpandProperty FullName
+function Get-ClExe {
+    Get-ChildItem -Path (Join-Path $VSPath 'VC\Tools\MSVC') -Recurse -Filter 'cl.exe' -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1 -ExpandProperty FullName
+}
+function Get-SdkIncludeDir {
+    Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\Include' -Directory -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path (Join-Path $_.FullName 'um\windows.h') } |
+        Sort-Object Name -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
 
-if ($clPath -and $SkipVSInstall) {
-    Write-Log "cl.exe already present, skipping component install (--SkipVSInstall)"
+$clPath = Get-ClExe
+$haveSdk = [bool](Get-SdkIncludeDir)
+
+if (($clPath -and $haveSdk) -or $SkipVSInstall) {
+    Write-Log 'MSVC toolset and Windows SDK already present, skipping component install'
 } else {
     Write-Log 'adding MSVC x64 toolset and Windows SDK to Visual Studio Build Tools'
     Write-Log 'this downloads roughly 600 MB and can take 10-40 minutes'
@@ -112,20 +122,40 @@ if ($clPath -and $SkipVSInstall) {
     Write-Log "setup.exe $argString"
 
     $proc = Start-Process -FilePath $SetupExe -ArgumentList $argString -Wait -PassThru -NoNewWindow
-    # 0 = success, 3010 = success with reboot required.
-    if ($proc.ExitCode -notin @(0, 3010)) {
-        $installerLog = Get-ChildItem $env:TEMP -Filter 'dd_*' -ErrorAction SilentlyContinue |
-                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        $hint = if ($installerLog) { " See $($installerLog.FullName)" } else { '' }
-        Fail "Visual Studio installer exited with code $($proc.ExitCode).$hint"
+    # The installer relaunches itself as a detached elevated child, so -Wait on
+    # the parent can return before the packages have actually landed. Poll for
+    # the result instead of trusting the exit code alone.
+    $deadline = (Get-Date).AddMinutes(60)
+    while ((Get-Date) -lt $deadline) {
+        if ((Get-ClExe) -and (Get-SdkIncludeDir)) { break }
+        if ($proc.HasExited -and $proc.ExitCode -notin @(0, 3010)) {
+            # Give the elevated child a moment to surface a real failure before
+            # giving up, then check whether it is still working.
+            Start-Sleep -Seconds 10
+            if ((Get-ClExe) -and (Get-SdkIncludeDir)) { break }
+            $running = Get-Process -Name setup, vs_installer, vs_installer.windows -ErrorAction SilentlyContinue
+            if ($running) {
+                Write-Log 'installer child still running after parent exit; waiting'
+                $deadline = (Get-Date).AddMinutes(60)
+            } else {
+                $installerLog = Get-ChildItem $env:TEMP -Filter 'dd_installer_elevated_*.log' -ErrorAction SilentlyContinue |
+                                Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                $hint = if ($installerLog) { " See $($installerLog.FullName)" } else { '' }
+                Fail "Visual Studio installer exited with code $($proc.ExitCode) and the toolset is still missing.$hint"
+            }
+        }
+        Start-Sleep -Seconds 15
     }
-    Write-Log "Visual Studio installer exited $($proc.ExitCode)"
 
-    $clPath = Get-ChildItem -Path (Join-Path $VSPath 'VC\Tools\MSVC') -Recurse -Filter 'cl.exe' -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -match 'Hostx64\\x64' } | Select-Object -First 1 -ExpandProperty FullName
-    if (-not $clPath) { Fail 'cl.exe still not found after installing the toolset' }
+    $clPath = Get-ClExe
+    if (-not $clPath) { Fail 'cl.exe not found after installing the toolset' }
+    $sdkDir = Get-SdkIncludeDir
+    if (-not $sdkDir) { Fail 'Windows SDK headers not found after installing the SDK' }
+    Write-Log "Visual Studio installer finished (parent exit code $($proc.ExitCode))"
 }
 Write-Log "cl.exe: $clPath"
+$sdkDir = Get-SdkIncludeDir
+if ($sdkDir) { Write-Log "Windows SDK: $sdkDir" } else { Fail 'Windows SDK headers not found' }
 
 $vcvars = Find-VcVars
 if (-not $vcvars) { Fail 'vcvars64.bat not found; the MSVC environment cannot be set up' }
