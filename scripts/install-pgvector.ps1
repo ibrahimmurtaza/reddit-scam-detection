@@ -103,13 +103,21 @@ if ($clPath -and $SkipVSInstall) {
 } else {
     Write-Log 'adding MSVC x64 toolset and Windows SDK to Visual Studio Build Tools'
     Write-Log 'this downloads roughly 600 MB and can take 10-40 minutes'
-    $addArgs = @('modify', '--installPath', $VSPath, '--installWhileDownloading', '--quiet', '--norestart')
-    foreach ($c in $VSComponents) { $addArgs += @('--add', $c) }
 
-    $proc = Start-Process -FilePath $SetupExe -ArgumentList $addArgs -Wait -PassThru -NoNewWindow
+    # Build one argument string. Start-Process joins an -ArgumentList array with
+    # plain spaces, which silently splits a path containing spaces, so the
+    # quotes have to be part of the string we hand over.
+    $argString = 'modify --installPath "{0}" --installWhileDownloading --quiet --norestart' -f $VSPath
+    foreach ($c in $VSComponents) { $argString += " --add $c" }
+    Write-Log "setup.exe $argString"
+
+    $proc = Start-Process -FilePath $SetupExe -ArgumentList $argString -Wait -PassThru -NoNewWindow
     # 0 = success, 3010 = success with reboot required.
     if ($proc.ExitCode -notin @(0, 3010)) {
-        Fail "Visual Studio installer exited with code $($proc.ExitCode)"
+        $installerLog = Get-ChildItem $env:TEMP -Filter 'dd_*' -ErrorAction SilentlyContinue |
+                        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        $hint = if ($installerLog) { " See $($installerLog.FullName)" } else { '' }
+        Fail "Visual Studio installer exited with code $($proc.ExitCode).$hint"
     }
     Write-Log "Visual Studio installer exited $($proc.ExitCode)"
 
