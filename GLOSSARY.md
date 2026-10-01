@@ -38,10 +38,13 @@ Campaign Candidate is scored against.
 _Avoid_: Ground truth, test case, fixture
 
 **Nuisance Structure**:
-Material in the Corpus that is not a Planted Campaign but is genuinely easy to
-confuse with one — shared link shorteners, decoy account clusters, near-miss
-domain pairs, staggered paraphrases. Without it, recovery rate is uninformative.
-_Avoid_: Noise, decoys, distractors
+Material that makes grouping hard: in the Corpus, accounts and domains that are not
+a Planted Campaign but are genuinely easy to confuse with one — shared link
+shorteners, decoy account clusters, near-miss domain pairs, single-account domains —
+plus a Planted Campaign's own posts when they are staggered paraphrases of one text.
+Without it, recovery rate is uninformative.
+_Avoid_: Noise, decoys (the project's own phrase is "decoy account cluster"),
+distractors
 
 ### Signals and scores
 

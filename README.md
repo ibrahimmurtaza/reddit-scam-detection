@@ -13,7 +13,8 @@ corresponds to a real person.
 ## Where it is
 
 Two things are built. The Corpus generator, which is the credibility boundary the
-rest of the system rests on. And the CAFC extract: real, analyst-reviewed fraud
+rest of the system rests on, and the Nuisance Structure it plants around the two
+Planted Campaigns. And the CAFC extract: real, analyst-reviewed fraud
 reports, cached and committed, with the base rate of every thematic category
 computed from it. The pipeline itself — extraction, Signals, Policy Score, Campaign
 Candidate analysis, Review Queue, evaluation — is not built yet. Its tickets are
@@ -29,12 +30,14 @@ uv sync
 uv run rfi generate-corpus
 ```
 
-That writes two files:
+That writes four files, each with one reader:
 
-| File | Holds |
-| --- | --- |
-| `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. |
-| `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. |
+| File | Holds | Read by |
+| --- | --- | --- |
+| `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. | the pipeline |
+| `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
+| `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
+| `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. | the grouping step, once it is built |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -51,9 +54,43 @@ anything. Every Synthetic Entity is marked `syn_` and every domain sits under th
 reserved `.example` TLD, so nothing in the output can be mistaken for real data.
 
 The generator is deterministic: a fixed seed produces byte-identical files, and
-`tests/test_corpus_generator.py` holds the committed Corpus to that. At this
-stage the seed fixes the window the Corpus covers and the minute of each post;
-it does not yet change which entities are planted.
+`tests/test_corpus_generator.py` holds the committed Corpus and membership to that
+while `tests/test_nuisance_structure.py` holds the manifest and the infrastructure
+list. The seed fixes the window the Corpus covers, the minute of each post, and which
+spare Nuisance Structure material gets planted. Which Synthetic Entities exist is
+fixed, because every test in the repository reads the Corpus by name.
+
+## The Nuisance Structure
+
+Recovering Planted Campaigns is this project's one substantive claim, and a
+recovery number measured against a clean sweep is worth nothing. So the Corpus
+carries the material that makes a grouping decision hard, and
+`data/corpus/nuisance.jsonl` records it:
+
+| Kind | What it is |
+| --- | --- |
+| `decoy_account_cluster` | Accounts running one campaign's playbook without being one: three accounts pasting the same advert on infrastructure that does not connect them, and three accounts of one small business sharing a domain they are right to group on. |
+| `near_miss_domain_pair` | A planted domain and an unrelated business whose name is one character away from it. |
+| `staggered_paraphrase` | One planted offer, reworded across a Planted Campaign's accounts. |
+| `known_shared_infrastructure` | Each shared host, with the posts and accounts that touch it. |
+| `single_account_domain` | A domain one account uses, which must not group. |
+| `hard_negative` | Legitimate content near the boundary, recorded with its character: a genuine job post, satire, a complaint from someone who lost money, scam-adjacent discussion. |
+
+Every record carries a note in prose saying what it is there to test, so the file
+reads without running anything. Two of the kinds are computed from the Corpus rather
+than hand-written, so the manifest cannot end up disagreeing with the Corpus it
+describes: who links a link shortener is a fact, not something to transcribe.
+
+The same command prints the Hard Negative count and what kind each one is, because a
+false-grouping rate against four Hard Negatives and one against forty are different
+numbers.
+
+One limit is worth stating here rather than discovering later. Every registrable
+domain in this Corpus that more than one account uses belongs either to a Planted
+Campaign or to the shop that is planted there as a decoy, so a correctly filtered
+system produces no false groupings against domains and the interesting false
+groupings live in the shared infrastructure. Ticket #19 measures the rate; this
+Corpus is small enough to read the answer by hand.
 
 ## The base rates
 
@@ -103,6 +140,8 @@ uv run mypy
 - `GLOSSARY.md` — the vocabulary, enforced by `tests/test_vocabulary.py` against
   the phrases the project must never utter.
 - `docs/adr/` — the decisions. The ones this code implements are 0001 (Corpus
-  Provider), 0005 (Campaign Candidates require registrable infrastructure), 0007
-  (Signals come only from observable text and links), 0008 (the Corpus file
-  carries no membership), and 0010 (CAFC figures are computed from the cache).
+  Provider), 0004 (evaluate by recovering Planted Campaigns), 0005 (Campaign
+  Candidates require registrable infrastructure), 0007 (Signals come only from
+  observable text and links), 0008 (the Corpus file carries no membership), 0010
+  (CAFC figures are computed from the cache), and 0011 (the Nuisance Structure has a
+  file of its own, and so does the shared-infrastructure list).

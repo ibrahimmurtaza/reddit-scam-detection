@@ -59,6 +59,10 @@ def run_generator(directory: Path, seed: int = DEFAULT_SEED) -> tuple[Path, Path
             str(corpus_path),
             "--truth",
             str(truth_path),
+            "--nuisance",
+            str(directory / "nuisance.jsonl"),
+            "--shared-infrastructure",
+            str(directory / "shared-hosts.jsonl"),
         ]
     )
     assert exit_code == 0
@@ -95,11 +99,10 @@ def test_corpus_file_carries_no_membership_fields(tmp_path: Path) -> None:
 def test_the_corpus_holds_a_few_accounts_and_shared_domains_to_look_at(
     tmp_path: Path,
 ) -> None:
-    """The Corpus is deliberately tiny at this stage, and readable in full.
-
-    A handful of posts, a few accounts, and a small number of shared domains to
-    look at — the Nuisance Structure and the rest of the Planted Campaigns come
-    later. Widen these bounds deliberately when that happens, not by accident.
+    """The Corpus is deliberately small enough to read in full, and still shaped like
+    something worth grouping: there are fewer accounts than posts, so some accounts
+    post more than once, and there are far more hosts than Planted Campaigns. Widen
+    these bounds deliberately when the Corpus changes shape, not by accident.
     """
     corpus_path, _ = run_generator(tmp_path)
     corpus_rows = rows(corpus_path)
@@ -111,8 +114,8 @@ def test_the_corpus_holds_a_few_accounts_and_shared_domains_to_look_at(
     }
     accounts = {text(row, "account") for row in corpus_rows}
 
-    assert 5 < len(accounts) < len(corpus_rows)
-    assert 2 < len(hosts) < len(corpus_rows)
+    assert 10 < len(accounts) < len(corpus_rows)
+    assert 8 < len(hosts) < len(corpus_rows)
 
 
 def test_same_seed_writes_byte_identical_files(tmp_path: Path) -> None:
@@ -149,6 +152,10 @@ def test_generation_refuses_to_write_both_files_to_one_path(tmp_path: Path) -> N
                 str(shared),
                 "--truth",
                 str(shared),
+                "--nuisance",
+                str(tmp_path / "nuisance.jsonl"),
+                "--shared-infrastructure",
+                str(tmp_path / "shared-hosts.jsonl"),
             ]
         )
 

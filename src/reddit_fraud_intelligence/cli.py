@@ -15,12 +15,20 @@ from reddit_fraud_intelligence.cafc import (
     write_provenance,
 )
 from reddit_fraud_intelligence.corpus import write_corpus
-from reddit_fraud_intelligence.generator import corpus_items, planted_campaigns
+from reddit_fraud_intelligence.generator import (
+    corpus_items,
+    nuisance_records,
+    planted_campaigns,
+)
+from reddit_fraud_intelligence.infrastructure import SHARED_HOSTS, write_shared_infrastructure
+from reddit_fraud_intelligence.nuisance import NuisanceKind, write_nuisance
 from reddit_fraud_intelligence.truth import write_truth
 
 DEFAULT_SEED = 20260930
 DEFAULT_CORPUS_PATH = Path("data/corpus/corpus.jsonl")
 DEFAULT_TRUTH_PATH = Path("data/corpus/truth.jsonl")
+DEFAULT_NUISANCE_PATH = Path("data/corpus/nuisance.jsonl")
+DEFAULT_SHARED_INFRASTRUCTURE_PATH = Path("data/infrastructure/shared-hosts.jsonl")
 DEFAULT_EXTRACT_PATH = Path("data/cafc/cafc-extract.csv.gz")
 DEFAULT_PROVENANCE_PATH = Path("data/cafc/provenance.jsonl")
 DEFAULT_BASE_RATES_PATH = Path("data/cafc/base_rates.jsonl")
@@ -37,6 +45,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed=int(args.seed),
                 corpus_path=Path(str(args.corpus)),
                 truth_path=Path(str(args.truth)),
+                nuisance_path=Path(str(args.nuisance)),
+                shared_path=Path(str(args.shared_infrastructure)),
             )
         case "fetch-cafc":
             return _fetch_cafc(
@@ -66,11 +76,15 @@ def _parser() -> argparse.ArgumentParser:
 
     generate = commands.add_parser(
         "generate-corpus",
-        help="write a synthetic Corpus and its Planted Campaign membership",
+        help="write a synthetic Corpus, its Planted Campaign membership, and its "
+        "Nuisance Structure",
         description=(
-            "Write two files: a Corpus holding content, accounts, and links, and a truth "
-            "file holding Planted Campaign membership at a path of its own. Same seed, same "
-            "bytes."
+            "Write four files: a Corpus holding content, accounts, and links; a truth "
+            "file holding Planted Campaign membership; the Nuisance Structure manifest, "
+            "naming what else was planted or recorded and what each piece is for; and the "
+            "known-shared infrastructure list. Each of the last three is at a path of its "
+            "own, so the boundary between what the pipeline sees and what is measured "
+            "stays visible. Same seed, same bytes."
         ),
     )
     generate.add_argument(
@@ -90,6 +104,21 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_TRUTH_PATH,
         help=f"where to write Planted Campaign membership (default: {DEFAULT_TRUTH_PATH})",
+    )
+    generate.add_argument(
+        "--nuisance",
+        type=Path,
+        default=DEFAULT_NUISANCE_PATH,
+        help=f"where to write the Nuisance Structure (default: {DEFAULT_NUISANCE_PATH})",
+    )
+    generate.add_argument(
+        "--shared-infrastructure",
+        type=Path,
+        default=DEFAULT_SHARED_INFRASTRUCTURE_PATH,
+        help=(
+            "where to write the known-shared infrastructure list "
+            f"(default: {DEFAULT_SHARED_INFRASTRUCTURE_PATH})"
+        ),
     )
 
     fetch = commands.add_parser(
@@ -155,26 +184,72 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _generate_corpus(*, seed: int, corpus_path: Path, truth_path: Path) -> int:
-    if corpus_path.resolve() == truth_path.resolve():
-        raise SystemExit(
-            f"refusing to write the Corpus and the membership to one path: {corpus_path}"
-        )
+def _generate_corpus(
+    *,
+    seed: int,
+    corpus_path: Path,
+    truth_path: Path,
+    nuisance_path: Path,
+    shared_path: Path,
+) -> int:
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the membership": truth_path,
+            "the Nuisance Structure": nuisance_path,
+            "the known-shared infrastructure list": shared_path,
+        }
+    )
 
     items = corpus_items(seed)
     campaigns = planted_campaigns(seed)
+    nuisance = nuisance_records(seed)
     write_corpus(corpus_path, items)
     write_truth(truth_path, campaigns)
+    write_nuisance(nuisance_path, nuisance)
+    write_shared_infrastructure(shared_path, SHARED_HOSTS)
 
     accounts = {item.account for item in items}
+    hard_negatives = [r for r in nuisance if r.kind is NuisanceKind.HARD_NEGATIVE]
+    characters: dict[str, int] = {}
+    for record in hard_negatives:
+        for character in record.characters:
+            characters[character.value] = characters.get(character.value, 0) + 1
+
     print(f"seed           {seed}")
     print(f"corpus         {corpus_path} ({len(items)} posts, {len(accounts)} accounts)")
     print(
         f"truth          {truth_path} "
         f"({len(campaigns)} Planted Campaigns, {sum(len(c.posts) for c in campaigns)} posts)"
     )
+    print(f"nuisance       {nuisance_path} ({len(nuisance)} records)")
+    print(f"Hard Negatives {len(hard_negatives)}: {_character_summary(characters)}")
+    print(
+        f"infrastructure {shared_path} "
+        f"({len(SHARED_HOSTS)} hosts: "
+        f"{', '.join(sorted({host.kind.value for host in SHARED_HOSTS}))})"
+    )
     print("the Corpus holds content, accounts, and links; grep it for `campaign` to check")
     return 0
+
+
+def _refuse_shared_paths(paths: dict[str, Path]) -> None:
+    seen: dict[Path, str] = {}
+    for what, path in paths.items():
+        resolved = path.resolve()
+        if resolved in seen:
+            raise SystemExit(
+                f"refusing to write {what} and {seen[resolved]} to one path: {path}"
+            )
+        seen[resolved] = what
+
+
+def _character_summary(characters: dict[str, int]) -> str:
+    if not characters:
+        return "none"
+    return ", ".join(
+        f"{character} {count}" for character, count in sorted(characters.items())
+    )
 
 
 def _fetch_cafc(*, extract_path: Path, force: bool) -> int:

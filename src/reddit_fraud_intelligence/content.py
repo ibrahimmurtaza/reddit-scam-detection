@@ -14,7 +14,9 @@ file says they belong together.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,12 +28,28 @@ class SyntheticPost:
     links: tuple[str, ...]
 
 
+def link_hosts(links: Iterable[str]) -> tuple[str, ...]:
+    """The hosts a post links to, sorted, so two posts that link the same host compare
+    equal however they spell the path."""
+    hostnames = (urlparse(link).hostname for link in links)
+    return tuple(sorted(host for host in hostnames if host is not None))
+
+
 @dataclass(frozen=True, slots=True)
 class PlantedScript:
+    """A Planted Campaign's posts, and the cadence it runs on.
+
+    `stagger_minutes` is how long it takes between one post and the next, so the
+    campaign's accounts appear in order over hours rather than all at once.
+    `paraphrase_note`, when set, says why the posts are recorded as one group rather
+    than as unrelated posts.
+    """
+
     campaign_id: str
     accounts: tuple[str, ...]
     posts: tuple[SyntheticPost, ...]
-    spread_hours: int
+    stagger_minutes: int
+    paraphrase_note: str | None = None
 
 
 # A signals desk selling a paid crypto entry service. Four posts from three
@@ -39,10 +57,21 @@ class PlantedScript:
 # One of them goes through a different host of that domain, because real operators
 # mirror their page and a future reader should have to reason about the registrable
 # domain rather than the hostname.
+#
+# The four are staggered paraphrases of one offer: the same minimum ticket, the same
+# compulsory call, the same published losing months, in four accounts' own words.
+# Matching repeated strings finds nothing here, and text similarity is what finds all
+# four — which is exactly the evidence ADR-0005 refuses to accept on its own.
 _ALPHA = PlantedScript(
     campaign_id="syn-campaign-alpha",
     accounts=("syn_quantproof_2841", "syn_harborlight_5517", "syn_pinecrest_9032"),
-    spread_hours=5,
+    stagger_minutes=45,
+    paraphrase_note=(
+        "Four posts, three accounts, one offer, and no sentence written twice. Each one "
+        "gives the minimum ticket as 500 USDT, insists the onboarding call is compulsory "
+        "before any trade is shown, and reports that the desk publishes its losing months. "
+        "The words move; the offer does not."
+    ),
     posts=(
         SyntheticPost(
             account="syn_quantproof_2841",
@@ -65,30 +94,33 @@ _ALPHA = PlantedScript(
         SyntheticPost(
             account="syn_harborlight_5517",
             subreddit="CryptoMarkets",
-            title="Signals desk since February, month three in",
+            title="Three months on a paid desk, and what it has cost me so far",
             body=(
-                "Three months on a paid desk now. The pitch is liquidity sweeps and volume "
-                "confirmation, not a pile of tools bolted together, and they want you on a call "
-                "before they show you a single trade. The ticket starts at 500 USDT and they will "
-                "not do smaller. Reports go out monthly whether the month was green or red, which "
-                "is the only reason I stayed after the first drawdown. If you have been burned by "
-                "the paid trading courses this is worth reading before you spend another month on "
-                "one of those."
+                "Been paying for trade signals since February and putting my notes here so "
+                "that somebody else does not have to pay to find that out. The desk runs "
+                "entries off liquidity sweeps and volume confirmation rather than the usual "
+                "pile of indicators bolted together, they will not discuss a position with "
+                "you until you have been on a call, and nothing goes in below 500 USDT. The "
+                "reports come out monthly either way, the months they lost included, "
+                "annotated trade by trade. Three months in: one flat month, two green, and "
+                "one call I would have preferred to skip. If you have already paid for one of "
+                "the trading courses, read this before you pay for another."
             ),
             links=("https://mirror.vantage-ledger.example/month-log",),
         ),
         SyntheticPost(
             account="syn_pinecrest_9032",
             subreddit="PersonalFinance",
-            title="Where I actually put the money I had earmarked for a house deposit",
+            title="Where the cash I had set aside for a house deposit actually went",
             body=(
-                "Not advice and not a recommendation, just reporting. I moved part of the cash I "
-                "was holding for a house deposit into a signals desk that runs entries off "
-                "liquidity sweeps, minimum ticket 500 USDT, compulsory onboarding call before "
-                "you see a trade. Three months in, one flat month and two green. The part that "
-                "convinced me is that the desk publishes the losing months as well, in full. "
-                "Happy to answer questions about how the onboarding works, the intake form is "
-                "quick."
+                "Not advice, and not a recommendation either. Part of the money I was holding "
+                "back for a deposit is now with a paid signals desk that takes its entries "
+                "from liquidity sweeps. Nothing goes under 500 USDT, they insist on an "
+                "onboarding call before they will show you anything, and what talked me into "
+                "trying it is that they write up the bad months as well as the good ones, in "
+                "full, in the month they happen. Two months in, so read this as one person's "
+                "early result rather than as a conclusion. Happy to answer questions about "
+                "what the onboarding involves, the intake form takes a couple of minutes."
             ),
             links=("https://vantage-ledger.example/entry",),
         ),
@@ -110,11 +142,13 @@ _ALPHA = PlantedScript(
 )
 
 # A remote annotation job that pays, minus the deposit and the 48-hour intake.
-# Three posts from two accounts, linking signal-harbor.example.
+# Three posts from two accounts, linking signal-harbor.example. Staggered, and not a
+# paraphrase group: this campaign repeats one advert because two people are repeating
+# it, which is a different case from three accounts rewording the same offer.
 _BETA = PlantedScript(
     campaign_id="syn-campaign-beta",
     accounts=("syn_northwindhire_7736", "syn_clearpathwork_3184"),
-    spread_hours=3,
+    stagger_minutes=51,
     posts=(
         SyntheticPost(
             account="syn_northwindhire_7736",
@@ -158,21 +192,10 @@ _BETA = PlantedScript(
     ),
 )
 
-# Accounts that must not group with anything. One posts in a subreddit where a
-# link is unremarkable and points at a domain no one else uses.
+# An account that must not group with anything, because it links nothing at all. It is
+# the floor of the case: there is no infrastructure here to join on, so any grouping
+# that reaches it reached it on text alone.
 _UNGROUPED = (
-    SyntheticPost(
-        account="syn_marrowgate_6205",
-        subreddit="AskCooking",
-        title="Sous vide timing for a 3kg ribeye, finally sorted",
-        body=(
-            "Six attempts and I have it down to 54 minutes at 57C with a 20 minute sear, which "
-            "gives me medium rare all the way through without the grey band near the bone. The "
-            "fridge rest is doing more work than the bath temperature, which is the thing nobody "
-            "tells you. Timings and my notes here."
-        ),
-        links=("https://single-run.example/ribeye-timing",),
-    ),
     SyntheticPost(
         account="syn_tideline_4471",
         subreddit="personalfinance",
