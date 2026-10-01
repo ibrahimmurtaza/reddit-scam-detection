@@ -154,8 +154,8 @@ downloadable under a licence permitting this use (ADR-0006). The project's word
 for the file is *extract*, which is CAFC's own word for it.
 
 ```
-uv run rfi fetch-cafc    # the only command that needs the network
-uv run rfi cafc-report   # reads the cache and records what it holds
+uv run rfi fetch-cafc      # needs the network
+uv run rfi cafc-report     # reads the cache and records what it holds
 ```
 
 | File | Holds |
@@ -169,7 +169,10 @@ Every figure is computed by reading the cache, never transcribed, so a figure an
 the bytes behind it cannot drift apart — and `fetch-cafc` refuses to replace a
 cache that is already there, because a new quarterly release would move every base
 rate and silently change what the Corpus is compared against. Nothing after the
-fetch needs the network, so the comparison is reproducible offline.
+fetch needs the network, so the comparison is reproducible offline. Two commands
+in this repository reach for the network — `fetch-cafc` and `fetch-suffix-list` —
+and both refuse to replace a cache that is already committed; everything else
+reads committed bytes and works offline.
 
 Two limits are stated in the report rather than buried here. The extract has **no
 free-text field** — no column of it can hold a sentence — so it constrains the
