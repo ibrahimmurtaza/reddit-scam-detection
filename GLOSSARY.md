@@ -112,7 +112,10 @@ Discord ID, email address, or crypto wallet.
 _Avoid_: PII, contact info, handle, identifier
 
 **Scam Category**:
-A top-level class drawn from a documented projection of the Canadian
-Anti-Fraud Centre's 41 thematic categories. An "Other" bucket is expected and is
-measured, because its size is a finding.
-_Avoid_: Scam type, label, taxonomy (the full 41-way source is not this term)
+A top-level class in the published projection of the Canadian Anti-Fraud Centre's
+thematic categories onto ten classes plus an "Other" bucket. Every CAFC category
+is placed in one, sits in Other, or is dropped with a stated reason, and every
+placement carries a one-line rationale. The size of the "Other" bucket is a
+finding, and is measured.
+_Avoid_: Scam type, label, taxonomy (CAFC's categories are the source, not this
+term)

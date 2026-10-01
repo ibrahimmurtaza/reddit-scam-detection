@@ -11,3 +11,7 @@ Scam Categories are a documented top-level projection of the Canadian Anti-Fraud
 ## Consequences
 
 The projection is a published artefact with a stated rationale, and it is arguable in a way an arbitrary list is not. Comparing Corpus composition against real-world base rates turns a synthetic corpus into evidence about relative prevalence, and the size of the "Other" bucket becomes a standing measure of what the system fails to represent. CAFC carries no free-text field, so it constrains the taxonomy and priors but cannot validate a classifier.
+
+## Amendment
+
+The figure 41 is not a number CAFC publishes, and ADR-0013 corrects it: CAFC's annex defines 35 thematic-category headings, the extract enumerates 39 values, and the union of names CAFC has published is 40. Nothing else in this record is amended — the source, the shape of the projection, and the treatment of the Other bucket all stand, and 41 appears twice above only as the figure that was checked and found wrong. ADR-0013 holds the evidence.

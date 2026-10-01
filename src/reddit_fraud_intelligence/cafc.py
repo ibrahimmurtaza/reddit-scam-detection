@@ -4,7 +4,7 @@ ADR-0006 chose the Canadian Anti-Fraud Centre because it is the one source of
 real, analyst-reviewed fraud reports that is freely downloadable under a licence
 permitting this use. This module fetches that extract, caches it, and computes
 the base rate of each of its thematic categories. Deciding where a category lands
-in the Scam Category taxonomy is ticket #7, and nothing here does that.
+in a Scam Category is `categories.py`, and nothing here does that.
 
 Every figure reported is computed by reading the cached extract, so a figure and
 the bytes it came from cannot drift apart. Nothing is transcribed by hand, and
@@ -37,7 +37,9 @@ SOURCE_URL = (
     "/resource/43c67af5-e598-4a9b-a484-fe1cb5d775b5/download"
     "/cafc-open-gouv-database-2021-01-01-to-2025-09-30-extracted-2025-10-01.csv"
 )
-USER_AGENT = "reddit-fraud-intelligence/0.1 (base rates for a documented taxonomy)"
+USER_AGENT = (
+    "reddit-fraud-intelligence/0.1 (base rates for a documented projection)"
+)
 LICENCE = "Open Government Licence - Canada"
 LICENCE_URL = "https://open.canada.ca/data/en/open-government-licence-canada"
 ATTRIBUTION = (
@@ -46,9 +48,14 @@ ATTRIBUTION = (
     "Open Government Licence - Canada."
 )
 
-# CAFC's own annex documents 41 thematic categories. Fewer of them appear in any
-# one release, so the two counts are kept apart rather than conflated.
-DOCUMENTED_CATEGORIES = 41
+# CAFC publishes its thematic categories in two places — the annex and the
+# values in a release — and the two do not agree on a count. This module measures
+# one of them and says so; reconciling the two, and correcting the figure ADR-0006
+# asserted, belongs to `categories.py` and the report it renders.
+ANNEX_NOT_MEASURED_HERE = (
+    "CAFC's annex defines its own set of headings, at a different granularity "
+    "again, and the two sets do not contain one another."
+)
 
 # CAFC's longest published label is 62 characters — the French expansion of
 # "Emergency (Jail, Accident, Hospital, Help)". A bound of 64 therefore separates an
@@ -190,10 +197,10 @@ def render_report(facts: ExtractFacts, base_rates: Sequence[BaseRate]) -> str:
             f"sentence: the longest value anywhere in it is {facts.longest_value_chars} characters, against a bound\n"
             f"of {MAX_ENUMERATED_VALUE_CHARS} that an enumerated label — even one translated into French — fits\n"
             "inside. Every column is therefore a label, a number, or a date. **That is why\n"
-            "it cannot validate a text classifier.** It fixes what the taxonomy is built on\n"
-            "and what the priors are, and it says nothing whatever about whether text is\n"
-            "scored correctly. Held-out validation on labelled text is a separate thing this\n"
-            "extract cannot supply."
+            "it cannot validate a text classifier.** It fixes what the Scam Categories\n"
+            "are built on and what the priors are, and it says nothing whatever about\n"
+            "whether text is scored correctly. Held-out validation on labelled text is a\n"
+            "separate thing this extract cannot supply."
         )
     else:
         limitation = (
@@ -237,13 +244,15 @@ come from.
 
 {limitation}
 
-**{facts.categories} of CAFC's {DOCUMENTED_CATEGORIES} documented categories appear in this window.** CAFC's annex
-lists {DOCUMENTED_CATEGORIES} thematic categories, and {facts.categories} of them carry at least one report between
-{facts.date_from} and {facts.date_to}. The base rate of the remaining {DOCUMENTED_CATEGORIES - facts.categories} is neither zero
-nor known: they are absent from this release, not observed at zero. The
-projection in ticket #7 reconciles against the annex rather than against this
-extract, so that a category CAFC dropped and one CAFC merely had no reports of
-are not treated as the same thing.
+This release enumerates **{facts.categories} thematic category values**, and that is the whole
+of what it measures. {ANNEX_NOT_MEASURED_HERE}
+
+The projection in `docs/scam-categories.md` accounts for every name CAFC has
+published across both sources, states how the counts reconcile, and corrects the
+figure ADR-0006 asserted. The base rate of the one name this release does not
+carry is neither zero nor known: it is absent from the release, not observed at
+zero. A category CAFC dropped and one CAFC merely had no reports of are not the
+same thing, and the projection keeps them apart.
 
 ## Base rate of each thematic category
 

@@ -32,18 +32,20 @@ come from.
 sentence: the longest value anywhere in it is 62 characters, against a bound
 of 64 that an enumerated label — even one translated into French — fits
 inside. Every column is therefore a label, a number, or a date. **That is why
-it cannot validate a text classifier.** It fixes what the taxonomy is built on
-and what the priors are, and it says nothing whatever about whether text is
-scored correctly. Held-out validation on labelled text is a separate thing this
-extract cannot supply.
+it cannot validate a text classifier.** It fixes what the Scam Categories
+are built on and what the priors are, and it says nothing whatever about
+whether text is scored correctly. Held-out validation on labelled text is a
+separate thing this extract cannot supply.
 
-**39 of CAFC's 41 documented categories appear in this window.** CAFC's annex
-lists 41 thematic categories, and 39 of them carry at least one report between
-2021-01-02 and 2025-09-29. The base rate of the remaining 2 is neither zero
-nor known: they are absent from this release, not observed at zero. The
-projection in ticket #7 reconciles against the annex rather than against this
-extract, so that a category CAFC dropped and one CAFC merely had no reports of
-are not treated as the same thing.
+This release enumerates **39 thematic category values**, and that is the whole
+of what it measures. CAFC's annex defines its own set of headings, at a different granularity again, and the two sets do not contain one another.
+
+The projection in `docs/scam-categories.md` accounts for every name CAFC has
+published across both sources, states how the counts reconcile, and corrects the
+figure ADR-0006 asserted. The base rate of the one name this release does not
+carry is neither zero nor known: it is absent from the release, not observed at
+zero. A category CAFC dropped and one CAFC merely had no reports of are not the
+same thing, and the projection keeps them apart.
 
 ## Base rate of each thematic category
 

@@ -191,11 +191,20 @@ def test_the_report_says_plainly_that_there_is_no_free_text_to_learn_from() -> N
     assert str(number(provenance, "longest_value_chars")) in report
 
 
-def test_the_report_names_how_many_categories_the_extract_actually_holds() -> None:
-    """CAFC documents 41; this window holds 39. The report must not paper over it."""
+def test_the_report_does_not_claim_to_have_counted_everything_cafc_publishes() -> None:
+    """This file measures one release; the projection reconciles both of CAFC's sources.
+
+    The figure of 41 that ADR-0006 asserted is not one CAFC publishes, and it is
+    neither repeated here nor replaced by another total: the report says what it
+    measured and points at the page that reconciles the two counts.
+    """
     observed = number(one(COMMITTED_PROVENANCE), "categories")
     assert observed == len(rows(COMMITTED_BASE_RATES))
-    assert f"{observed} of CAFC's 41" in COMMITTED_REPORT.read_text(encoding="utf-8")
+    report = COMMITTED_REPORT.read_text(encoding="utf-8")
+    assert f"enumerates **{observed} thematic category values**" in report
+    assert "that is the whole\nof what it measures" in report
+    assert "docs/scam-categories.md" in report
+    assert "41" not in report
 
 
 def test_reading_the_same_extract_twice_writes_the_same_bytes(tmp_path: Path) -> None:

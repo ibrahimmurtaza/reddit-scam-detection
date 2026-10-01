@@ -14,6 +14,7 @@ from reddit_fraud_intelligence.cafc import (
     write_base_rates,
     write_provenance,
 )
+from reddit_fraud_intelligence.categories import OTHER, SCAM_CATEGORIES, TOP_LEVEL_COUNT
 from reddit_fraud_intelligence.corpus import read_corpus, write_corpus
 from reddit_fraud_intelligence.domains import (
     post_domains,
@@ -28,6 +29,14 @@ from reddit_fraud_intelligence.generator import (
 )
 from reddit_fraud_intelligence.infrastructure import SHARED_HOSTS, write_shared_infrastructure
 from reddit_fraud_intelligence.nuisance import NuisanceKind, write_nuisance
+from reddit_fraud_intelligence.projection import (
+    place,
+    read_base_rates,
+    render_report as render_projection_report,
+    total,
+    unplaced_reports,
+    write_mapping,
+)
 from reddit_fraud_intelligence.suffixes import (
     SOURCE_URL as SUFFIX_LIST_SOURCE_URL,
     PublicSuffixes,
@@ -50,6 +59,8 @@ DEFAULT_SUFFIX_LIST_PATH = Path("data/public-suffix/public_suffix_list.dat")
 DEFAULT_SUFFIX_PROVENANCE_PATH = Path("data/public-suffix/provenance.jsonl")
 DEFAULT_DOMAINS_PATH = Path("data/domains/post-domains.jsonl")
 DEFAULT_DOMAINS_REPORT_PATH = Path("docs/post-domains.md")
+DEFAULT_CATEGORY_MAPPING_PATH = Path("data/cafc/scam-categories.jsonl")
+DEFAULT_CATEGORY_REPORT_PATH = Path("docs/scam-categories.md")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -88,6 +99,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 corpus_path=Path(str(args.corpus)),
                 list_path=Path(str(args.list)),
                 domains_path=Path(str(args.domains)),
+                report_path=Path(str(args.report)),
+            )
+        case "scam-categories":
+            return _scam_categories(
+                base_rates_path=Path(str(args.base_rates)),
+                mapping_path=Path(str(args.mapping)),
                 report_path=Path(str(args.report)),
             )
         case _:
@@ -287,6 +304,39 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_DOMAINS_REPORT_PATH,
         help=f"where to write the report (default: {DEFAULT_DOMAINS_REPORT_PATH})",
     )
+
+    categories = commands.add_parser(
+        "scam-categories",
+        help="project CAFC's thematic categories onto the ten Scam Categories",
+        description=(
+            "The projection ADR-0006 asked for, rendered. The judgement itself — the ten "
+            "Scam Categories, the CAFC label each one lands, and a one-line reason for "
+            "that landing — lives in `categories.py` and is read, not chosen here; what "
+            "this command adds is the base rate each Scam Category lands, computed from "
+            "the committed figures rather than written down. It refuses to render if the "
+            "base rates hold a category the projection does not account for, because a "
+            "page that looks complete and is not is worse than a refusal. Reads no "
+            "network."
+        ),
+    )
+    categories.add_argument(
+        "--base-rates",
+        type=Path,
+        default=DEFAULT_BASE_RATES_PATH,
+        help=f"the committed base rates to read (default: {DEFAULT_BASE_RATES_PATH})",
+    )
+    categories.add_argument(
+        "--mapping",
+        type=Path,
+        default=DEFAULT_CATEGORY_MAPPING_PATH,
+        help=f"where to write the mapping (default: {DEFAULT_CATEGORY_MAPPING_PATH})",
+    )
+    categories.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_CATEGORY_REPORT_PATH,
+        help=f"where to write the report (default: {DEFAULT_CATEGORY_REPORT_PATH})",
+    )
     return parser
 
 
@@ -464,5 +514,47 @@ def _post_domains(
     print(f"domains        {facts.domains} distinct registrable domains")
     print(f"suffix list    {list_path} ({facts.suffix_list_bytes:,} bytes)")
     print(f"resolved links {domains_path}")
+    print(f"report         {report_path}")
+    return 0
+
+
+def _scam_categories(
+    *, base_rates_path: Path, mapping_path: Path, report_path: Path
+) -> int:
+    _refuse_shared_paths(
+        {
+            "the mapping": mapping_path,
+            "the report": report_path,
+        }
+    )
+    if not base_rates_path.exists():
+        raise SystemExit(
+            f"the base rates are not there: {base_rates_path}. Run `rfi cafc-report` "
+            "over the cached extract first."
+        )
+
+    try:
+        base_rates = read_base_rates(base_rates_path)
+        placed = place(base_rates)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+
+    write_mapping(mapping_path, placed)
+    _write_text(report_path, render_projection_report(placed))
+
+    reports = sum(item.reports or 0 for item in placed)
+    landed = sum(1 for item in placed if item.reports is not None)
+    dropped = sorted(item.category.category for item in placed if item.category.dropped)
+    other = total(placed, OTHER.name)
+
+    print(
+        f"base rates     {base_rates_path} ({len(base_rates)} categories, "
+        f"{reports:,} reports)"
+    )
+    print(f"projection     {len(placed)} CAFC categories, {landed} in this release")
+    print(f"top level      {TOP_LEVEL_COUNT} Scam Categories plus an Other bucket")
+    print(f"dropped        {len(dropped)}: {', '.join(dropped)}")
+    print(f"unplaced       {unplaced_reports(placed):,} reports, plus {other:,} in Other")
+    print(f"mapping        {mapping_path}")
     print(f"report         {report_path}")
     return 0

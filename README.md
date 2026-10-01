@@ -15,12 +15,12 @@ corresponds to a real person.
 Two things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
-and committed, with the base rate of every thematic category computed from it. And
-the first thing the pipeline computes — the Registrable Domain of every link in
-the Corpus, from the published Public Suffix List. Campaign Candidate analysis,
-Link Signals, Policy Score, Review Queue, and evaluation are not built yet. Their
-tickets are numbered #7 to #28 in the tracker; this README is updated as they
-land.
+and committed, with the base rate of every thematic category computed from it. The
+projection of those categories down to ten Scam Categories. And the first thing the
+pipeline computes — the Registrable Domain of every link in the Corpus, from the
+published Public Suffix List. Campaign Candidate analysis, Link Signals, Policy
+Score, Review Queue, and evaluation are not built yet. Their tickets are numbered
+#8 to #28 in the tracker; this README is updated as they land.
 
 ## Running it
 
@@ -176,10 +176,44 @@ reads committed bytes and works offline.
 
 Two limits are stated in the report rather than buried here. The extract has **no
 free-text field** — no column of it can hold a sentence — so it constrains the
-taxonomy and the priors and cannot validate a text classifier. And CAFC documents
-41 thematic categories while this window holds 39; the missing two are absent from
-the release, not observed at zero, and the projection in ticket #7 reconciles
-against CAFC's annex.
+Scam Categories and the priors and cannot validate a text classifier. And CAFC's
+annex defines 35 thematic-category headings while this window enumerates 39
+values; the two are not the same set, so **41 — the figure ADR-0006 assumed — is
+not a number CAFC publishes**. The union of names CAFC has published is 40, and
+`docs/scam-categories.md` accounts for all of them.
+
+## The Scam Categories
+
+`docs/scam-categories.md` is the projection ADR-0006 asked for: CAFC's thematic
+categories read down to ten Scam Categories, plus an Other bucket for content that
+fits none of them. The argument — the ten, the CAFC label each one lands, the Annex E
+heading CAFC defines it under, and a one-line reason — is written once in
+`src/reddit_fraud_intelligence/categories.py`. The command adds the base rate each
+Scam Category lands, computed from the committed figures rather than written down, and
+quotes the reasons rather than restating them, so the argument has one home.
+
+```
+uv run rfi scam-categories   # reads data/cafc/base_rates.jsonl, writes both outputs
+```
+
+| File | Holds |
+| --- | --- |
+| `data/cafc/scam-categories.jsonl` | Every CAFC category, where it lands, what that class means, and the one-line reason. |
+| `docs/scam-categories.md` | The report: what each Scam Category lands, and the argument, generated. |
+
+Read the report rather than this summary. It is written to be disagreed with: each
+merge carries a one-line rationale, so a reader who thinks a particular one is
+wrong can find it and say why. Two things it is careful not to smooth over: the
+size of the Other bucket, which is a standing measure of what the system fails to
+represent, and CAFC's three categories that are not kinds of fraud at all, which
+are dropped with a reason and counted rather than absorbed into a neighbour.
+
+One thing in that page is weaker than the rest, and the page says so. CAFC's annex
+is a PDF, so its headings are read by hand into `categories.py`; the extract is the
+enumeration the mapping is guaranteed against, and a new value in a new release
+stops the command until the projection accounts for it. Committing the annex, so
+that the transcription is checkable against bytes, is not done here.
+
 
 ## Tests
 
@@ -197,5 +231,7 @@ uv run mypy
   Candidates require registrable infrastructure), 0007 (Signals come only from
   observable text and links), 0008 (the Corpus file carries no membership), 0010
   (CAFC figures are computed from the cache), 0011 (the Nuisance Structure has a
-  file of its own, and so does the shared-infrastructure list), and 0012
-  (registrable domains are resolved from the published Public Suffix List).
+  file of its own, and so does the shared-infrastructure list), 0012
+  (registrable domains are resolved from the published Public Suffix List), and
+  0013 (the Scam Categories are CAFC's thematic categories read down to ten, and
+  the 41 in ADR-0006 is corrected).
