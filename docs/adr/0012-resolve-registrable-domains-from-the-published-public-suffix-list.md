@@ -1,0 +1,20 @@
+# Resolve registrable domains from the published Public Suffix List
+
+ADR-0005 requires two accounts to share a registrable domain before they may be placed in the same Campaign Candidate, which makes the registrable domain the input to every grouping decision in the system and makes a wrong one invisible from the output of whatever ran on top of it. The rules that decide what is registrable are therefore published at `data/public-suffix/` and parsed by this project; they are not written down here, and they are not recomputed from first principles on each run.
+
+## Considered Options
+
+- **A hand-written list of multi-part public suffixes.** Rejected, and it is the option the ticket names. `co.uk` and `com.au` are the ones everybody remembers, so a list holding those two passes on a Corpus that uses neither and fails on the first suffix nobody thought of. Worse, the failure is silent: an unlisted multi-part suffix returns its own last label as though it were a registration, which reads as a plausible domain.
+- **Take a dependency on `tldextract`.** Rejected: it is the first runtime dependency in `src/reddit_fraud_intelligence/`, and the only thing this project needs from it is a rule matcher it can read the rules into. It also leaves the rules in a snapshot inside the dependency, where a reviewer cannot grep them and the project's own "published, derivable, never hand-edited" rule does not reach.
+- **Fetch the list on every run.** Rejected on the same argument as the CAFC figures: it makes every result depend on a third party's uptime and on which release is being served that day, and a reviewer without the network can check nothing.
+- **Derive the rules from the DNS root.** Rejected: the root zone does not carry them. The Public Suffix List is a separately maintained artefact precisely because delegation and registration are different things.
+
+## Consequences
+
+A reader can check the rules directly — `rg '^co\.uk$' data/public-suffix/` — and can confirm which release is in use by comparing the recorded digest against publicsuffix.org. `fetch-suffix-list` is the only command that needs the network for any of this, it refuses to replace a list that is already committed, and everything after the fetch is reproducible offline. The file is committed as text rather than compressed for the same reason the CAFC extract was not: 335 KiB is a price worth paying to be able to grep.
+
+The private section is applied along with the ICANN section, which is the part that is easy to leave out and expensive to get wrong. A hosting platform hands out subdomains of a name it owns, so `attacker.github.io` is a registration and reading only the ICANN half would report `github.io` — a suffix nobody registered — and collapse every Pages site in a Corpus into one domain.
+
+Two consequences of reading the rules as written are limits rather than bugs, and both are stated where they bite. With no rule matching, the prevailing rule is `*`, so under the reserved `.example` TLD the registration is always the last two labels: a host three or more labels deep is truncated. Every host the Corpus carries is one label deep, so nothing in it is affected, and a real TLD has a rule that says otherwise. And all three rule shapes — whole-label, wildcard, exception — have to be honoured, which the Corpus needs none of; a parser that mishandled any of them would still return a plausible answer for this Corpus, so the shapes are tested against a list written out in the test rather than against the committed file.
+
+The scheme of a link is not part of this decision and is not consulted. `https`, `http`, `ftp`, and a protocol-relative `//` all name the same registration, and restricting extraction to two schemes would be simpler to describe while quietly losing infrastructure an operator chose the scheme for. What decides whether a link yields a domain is only whether it carries a host, and a link that does not is reported with the reason rather than dropped, so that a post whose links are all unreadable is distinguishable from a post with no links.

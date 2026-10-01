@@ -14,11 +14,13 @@ corresponds to a real person.
 
 Two things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
-Planted Campaigns. And the CAFC extract: real, analyst-reviewed fraud
-reports, cached and committed, with the base rate of every thematic category
-computed from it. The pipeline itself — extraction, Signals, Policy Score, Campaign
-Candidate analysis, Review Queue, evaluation — is not built yet. Its tickets are
-numbered #3 to #28 in the tracker; this README is updated as they land.
+Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
+and committed, with the base rate of every thematic category computed from it. And
+the first thing the pipeline computes — the Registrable Domain of every link in
+the Corpus, from the published Public Suffix List. Campaign Candidate analysis,
+Link Signals, Policy Score, Review Queue, and evaluation are not built yet. Their
+tickets are numbered #7 to #28 in the tracker; this README is updated as they
+land.
 
 ## Running it
 
@@ -38,6 +40,8 @@ That writes four files, each with one reader:
 | `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
 | `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
 | `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. | the grouping step, once it is built |
+| `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains` |
+| `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | the grouping step, once it is built |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -92,6 +96,51 @@ system produces no false groupings against domains and the interesting false
 groupings live in the shared infrastructure. Ticket #19 measures the rate; this
 Corpus is small enough to read the answer by hand.
 
+## Registrable domains
+
+`docs/post-domains.md` is the report: the registrable domain of every link in
+the Corpus, per post, and the reasoning for reading a link the way it is read.
+Read that rather than the summary here.
+
+ADR-0005 places two accounts in the same Campaign Candidate only if they share a
+registrable domain, so this is the input to every grouping decision in the
+system. A host is not a domain: the Corpus plants
+`mirror.vantage-ledger.example` beside `vantage-ledger.example` so that a
+campaign that mirrors its page is one registration here rather than two, and it
+plants two near-miss pairs one character apart so that anything matching on names
+rather than on registration is caught joining a recruitment firm to a signals
+desk.
+
+```
+uv run rfi fetch-suffix-list   # needs the network
+uv run rfi post-domains        # reads the two files, writes two more
+```
+
+| File | Holds |
+| --- | --- |
+| `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. Committed as text, so a reader can grep the rules rather than trust a summary of them. |
+| `data/public-suffix/provenance.jsonl` | Source, licence, digests of the bytes and of the rules, and the rule counts in each section. |
+| `data/domains/post-domains.jsonl` | One line per post: every link, the host it names, the Registrable Domain, and the reason if there is none. |
+| `docs/post-domains.md` | The report, generated from those rows. |
+
+The rules come from publicsuffix.org rather than from a hand-written list, which
+is the option ADR-0012 rules out with reasons; the two multi-part suffixes
+everybody remembers would pass against a Corpus that uses neither and then fail
+on the first suffix nobody thought of, silently, returning a public suffix's own
+last label as though it were somebody's domain. Both halves of the published list
+are parsed, so a hosting platform is a Public Suffix too and
+`attacker.github.io` is a registration rather than a subdomain. A host three
+labels deep under the reserved `.example` TLD is truncated to its last two, which
+is stated in the report and affects nothing in this Corpus.
+
+Two things are stated rather than left to be discovered. The scheme of a link is
+never consulted — `https`, `http`, `ftp` and a protocol-relative `//` all name
+the same registration, and a scheme allowlist would quietly lose infrastructure
+an operator chose the scheme for. And every link produces a row: a link that
+names no registration — a relative path, a bare `co.uk`, an IP address, one that
+will not parse — is reported with which of six reasons applied, never dropped,
+because a dropped link is indistinguishable from a post that carried none.
+
 ## The base rates
 
 `docs/cafc-base-rates.md` is the report: the base rate of every one of the
@@ -143,5 +192,6 @@ uv run mypy
   Provider), 0004 (evaluate by recovering Planted Campaigns), 0005 (Campaign
   Candidates require registrable infrastructure), 0007 (Signals come only from
   observable text and links), 0008 (the Corpus file carries no membership), 0010
-  (CAFC figures are computed from the cache), and 0011 (the Nuisance Structure has a
-  file of its own, and so does the shared-infrastructure list).
+  (CAFC figures are computed from the cache), 0011 (the Nuisance Structure has a
+  file of its own, and so does the shared-infrastructure list), and 0012
+  (registrable domains are resolved from the published Public Suffix List).

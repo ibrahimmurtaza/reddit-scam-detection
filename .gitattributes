@@ -5,9 +5,20 @@
 *.jsonl text eol=lf
 
 # The same argument for the CAFC report, which a test holds to what the cache
-# produces. Scoped to that one file rather than every markdown file, so that adding
-# it does not re-check-out the whole tree.
+# produces, and for the registrable-domain report, which a test holds to what the
+# Corpus and the published Public Suffix List produce. Scoped to those two files
+# rather than every markdown file, so that adding them does not re-check-out the
+# whole tree.
 docs/cafc-base-rates.md text eol=lf
+docs/post-domains.md text eol=lf
+
+# The Public Suffix List is published text, and it is committed rather than
+# generated, so that `rg '^co\.uk$' data/public-suffix/` answers what a reviewer
+# wants to know. It is held to LF for the same reason as the reports above, and
+# harder: a rule that keeps a trailing carriage return still parses as a rule here
+# but matches no host, so the mistake would cost every multi-part suffix in the
+# list without failing anything.
+data/public-suffix/*.dat text eol=lf
 
 # The cached CAFC extract is a gzip stream, not text. Left to text rules, a
 # checkout can mangle a byte in it and the recorded digest then no longer matches.

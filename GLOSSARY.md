@@ -46,6 +46,20 @@ Without it, recovery rate is uninformative.
 _Avoid_: Noise, decoys (the project's own phrase is "decoy account cluster"),
 distractors
 
+### Links
+
+**Public Suffix**:
+The part of a host that nobody can register — `co.uk`, `com`, `github.io`. Taken
+from the published Public Suffix List, not from memory.
+_Avoid_: effective TLD, eTLD, domain suffix
+
+**Registrable Domain**:
+The domain somebody registered: a Public Suffix plus exactly one more label, so
+`example.co.uk` and not `co.uk`. The unit a Campaign Candidate is built on. A
+hostname is not a Registrable Domain, a Public Suffix is not one, and neither is
+an IP address.
+_Avoid_: eTLD+1, base domain, second-level domain, registered domain name
+
 ### Signals and scores
 
 Three distinct numbers, never interchanged. Conflating them is the fastest way

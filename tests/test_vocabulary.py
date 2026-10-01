@@ -45,6 +45,12 @@ BANNED_PHRASES = (
     "test fixture",
     "dataset",
     "scam type",
+    "effective TLD",
+    "eTLD",
+    "eTLD+1",
+    "base domain",
+    "second-level domain",
+    "registered domain name",
 )
 
 
@@ -54,8 +60,10 @@ def scanned() -> list[Path]:
         *sorted((REPO_ROOT / "src").rglob("*.py")),
         REPO_ROOT / "data" / "corpus" / "corpus.jsonl",
         REPO_ROOT / "data" / "corpus" / "nuisance.jsonl",
+        REPO_ROOT / "data" / "domains" / "post-domains.jsonl",
         REPO_ROOT / "data" / "infrastructure" / "shared-hosts.jsonl",
         REPO_ROOT / "docs" / "cafc-base-rates.md",
+        REPO_ROOT / "docs" / "post-domains.md",
     ]
 
 

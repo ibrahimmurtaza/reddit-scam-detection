@@ -14,7 +14,13 @@ from reddit_fraud_intelligence.cafc import (
     write_base_rates,
     write_provenance,
 )
-from reddit_fraud_intelligence.corpus import write_corpus
+from reddit_fraud_intelligence.corpus import read_corpus, write_corpus
+from reddit_fraud_intelligence.domains import (
+    post_domains,
+    render_report as render_domains_report,
+    survey as survey_domains,
+    write_post_domains,
+)
 from reddit_fraud_intelligence.generator import (
     corpus_items,
     nuisance_records,
@@ -22,6 +28,13 @@ from reddit_fraud_intelligence.generator import (
 )
 from reddit_fraud_intelligence.infrastructure import SHARED_HOSTS, write_shared_infrastructure
 from reddit_fraud_intelligence.nuisance import NuisanceKind, write_nuisance
+from reddit_fraud_intelligence.suffixes import (
+    SOURCE_URL as SUFFIX_LIST_SOURCE_URL,
+    PublicSuffixes,
+    download_list,
+    survey as survey_suffix_list,
+    write_provenance as write_suffix_list_provenance,
+)
 from reddit_fraud_intelligence.truth import write_truth
 
 DEFAULT_SEED = 20260930
@@ -33,6 +46,10 @@ DEFAULT_EXTRACT_PATH = Path("data/cafc/cafc-extract.csv.gz")
 DEFAULT_PROVENANCE_PATH = Path("data/cafc/provenance.jsonl")
 DEFAULT_BASE_RATES_PATH = Path("data/cafc/base_rates.jsonl")
 DEFAULT_BASE_RATES_REPORT_PATH = Path("docs/cafc-base-rates.md")
+DEFAULT_SUFFIX_LIST_PATH = Path("data/public-suffix/public_suffix_list.dat")
+DEFAULT_SUFFIX_PROVENANCE_PATH = Path("data/public-suffix/provenance.jsonl")
+DEFAULT_DOMAINS_PATH = Path("data/domains/post-domains.jsonl")
+DEFAULT_DOMAINS_REPORT_PATH = Path("docs/post-domains.md")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -58,6 +75,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 extract_path=Path(str(args.extract)),
                 provenance_path=Path(str(args.provenance)),
                 base_rates_path=Path(str(args.base_rates)),
+                report_path=Path(str(args.report)),
+            )
+        case "fetch-suffix-list":
+            return _fetch_suffix_list(
+                list_path=Path(str(args.list)),
+                provenance_path=Path(str(args.provenance)),
+                force=bool(args.force),
+            )
+        case "post-domains":
+            return _post_domains(
+                corpus_path=Path(str(args.corpus)),
+                list_path=Path(str(args.list)),
+                domains_path=Path(str(args.domains)),
                 report_path=Path(str(args.report)),
             )
         case _:
@@ -181,6 +211,82 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_BASE_RATES_REPORT_PATH,
         help=f"where to write the report (default: {DEFAULT_BASE_RATES_REPORT_PATH})",
     )
+
+    fetch_list = commands.add_parser(
+        "fetch-suffix-list",
+        help="download the Public Suffix List and cache it, with where it came from",
+        description=(
+            "The one command that decides what a registrable domain is, which decides "
+            "what a Campaign Candidate can be (ADR-0005). The list is published rather "
+            "than written by hand, so the rules are the ones in force rather than the "
+            "ones somebody remembered, and the two halves of it are both parsed: a "
+            "hosting platform hands out subdomains of a name it owns, and reading only "
+            "the ICANN half would report every Pages site as one domain. Refuses to "
+            "replace a list that is already there, because a new release moves every "
+            "registrable domain in the Corpus."
+        ),
+    )
+    fetch_list.add_argument(
+        "--list",
+        type=Path,
+        default=DEFAULT_SUFFIX_LIST_PATH,
+        help=f"where to cache the list (default: {DEFAULT_SUFFIX_LIST_PATH})",
+    )
+    fetch_list.add_argument(
+        "--provenance",
+        type=Path,
+        default=DEFAULT_SUFFIX_PROVENANCE_PATH,
+        help=(
+            "where to record the source, licence, digests, and rule counts "
+            f"(default: {DEFAULT_SUFFIX_PROVENANCE_PATH})"
+        ),
+    )
+    fetch_list.add_argument(
+        "--force",
+        action="store_true",
+        help="replace a list that is already there, moving every registrable domain",
+    )
+
+    domains = commands.add_parser(
+        "post-domains",
+        help="report the registrable domain of every link in the Corpus, per post",
+        description=(
+            "The first thing the pipeline computes and the input to every grouping "
+            "decision after it: ADR-0005 puts two accounts in the same Campaign "
+            "Candidate only if they share a registrable domain. A host is not a "
+            "domain, so a campaign that mirrors its page is one registration here "
+            "and not two. Every link produces a row; a link that names no "
+            "registration is reported with the reason rather than dropped. Reads no "
+            "network."
+        ),
+    )
+    domains.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    domains.add_argument(
+        "--list",
+        type=Path,
+        default=DEFAULT_SUFFIX_LIST_PATH,
+        help=(
+            "the published Public Suffix List to read "
+            f"(default: {DEFAULT_SUFFIX_LIST_PATH})"
+        ),
+    )
+    domains.add_argument(
+        "--domains",
+        type=Path,
+        default=DEFAULT_DOMAINS_PATH,
+        help=f"where to write the resolved links (default: {DEFAULT_DOMAINS_PATH})",
+    )
+    domains.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_DOMAINS_REPORT_PATH,
+        help=f"where to write the report (default: {DEFAULT_DOMAINS_REPORT_PATH})",
+    )
     return parser
 
 
@@ -299,3 +405,54 @@ def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(text)
+
+
+def _fetch_suffix_list(*, list_path: Path, provenance_path: Path, force: bool) -> int:
+    if list_path.exists() and not force:
+        raise SystemExit(
+            f"refusing to replace a list that is already there: {list_path}. Pass "
+            "--force to fetch a new release, and expect every registrable domain in "
+            "the Corpus to move."
+        )
+
+    written = download_list(list_path)
+    facts = survey_suffix_list(list_path)
+    write_suffix_list_provenance(provenance_path, facts)
+
+    print(f"list           {list_path} ({written:,} bytes, cached as published)")
+    print(f"source         {SUFFIX_LIST_SOURCE_URL}")
+    print(
+        f"rules          {facts.plain_rules:,} whole-label, {facts.wildcard_rules:,} "
+        f"wildcard, {facts.exception_rules:,} exception"
+    )
+    print(
+        f"sections       {facts.icann_rules:,} ICANN, {facts.private_rules:,} private "
+        "(both parsed: a hosting platform is a public suffix too)"
+    )
+    print(f"provenance     {provenance_path}")
+    return 0
+
+
+def _post_domains(
+    *, corpus_path: Path, list_path: Path, domains_path: Path, report_path: Path
+) -> int:
+    _refuse_shared_paths(
+        {"the Corpus": corpus_path, "the report": report_path, "the resolved links": domains_path}
+    )
+    for what, path in (("the Corpus", corpus_path), ("the Public Suffix List", list_path)):
+        if not path.exists():
+            raise SystemExit(f"{what} is not there: {path}. Run `rfi generate-corpus` and `rfi fetch-suffix-list` first.")
+
+    suffixes = PublicSuffixes.read(list_path)
+    rows = post_domains(read_corpus(corpus_path), suffixes)
+    facts = survey_domains(corpus_path, list_path, rows, suffixes)
+    write_post_domains(domains_path, rows)
+    _write_text(report_path, render_domains_report(facts, rows))
+
+    print(f"corpus         {corpus_path} ({facts.posts} posts, {facts.accounts} accounts)")
+    print(f"links          {facts.links} ({facts.resolved_links} resolved, {facts.unresolved_links} unresolvable)")
+    print(f"domains        {facts.domains} distinct registrable domains")
+    print(f"suffix list    {list_path} ({facts.suffix_list_bytes:,} bytes)")
+    print(f"resolved links {domains_path}")
+    print(f"report         {report_path}")
+    return 0
