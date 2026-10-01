@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from reddit_fraud_intelligence.cli import main
-from reddit_fraud_intelligence.suffixes import PublicSuffixes, to_ascii
+from reddit_fraud_intelligence.suffixes import PublicSuffixes, is_address, to_ascii
 
 REPO_ROOT = Path(__file__).parent.parent
 COMMITTED_LIST = REPO_ROOT / "data" / "public-suffix" / "public_suffix_list.dat"
@@ -227,8 +227,51 @@ def test_hosts_are_normalised_before_they_are_looked_up() -> None:
     assert suffixes.registrable_domain("") is None
 
 
-def test_an_oversized_or_undecodable_host_is_reported_rather_than_guessed() -> None:
-    """A host that cannot be normalised has no answer, and `None` is that answer.
+def test_a_host_that_is_not_a_name_is_reported_rather_than_guessed_at() -> None:
+    """A host with anything in it that a domain name cannot hold names nothing.
+
+    `urlparse` is happy with a space, a `<`, or a percent sign in a host, and
+    `idna.ToASCII` passes ASCII straight through after checking its length, so
+    every one of these used to come back as a confident registration: a grouping
+    would then have an exact domain to join on, built out of a link that was never
+    a URL. A name is letters, digits, and hyphens, and nothing else.
+    """
+    suffixes = committed()
+
+    for host in (
+        "exa mple.com",
+        "a<b>.com",
+        "%zz.com",
+        "-lead.com",
+        "trail-.com",
+        "ho st.co.uk",
+        f"{'a' * 64}.example",
+    ):
+        assert to_ascii(host) is None, host
+        assert suffixes.registrable_domain(host) is None, host
+
+
+def test_an_address_shaped_host_is_not_mistaken_for_a_deep_subdomain() -> None:
+    """`1.2.3.4.5` is not a registration five labels deep.
+
+    The implicit single-label rule would take `5` for a TLD and report the domain
+    `4.5`, so every over-long address in a Corpus would collapse onto its own last
+    two octets and group with unrelated addresses. No TLD is numeric, so a host
+    whose labels are all digits is an address that will not parse, and both kinds
+    are reported as an address.
+    """
+    suffixes = committed()
+
+    for host in ("192.0.2.1", "1.2.3.4.5", "0.0.0.0", "[2001:db8::1]"):
+        assert is_address(host), host
+        assert suffixes.registrable_domain(host) is None, host
+
+    assert not is_address("123.example")
+    assert not is_address("vantage-ledger.example")
+
+
+def test_an_oversized_host_is_reported_rather_than_truncated() -> None:
+    """A host that cannot be read has no answer, and `None` is that answer.
 
     A phishing link does carry a 300-character label, and it must not be reported
     as some truncated domain.
@@ -236,9 +279,14 @@ def test_an_oversized_or_undecodable_host_is_reported_rather_than_guessed() -> N
     suffixes = committed()
 
     assert to_ascii(f"{'a' * 300}.example") is None
+    # Five labels of 50 and a TLD: 262 characters, over the 253 a name may be.
+    assert to_ascii(f"{'a' * 50}." * 5 + "example") is None
     assert suffixes.registrable_domain(f"{'a' * 300}.example") is None
     assert to_ascii("\ud800.example") is None
     assert to_ascii(None) is None
+    assert to_ascii("") is None
+    assert to_ascii(".") is None
+    assert to_ascii("a..b") is None
 
 
 def test_an_internationalised_host_matches_by_its_punycode_form() -> None:

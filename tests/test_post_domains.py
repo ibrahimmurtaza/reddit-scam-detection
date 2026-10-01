@@ -27,6 +27,7 @@ import pytest
 
 from reddit_fraud_intelligence.cli import DEFAULT_CORPUS_PATH, DEFAULT_SEED, main
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
+from reddit_fraud_intelligence.domains import LinkDomain, Unresolved
 
 REPO_ROOT = Path(__file__).parent.parent
 COMMITTED_DOMAINS = REPO_ROOT / "data" / "domains" / "post-domains.jsonl"
@@ -276,7 +277,7 @@ def test_links_with_no_usable_host_are_reported_with_a_reason(tmp_path: Path) ->
         "no_host",
         "public_suffix",
         "address",
-        "undecodable_host",
+        "invalid_host",
         "malformed",
     ]
     assert maybe_text(links[0], "domain") == "vantage-ledger.example"
@@ -326,7 +327,12 @@ def test_a_link_that_cannot_be_parsed_at_all_does_not_stop_the_run(tmp_path: Pat
     corpus = write_corpus(
         tmp_path / "corpus.jsonl",
         (
-            post("syn_p_9003", "syn_broken_0003", "http://[::1/pay", "https://anvil-labels.example/apply"),
+            post(
+                "syn_p_9003",
+                "syn_broken_0003",
+                "http://[::1/pay",
+                "https://anvil-labels.example/apply",
+            ),
             post("syn_p_9004", "syn_fine_0004", "https://pellworthwork.example/apply"),
         ),
     )
@@ -337,6 +343,60 @@ def test_a_link_that_cannot_be_parsed_at_all_does_not_stop_the_run(tmp_path: Pat
 
 
 # --- the shape of the output ---------------------------------------------------
+
+
+def test_the_report_states_the_registration_list_for_each_post(tmp_path: Path) -> None:
+    """The list a post resolves to, printed, not only the per-link table under it.
+
+    The ticket asks that the domain list for any post be inspectable by eye. A
+    table with one row per link answers a different question — what each link was —
+    and a post that reaches one registration through three of them would print that
+    registration three times, so the list has to be stated in its own right.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9007",
+                "syn_threelinks_0007",
+                "https://novemberquill.example/catalogue",
+                "https://mirror.novemberquill.example/catalogue",
+                "https://novemberquill.example/sale",
+            ),
+        ),
+    )
+    _, report_path = run(tmp_path, corpus)
+    report = report_path.read_text(encoding="utf-8")
+
+    section = report.split("### `syn_p_9007`")[1]
+    listed = [line for line in section.splitlines() if line.startswith("Registrations:")]
+    assert listed == ["Registrations: `novemberquill.example`"]
+
+
+def test_a_link_cannot_be_both_resolved_and_unresolved() -> None:
+    """The two are two readings of one fact, and the type says so.
+
+    A link with neither would be a link the pipeline never looked at, which is the
+    one failure this whole module exists to prevent — so it is refused at
+    construction rather than discovered downstream.
+    """
+    with pytest.raises(ValueError, match="has a domain and a reason, or neither"):
+        LinkDomain(
+            link="https://vantage-ledger.example/a",
+            scheme="https",
+            host="vantage-ledger.example",
+            domain="vantage-ledger.example",
+            unresolved=Unresolved.PUBLIC_SUFFIX,
+        )
+
+    with pytest.raises(ValueError, match="has a domain and a reason, or neither"):
+        LinkDomain(
+            link="https://co.uk/",
+            scheme="https",
+            host="co.uk",
+            domain=None,
+            unresolved=None,
+        )
 
 
 def test_the_report_is_plain_text_a_reviewer_can_read_by_eye(tmp_path: Path) -> None:

@@ -137,9 +137,10 @@ Two things are stated rather than left to be discovered. The scheme of a link is
 never consulted — `https`, `http`, `ftp` and a protocol-relative `//` all name
 the same registration, and a scheme allowlist would quietly lose infrastructure
 an operator chose the scheme for. And every link produces a row: a link that
-names no registration — a relative path, a bare `co.uk`, an IP address, one that
-will not parse — is reported with which of six reasons applied, never dropped,
-because a dropped link is indistinguishable from a post that carried none.
+names no registration — a relative path, a bare `co.uk`, an IP address, a host
+with a space in it, one that will not parse — is reported with which of six
+reasons applied, never dropped, because a dropped link is indistinguishable from
+a post that carried none. `docs/post-domains.md` names all six.
 
 ## The base rates
 

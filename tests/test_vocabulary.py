@@ -2,9 +2,12 @@
 
 Every `_Avoid_` line in `GLOSSARY.md` is a rule, so a repo-wide test checks the
 ones that can be checked mechanically. Scanned: the source, this README, the
-committed Corpus, and the generated CAFC report — the project's own prose wherever
-it lands. Not scanned: this directory, which is where the phrases live, and
-`data/cafc/base_rates.jsonl`, which holds CAFC's category names and not ours.
+committed Corpus, the resolved links, the generated CAFC report, and the generated
+registrable-domain report — the project's own prose wherever it lands. Not
+scanned: this directory, which is where the phrases live;
+`data/cafc/base_rates.jsonl`, which holds CAFC's category names and not ours; and
+`data/public-suffix/public_suffix_list.dat`, which is publicsuffix.org's text and
+not the project's.
 
 The list is deliberately phrases rather than bare words. "Feature", "adapter",
 and "input" appear on the `_Avoid_` lines for *Signal* and *Corpus Provider*,
@@ -12,6 +15,10 @@ but as guidance for naming the domain concept — banning them from Python sourc
 would forbid ordinary programming English and train the project to ignore its
 own glossary. Anything added here must be a phrase the project could never
 utter in good faith.
+
+Where one phrase is a prefix of another, only the shorter is listed: the match is
+`re.escape`d into a word-bounded pattern, so "eTLD" already covers "eTLD+1" and
+listing both would make the second a line that can never fail.
 
 URLs are removed before scanning. A citation is not prose: the CAFC extract is
 cited by its record URL, which happens to contain the path segment `/dataset/`
@@ -47,9 +54,9 @@ BANNED_PHRASES = (
     "scam type",
     "effective TLD",
     "eTLD",
-    "eTLD+1",
     "base domain",
     "second-level domain",
+    "domain suffix",
     "registered domain name",
 )
 

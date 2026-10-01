@@ -1,4 +1,4 @@
-"""Registrable domains, and the public suffix list that decides them.
+﻿"""Registrable domains, and the public suffix list that decides them.
 
 ADR-0005 puts two accounts in the same Campaign Candidate only if they share a
 registrable domain, which makes this the first thing the pipeline has to get
@@ -25,7 +25,7 @@ under it is a suffix), and an exception (`!www.ck`, which undercuts the wildcard
 beneath it). Its private section is applied too, so `attacker.github.io` is a
 registration and not a subdomain of a suffix nobody registered.
 
-Every answer that cannot be reached is `None` — a host that is a public suffix
+Every answer that cannot be reached is `None` â€” a host that is a public suffix
 with no label in front of it, and a host that cannot be read at all. A link whose
 host cannot be read is reported as unresolvable by the caller, never guessed at
 and never dropped.
@@ -62,6 +62,11 @@ _WILDCARD = "*"
 _EXCEPTION = "!"
 _CHUNK_BYTES = 1 << 20
 
+# RFC 1035. A name longer than this is not a name, and truncating one to fit is how
+# two unrelated hosts end up reported as the same domain.
+_MAX_HOST_CHARS = 253
+_MAX_LABEL_CHARS = 63
+
 
 @dataclass(frozen=True, slots=True)
 class ListFacts:
@@ -80,29 +85,39 @@ class ListFacts:
     wildcard_rules: int
 
 
+@dataclass(frozen=True, slots=True)
 class PublicSuffixes:
     """A parsed Public Suffix List, asked for the registrable domain of a host.
 
     Immutable, and built once and shared. The parse is the expensive part and the
     lookup is a walk over at most a few dozen labels, so the whole list is held in
-    three sets and every question about a host is answered from those.
+    three sets and every question about a host is answered from those. The three
+    sets are the rules and nothing else; the counts and the digest are derived, so
+    a rule cannot be in the list and missing from the figures the provenance
+    records.
     """
 
-    __slots__ = ("_exceptions", "_plain", "_wildcards", "exception_rules", "plain_rules", "wildcard_rules")
+    plain: frozenset[str]
+    wildcards: frozenset[str]
+    exceptions: frozenset[str]
 
-    def __init__(self, plain: frozenset[str], wildcards: frozenset[str], exceptions: frozenset[str]) -> None:
-        self._plain = plain
-        self._wildcards = wildcards
-        self._exceptions = exceptions
-        self.plain_rules = len(plain)
-        self.wildcard_rules = len(wildcards)
-        self.exception_rules = len(exceptions)
+    @property
+    def plain_rules(self) -> int:
+        return len(self.plain)
+
+    @property
+    def wildcard_rules(self) -> int:
+        return len(self.wildcards)
+
+    @property
+    def exception_rules(self) -> int:
+        return len(self.exceptions)
 
     @classmethod
     def parse(cls, text: str) -> PublicSuffixes:
         """Read the list as published. Comments, blank lines, and CRLF are all
         things the file arrives with, and a rule that keeps any of them matches
-        nothing — silently, which is why the parse is not a `split`."""
+        nothing â€” silently, which is why the parse is not a `split`."""
         plain: set[str] = set()
         wildcards: set[str] = set()
         exceptions: set[str] = set()
@@ -132,18 +147,28 @@ class PublicSuffixes:
         release and a changed rule always does.
         """
         for rules, prefix in (
-            (self._plain, ""),
-            (self._wildcards, f"{_WILDCARD}."),
-            (self._exceptions, _EXCEPTION),
+            (self.plain, ""),
+            (self.wildcards, f"{_WILDCARD}."),
+            (self.exceptions, _EXCEPTION),
         ):
             for rule in sorted(rules):
                 yield f"{prefix}{rule}"
 
+    def rules_digest(self) -> str:
+        """SHA-256 of the rules rather than of the file they arrived in.
+
+        Both digests are recorded, and they answer different questions. The one
+        over the bytes is what a reader compares against publicsuffix.org. This one
+        changes when a rule changes and not when the file is reformatted, so it is
+        the one to watch when a grouping result moves.
+        """
+        return hashlib.sha256("\n".join(self.rules()).encode("utf-8")).hexdigest()
+
     def registrable_domain(self, host: str | None) -> str | None:
         """The domain somebody registered, or `None` when there is not one.
 
-        `None` covers both a host that is nothing but a public suffix — `co.uk`,
-        `uk`, `github.io` — and a host that cannot be read at all. The two are
+        `None` covers both a host that is nothing but a public suffix â€” `co.uk`,
+        `uk`, `github.io` â€” and a host that cannot be read at all. The two are
         different failures and the caller reports them differently, so nothing here
         distinguishes them: a link with a host that cannot be read has no domain,
         and a link to a bare public suffix has no domain either, and both are
@@ -162,21 +187,21 @@ class PublicSuffixes:
         """How many labels, counting from the right, are the public suffix.
 
         An exception rule beats every other rule that matches, and its public
-        suffix is the rule with its leftmost label removed — that is what makes
+        suffix is the rule with its leftmost label removed â€” that is what makes
         `www.ck` a registration under a `*.ck` that would otherwise claim it.
         Otherwise the longest matching rule wins, whichever kind it is. With
         nothing matching, the prevailing rule is `*`: the TLD alone is the suffix.
         """
         for index in range(len(labels)):
-            if ".".join(labels[index:]) in self._exceptions:
+            if ".".join(labels[index:]) in self.exceptions:
                 return max(len(labels) - index - 1, 1)
 
         longest = 1
         for index in range(len(labels)):
             candidate = len(labels) - index
-            if ".".join(labels[index:]) in self._plain:
+            if ".".join(labels[index:]) in self.plain:
                 longest = max(longest, candidate)
-            elif labels[index + 1 :] and ".".join(labels[index + 1 :]) in self._wildcards:
+            elif labels[index + 1 :] and ".".join(labels[index + 1 :]) in self.wildcards:
                 longest = max(longest, candidate)
         return longest
 
@@ -198,46 +223,70 @@ def to_ascii(host: str | None) -> str | None:
 
     Case, a trailing root dot, and the choice between Unicode and punycode are all
     spelling, and none of them changes who registered what, so none of them may
-    change the answer. A label too long to encode, a lone surrogate, an empty
-    host, and an IP address all return `None`: none of them is a name anybody
-    registered, and reporting one as a truncated domain would be a wrong answer
-    that looks right.
+    change the answer.
+
+    A label that is not a name is the other half of the job. `urlparse` accepts a
+    space, a `<`, or a percent sign in a host, and `idna.ToASCII` passes ASCII
+    straight through after checking only its length, so without this a link that
+    was never a URL comes back as a confident registration â€” and a grouping step
+    downstream would then have an exact domain to join on, made out of it. A label
+    is letters, digits, and hyphens, not starting or ending with a hyphen, and a
+    name is at most 253 characters. Everything else returns `None`: an empty host, a
+    lone surrogate, an address, and a host that is not a name all have no
+    registration, and reporting any of them as a truncated domain would be a wrong
+    answer that looks right.
     """
     if not host:
         return None
 
     trimmed = host.rstrip(".")
-    if not trimmed:
+    if not trimmed or len(trimmed) > _MAX_HOST_CHARS:
         return None
-
     if is_address(trimmed):
         return None
 
     labels = []
     for label in trimmed.split("."):
-        if not label:
-            return None
         try:
-            labels.append(encodings.idna.ToASCII(label).decode("ascii").lower())
+            ascii_label = encodings.idna.ToASCII(label).decode("ascii").lower()
         except (UnicodeError, ValueError):
             return None
+        if not _is_label(ascii_label):
+            return None
+        labels.append(ascii_label)
     return ".".join(labels)
 
 
-def is_address(host: str) -> bool:
-    """Whether a host is an IP address rather than a name.
+def _is_label(label: str) -> bool:
+    """Whether a label is one a domain name can be made of. `xn--` labels pass."""
+    if not 0 < len(label) <= _MAX_LABEL_CHARS:
+        return False
+    if label.startswith("-") or label.endswith("-"):
+        return False
+    return all(
+        character.isascii() and (character.isalnum() or character == "-")
+        for character in label
+    )
 
-    Public because the caller has to tell an address from a host it merely cannot
-    read: both have no registrable domain, and they are different faults. An
-    address is not a name anybody registered, and the list has no rule for one, so
-    without this the implicit single-label rule would turn `192.0.2.1` into the
-    domain `192.0.2` and group unrelated addresses that share their first three
-    octets.
+
+def is_address(host: str) -> bool:
+    """Whether a host is an IP address, or something shaped like one.
+
+    Public because the caller has to tell an address from a host it cannot read:
+    both have no registrable domain, and they are different faults. An address is
+    not a name anybody registered, and the list has no rule for one, so without
+    this the implicit single-label rule turns `192.0.2.1` into the domain
+    `192.0.2` and groups unrelated addresses that share their first three octets.
+
+    A host whose labels are *all* digits is included even when it will not parse as
+    an address, because the alternative is worse: `1.2.3.4.5` has no TLD, so the
+    implicit rule would take `5` for one and report the domain `4.5`. No real TLD
+    is numeric, so the rule costs nothing.
     """
     try:
         ipaddress.ip_address(host.strip("[]"))
     except ValueError:
-        return False
+        return all(label.isdigit() for label in host.split("."))
     return True
 
 
@@ -259,7 +308,11 @@ def download_list(destination: Path) -> int:
 
 
 def digest(path: Path) -> str:
-    """SHA-256 of the published bytes."""
+    """SHA-256 of the published bytes, which is what the rules were read from.
+
+    Not of the parsed rules: see `PublicSuffixes.rules_digest` for that one. Both
+    are recorded, and a reader comparing against publicsuffix.org wants this.
+    """
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -271,8 +324,9 @@ def survey(path: Path) -> ListFacts:
     bytes.
     """
     payload = path.read_bytes()
-    suffixes = PublicSuffixes.parse(payload.decode("utf-8"))
-    icann, private = _sections(payload.decode("utf-8"))
+    text = payload.decode("utf-8")
+    suffixes = PublicSuffixes.parse(text)
+    icann, private = _sections(text)
 
     return ListFacts(
         exception_rules=suffixes.exception_rules,
@@ -282,8 +336,8 @@ def survey(path: Path) -> ListFacts:
         list_bytes=len(payload),
         plain_rules=suffixes.plain_rules,
         private_rules=private,
-        rules_sha256=hashlib.sha256("\n".join(suffixes.rules()).encode("utf-8")).hexdigest(),
-        sha256=hashlib.sha256(payload).hexdigest(),
+        rules_sha256=suffixes.rules_digest(),
+        sha256=digest(path),
         source_url=SOURCE_URL,
         wildcard_rules=suffixes.wildcard_rules,
     )

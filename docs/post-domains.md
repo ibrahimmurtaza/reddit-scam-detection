@@ -36,14 +36,26 @@ as the path.
 **Multi-part public suffixes are resolved from the published list, not from a
 constant.** `co.uk` is a public suffix: nobody registers it, so it is never the
 answer, and `example.co.uk` is what somebody registered. A rule written by hand
-would be wrong the first time a suffix appeared that nobody had thought of, so the
-list is published at `data/public-suffix/public_suffix_list.dat` and read from there. Its private
-section is applied too: a hosting platform hands out subdomains of a name it owns,
-and `attacker.github.io` is a registration rather than a subdomain of a suffix.
+would be wrong the first time a suffix appeared that nobody had thought of, so
+the list is published at:
+
+    data/public-suffix/public_suffix_list.dat
+
+Its private section is applied too: a hosting platform hands out subdomains of a
+name it owns, and `attacker.github.io` is a registration rather than a subdomain
+of a suffix.
+
+A host is offered to the list only once it has been shown to be a name — letters,
+digits, and hyphens, no longer than 253 characters, not an address. `urlparse`
+accepts a space or a `<` in a host and the punycode conversion passes ASCII
+straight through, so without that check a link which was never a URL comes back
+as a confident registration, and the grouping step would then have an exact domain
+to join on, built out of it. A wrong domain that looks right is the one failure
+this step cannot afford.
 
 Every link produces a row, including a post that links nothing. A link that names
 no registration is not dropped: it is reported with the reason, which is one of
-`relative`, `no_host`, `public_suffix`, `address`, `undecodable_host`, `malformed`.
+`relative`, `no_host`, `public_suffix`, `address`, `invalid_host`, `malformed`.
 
 ## The registrations in the Corpus
 
@@ -74,11 +86,15 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0005` · `syn_northwindhire_7736`
 
+Registrations: `signal-harbor.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://signal-harbor.example/roles/annotation` | `signal-harbor.example` | **`signal-harbor.example`** |
 
 ### `syn_p_0001` · `syn_quantproof_2841`
+
+Registrations: `vantage-ledger.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -86,11 +102,15 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0002` · `syn_harborlight_5517`
 
+Registrations: `vantage-ledger.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://mirror.vantage-ledger.example/month-log` | `mirror.vantage-ledger.example` | **`vantage-ledger.example`** |
 
 ### `syn_p_0006` · `syn_clearpathwork_3184`
+
+Registrations: `signal-harbor.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -98,11 +118,15 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0003` · `syn_pinecrest_9032`
 
+Registrations: `vantage-ledger.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://vantage-ledger.example/entry` | `vantage-ledger.example` | **`vantage-ledger.example`** |
 
 ### `syn_p_0007` · `syn_northwindhire_7736`
+
+Registrations: `signal-harbor.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -110,17 +134,23 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0016` · `syn_rivermill_6620`
 
+Registrations: `rivermill-bikes.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://rivermill-bikes.example/club-ride` | `rivermill-bikes.example` | **`rivermill-bikes.example`** |
 
 ### `syn_p_0004` · `syn_quantproof_2841`
 
+Registrations: `vantage-ledger.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://vantage-ledger.example/month-log` | `vantage-ledger.example` | **`vantage-ledger.example`** |
 
 ### `syn_p_0014` · `syn_pellworth_3196`
+
+Registrations: `hopcut.example`, `pellworthwork.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -129,11 +159,15 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0015` · `syn_rivermill_4417`
 
+Registrations: `rivermill-bikes.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://rivermill-bikes.example/services/winter` | `rivermill-bikes.example` | **`rivermill-bikes.example`** |
 
 ### `syn_p_0012` · `syn_draycott_5583`
+
+Registrations: `anvil-labels.example`, `hopcut.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -142,6 +176,8 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0013` · `syn_underhill_7420`
 
+Registrations: `hopcut.example`, `underhilltalent.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://underhilltalent.example/apply` | `underhilltalent.example` | **`underhilltalent.example`** |
@@ -149,11 +185,15 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0025` · `syn_lanternrow_5548`
 
+Registrations: `vantage-ledgers.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://vantage-ledgers.example/roles/bookkeeping` | `vantage-ledgers.example` | **`vantage-ledgers.example`** |
 
 ### `syn_p_0017` · `syn_rivermill_9085`
+
+Registrations: `rivermill-bikes.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -161,11 +201,15 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0010` · `syn_veldtrail_5502`
 
+Registrations: `rimcure.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://rimcure.example/trueing-notes` | `rimcure.example` | **`rimcure.example`** |
 
 ### `syn_p_0022` · `syn_teasdale_4405`
+
+Registrations: `biopage.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -173,17 +217,23 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0011` · `syn_marrowgate_6205`
 
+Registrations: `single-run.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://single-run.example/ribeye-timing` | `single-run.example` | **`single-run.example`** |
 
 ### `syn_p_0009` · `syn_thistledown_9088`
 
+Registrations: `plainsaw.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://plainsaw.example/bench` | `plainsaw.example` | **`plainsaw.example`** |
 
 ### `syn_p_0018` · `syn_novemberquill_2260`
+
+Registrations: `biopage.example`, `novemberquill.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -192,11 +242,15 @@ of links, not a grouping: deciding which accounts belong together is the next st
 
 ### `syn_p_0019` · `syn_halverson_8815`
 
+Registrations: `biopage.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://biopage.example/halverson` | `biopage.example` | **`biopage.example`** |
 
 ### `syn_p_0021` · `syn_greyloch_6612`
+
+Registrations: `pastevault.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |
@@ -208,6 +262,8 @@ No links. Nothing to resolve, and nothing for a grouping to join it by.
 
 ### `syn_p_0023` · `syn_wrenfield_3308`
 
+Registrations: `hopcut.example`, `pastevault.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://pastevault.example/phrase-list` | `pastevault.example` | **`pastevault.example`** |
@@ -215,17 +271,23 @@ No links. Nothing to resolve, and nothing for a grouping to join it by.
 
 ### `syn_p_0026` · `syn_ashgrove_3318`
 
+Registrations: `signal-harbour.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://signal-harbour.example/jobs/picking` | `signal-harbour.example` | **`signal-harbour.example`** |
 
 ### `syn_p_0020` · `syn_pennyfarthing_8834`
 
+Registrations: `biopage.example`
+
 | Link | Host | Registrable domain |
 | --- | --- | --- |
 | `https://biopage.example/pennyfarthing` | `biopage.example` | **`biopage.example`** |
 
 ### `syn_p_0024` · `syn_marlowe_9960`
+
+Registrations: `pastevault.example`
 
 | Link | Host | Registrable domain |
 | --- | --- | --- |

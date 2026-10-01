@@ -437,11 +437,18 @@ def _post_domains(
     *, corpus_path: Path, list_path: Path, domains_path: Path, report_path: Path
 ) -> int:
     _refuse_shared_paths(
-        {"the Corpus": corpus_path, "the report": report_path, "the resolved links": domains_path}
+        {
+            "the Corpus": corpus_path,
+            "the report": report_path,
+            "the resolved links": domains_path,
+        }
     )
     for what, path in (("the Corpus", corpus_path), ("the Public Suffix List", list_path)):
         if not path.exists():
-            raise SystemExit(f"{what} is not there: {path}. Run `rfi generate-corpus` and `rfi fetch-suffix-list` first.")
+            raise SystemExit(
+                f"{what} is not there: {path}. Run `rfi generate-corpus` and "
+                "`rfi fetch-suffix-list` first."
+            )
 
     suffixes = PublicSuffixes.read(list_path)
     rows = post_domains(read_corpus(corpus_path), suffixes)
@@ -450,7 +457,10 @@ def _post_domains(
     _write_text(report_path, render_domains_report(facts, rows))
 
     print(f"corpus         {corpus_path} ({facts.posts} posts, {facts.accounts} accounts)")
-    print(f"links          {facts.links} ({facts.resolved_links} resolved, {facts.unresolved_links} unresolvable)")
+    print(
+        f"links          {facts.links} ({facts.resolved_links} resolved, "
+        f"{facts.unresolved_links} unresolvable)"
+    )
     print(f"domains        {facts.domains} distinct registrable domains")
     print(f"suffix list    {list_path} ({facts.suffix_list_bytes:,} bytes)")
     print(f"resolved links {domains_path}")

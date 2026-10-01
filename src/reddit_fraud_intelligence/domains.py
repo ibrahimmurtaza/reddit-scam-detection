@@ -48,27 +48,40 @@ class Unresolved(StrEnum):
     Each is a different fault with a different fix, and the pipeline needs to tell
     them apart: a relative link is a broken link, a scheme with no host is a
     Contact Point that ticket #11 has to read, a bare public suffix is a link
-    somebody has no domain for, and an address is infrastructure that is not a
-    domain at all.
+    somebody has no domain for, an address is infrastructure that is not a domain at
+    all, and a host that is not a name is a link that was never a URL.
     """
 
     RELATIVE = "relative"
     NO_HOST = "no_host"
     PUBLIC_SUFFIX = "public_suffix"
     ADDRESS = "address"
-    UNDECODABLE_HOST = "undecodable_host"
+    INVALID_HOST = "invalid_host"
     MALFORMED = "malformed"
 
 
 @dataclass(frozen=True, slots=True)
 class LinkDomain:
-    """One link and what it names. `domain` is None exactly when `unresolved` is not."""
+    """One link and what it names.
+
+    `domain` and `unresolved` are two readings of the same fact, so the pair is
+    checked here rather than left to every caller: a link has a registration or it
+    has a reason it does not, and a link with neither would be a link the pipeline
+    forgot to look at.
+    """
 
     link: str
     scheme: str
     host: str | None
     domain: str | None
     unresolved: Unresolved | None
+
+    def __post_init__(self) -> None:
+        if (self.domain is None) == (self.unresolved is None):
+            raise ValueError(
+                f"{self.link!r} has a domain and a reason, or neither: "
+                f"domain={self.domain!r}, unresolved={self.unresolved!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,28 +149,24 @@ def resolve_link(link: str, suffixes: PublicSuffixes) -> LinkDomain:
             unresolved=Unresolved.NO_HOST if scheme else Unresolved.RELATIVE,
         )
 
-    reason = _unreasoned(host, suffixes)
-    if reason is not None:
-        return LinkDomain(link=link, scheme=scheme, host=host, domain=None, unresolved=reason)
-
-    domain = suffixes.registrable_domain(host)
-    return LinkDomain(link=link, scheme=scheme, host=host, domain=domain, unresolved=None)
+    domain, unresolved = _registration(host, suffixes)
+    return LinkDomain(link=link, scheme=scheme, host=host, domain=domain, unresolved=unresolved)
 
 
-def _unreasoned(host: str, suffixes: PublicSuffixes) -> Unresolved | None:
-    """The reason this host names no registration, or None when it names one.
+def _registration(host: str, suffixes: PublicSuffixes) -> tuple[str | None, Unresolved | None]:
+    """The registration a host names, or the reason it names none. Never both.
 
-    Split from `resolve_link` so the two questions stay apart: a host is offered to
-    the list only once it has been shown to be readable as a name, because a
-    truncated reading of a host is a wrong domain that looks right.
+    The host is offered to the list only once it has been shown to be readable as a
+    name, because a truncated reading of a host is a wrong domain that looks right.
     """
     if is_address(host):
-        return Unresolved.ADDRESS
+        return None, Unresolved.ADDRESS
     if to_ascii(host) is None:
-        return Unresolved.UNDECODABLE_HOST
-    if suffixes.registrable_domain(host) is None:
-        return Unresolved.PUBLIC_SUFFIX
-    return None
+        return None, Unresolved.INVALID_HOST
+    domain = suffixes.registrable_domain(host)
+    if domain is None:
+        return None, Unresolved.PUBLIC_SUFFIX
+    return domain, None
 
 
 def post_domains(
@@ -191,7 +200,7 @@ def survey(
         links=len(links),
         posts=len(rows),
         resolved_links=len(resolved),
-        rules_sha256=hashlib.sha256("\n".join(suffixes.rules()).encode("utf-8")).hexdigest(),
+        rules_sha256=suffixes.rules_digest(),
         suffix_list_bytes=len(list_bytes),
         suffix_list_path=list_path.as_posix(),
         suffix_list_sha256=hashlib.sha256(list_bytes).hexdigest(),
@@ -202,16 +211,14 @@ def survey(
 def write_post_domains(path: Path, rows: Sequence[PostDomains]) -> None:
     def objects() -> Iterator[JsonObject]:
         for row in rows:
-            record = asdict(row)
-            record["links"] = [
-                {**asdict(link), "unresolved": None if link.unresolved is None else link.unresolved.value}
-                for link in row.links
-            ]
-            record["domains"] = list(row.domains)
+            # `Unresolved` is a `StrEnum`, so it serialises as its own value and
+            # needs no conversion here. `domains` is derived rather than a field,
+            # because the file a reviewer reads is a list of registrations and not
+            # a list of URLs.
+            record = {**asdict(row), "domains": list(row.domains)}
             yield record
 
     write_lines(path, objects())
-
 
 def render_report(facts: DomainFacts, rows: Sequence[PostDomains]) -> str:
     """The reader-facing report, generated from the rows rather than written beside them."""
@@ -256,10 +263,22 @@ as the path.
 **Multi-part public suffixes are resolved from the published list, not from a
 constant.** `co.uk` is a public suffix: nobody registers it, so it is never the
 answer, and `example.co.uk` is what somebody registered. A rule written by hand
-would be wrong the first time a suffix appeared that nobody had thought of, so the
-list is published at `{facts.suffix_list_path}` and read from there. Its private
-section is applied too: a hosting platform hands out subdomains of a name it owns,
-and `attacker.github.io` is a registration rather than a subdomain of a suffix.
+would be wrong the first time a suffix appeared that nobody had thought of, so
+the list is published at:
+
+    {facts.suffix_list_path}
+
+Its private section is applied too: a hosting platform hands out subdomains of a
+name it owns, and `attacker.github.io` is a registration rather than a subdomain
+of a suffix.
+
+A host is offered to the list only once it has been shown to be a name — letters,
+digits, and hyphens, no longer than 253 characters, not an address. `urlparse`
+accepts a space or a `<` in a host and the punycode conversion passes ASCII
+straight through, so without that check a link which was never a URL comes back
+as a confident registration, and the grouping step would then have an exact domain
+to join on, built out of it. A wrong domain that looks right is the one failure
+this step cannot afford.
 
 Every link produces a row, including a post that links nothing. A link that names
 no registration is not dropped: it is reported with the reason, which is one of
@@ -301,14 +320,26 @@ def _registration_table(rows: Sequence[PostDomains]) -> str:
 def _post_section(row: PostDomains) -> str:
     heading = f"### `{row.post_id}` · `{row.account}`\n"
     if not row.links:
-        return f"{heading}\nNo links. Nothing to resolve, and nothing for a grouping to join it by.\n"
+        return (
+            f"{heading}\nNo links. Nothing to resolve, and nothing for a grouping "
+            "to join it by.\n"
+        )
 
-    lines = ["| Link | Host | Registrable domain |", "| --- | --- | --- |"]
+    # The registration list first, because that is what the ticket asks a reader to
+    # be able to see for any post, and the table below is the reasoning behind it.
+    listed = ", ".join(f"`{domain}`" for domain in row.domains)
+    lines = [
+        f"Registrations: {listed}",
+        "",
+        "| Link | Host | Registrable domain |",
+        "| --- | --- | --- |",
+    ]
     for link in row.links:
         host = f"`{link.host}`" if link.host is not None else "—"
-        if link.domain is not None:
-            resolved = f"**`{link.domain}`**"
-        else:
-            resolved = f"**unresolvable** — {link.unresolved.value if link.unresolved else 'unresolved'}"
+        resolved = (
+            f"**`{link.domain}`**"
+            if link.domain is not None
+            else f"**unresolvable** — {link.unresolved}"
+        )
         lines.append(f"| `{link.link}` | {host} | {resolved} |")
     return heading + "\n" + "\n".join(lines) + "\n"
