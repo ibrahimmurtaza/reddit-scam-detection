@@ -1,0 +1,2 @@
+{"rationale":"A registration that two or more accounts reach is the structure a Campaign Candidate is built on, and it is the one thing the text of a post cannot show a reviewer on its own.","signal":"domain_frequency","weight":30}
+{"rationale":"Two registrations one edit apart is deliberate far more often than it is two businesses choosing names independently, and naming the pair tells a reviewer which of the two to look at first.","signal":"domain_lookalike","weight":20}
