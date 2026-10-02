@@ -33,7 +33,8 @@ uv sync
 uv run rfi generate-corpus
 ```
 
-That writes four files, each with one reader:
+That writes four files; the other three in the table below are written by later
+steps, which are named against each row. Every file has one reader:
 
 | File | Holds | Read by |
 | --- | --- | --- |
