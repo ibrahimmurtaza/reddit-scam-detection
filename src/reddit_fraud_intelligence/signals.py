@@ -102,9 +102,6 @@ class Weights:
     def of(self, signal: SignalName) -> int:
         return next(entry.weight for entry in self.entries if entry.signal is signal)
 
-    def rationale(self, signal: SignalName) -> str:
-        return next(entry.rationale for entry in self.entries if entry.signal is signal)
-
     @classmethod
     def read(cls, path: Path) -> Weights:
         """The weight set, checked row by row and as a whole.
@@ -114,18 +111,21 @@ class Weights:
         rationale left blank are all mistakes a reader could not see in the output, and
         each of them changes what the score means.
 
-        The set is checked as a whole for the same reason from the other side. A Signal
+        The set is checked as a whole for the same reason from the other side, and the
+        comparison is over the list rather than the set of names: a row repeated passes a
+        set comparison and would count its weight twice, inflating the denominator every
+        score is a share of while the breakdown still named one Signal per post. A Signal
         with no published weight would either be scored at zero — a Signal the output
         names and the arithmetic ignores — or dropped, which is the failure the
-        published-weights claim is made of. Both directions are refused, so the file
-        and this module cannot describe different sets of Signals.
+        published-weights claim is made of. Every direction is refused, so the file and
+        this module cannot describe different sets of Signals.
         """
         entries = tuple(
-            _weight(path, number, line) for number, line in enumerate(_lines(path), start=1)
+            _weight(path, number, text) for number, text in _lines(path)
         )
-        published = {entry.signal for entry in entries}
+        published = [entry.signal for entry in entries]
         known = set(SignalName)
-        if published != known:
+        if sorted(published) != sorted(known):
             raise ValueError(
                 f"{path.as_posix()} publishes {sorted(signal.value for signal in published)}, "
                 f"and this module computes {sorted(signal.value for signal in known)}; "
@@ -332,16 +332,16 @@ def _confusable(registrations: Sequence[str]) -> dict[str, tuple[str, ...]]:
     """
     found: dict[str, list[str]] = {domain: [] for domain in registrations}
     for index, mine in enumerate(registrations):
-        my_label, my_suffix = _split(mine)
+        my_label, my_suffix = _label_and_suffix(mine)
         for other in registrations[index + 1 :]:
-            their_label, their_suffix = _split(other)
+            their_label, their_suffix = _label_and_suffix(other)
             if my_suffix == their_suffix and _one_edit_apart(my_label, their_label):
                 found[mine].append(other)
                 found[other].append(mine)
     return {domain: tuple(sorted(others)) for domain, others in found.items()}
 
 
-def _split(registration: str) -> tuple[str, str]:
+def _label_and_suffix(registration: str) -> tuple[str, str]:
     """A registration into the label somebody registered and the Public Suffix behind
     it. A Registrable Domain is exactly one label plus its Public Suffix, so the first
     dot is the join."""
@@ -355,9 +355,11 @@ def _one_edit_apart(mine: str, theirs: str) -> bool:
     Damerau-Levenshtein bounded at one, walked row by row: a transposition is the one
     case an edit-distance function that only counts insertions, deletions, and
     substitutions misses, and `ledder` for `ledger` is the copy somebody makes by
-    typing it in the wrong order, so it has to count. The band is kept to the row above
-    and the row above that, because once two rows differ by more than one the labels
-    are more than one edit apart and there is nothing left to check.
+    typing it in the wrong order, so it has to count. The walk stops as soon as a whole
+    row is above one: every cell in a row one from the top of the matrix is built from
+    a cell of the two rows above plus one, and the transposition term is one of those,
+    so a row that has already lost cannot come back — and neither can any row after it.
+    That is what makes the bound at one an answer rather than an approximation.
     """
     if abs(len(mine) - len(theirs)) > 1:
         return False
@@ -634,10 +636,10 @@ def _figures(scored: Scored) -> str:
     return "\n".join(f"  {name.ljust(width)}  {value}" for name, value in fields_out)
 
 
-def _count(number: int, noun: str, plural: str | None = None) -> str:
+def _count(number: int, noun: str) -> str:
     """One count, agreeing with its noun. Every figure here is small, and a reader
     seeing "1 accounts" stops to wonder whether the figure is right."""
-    return f"{number} {noun if number == 1 else plural or f'{noun}s'}"
+    return f"{number} {noun if number == 1 else f"{noun}s"}"
 
 
 def _row(cells: Sequence[str], widths: Sequence[int]) -> str:
@@ -655,8 +657,8 @@ def _index(scores: Sequence[PostScore]) -> str:
 
     A post carrying no Signal is not a line here: its score is zero and there is no
     arithmetic to show for it, so all of them would be. The count is in the figures
-    above and every one of them is in the file, which is where the fifteen posts of
-    this Corpus that carry nothing are.
+    above and every one of them is in the file, which is where the posts of this Corpus
+    that carry nothing are.
     """
     if not scores:
         return "No post in this Corpus carries a Signal."
@@ -751,8 +753,8 @@ def _confusable_table(scored: Scored) -> str:
 
     width = max(len(pair.domain) for pair in pairs)
     heading = (
-        f"confusable  {_count(len(pairs), 'pair', 'pairs')} one edit apart under the "
-        "same Public Suffix; no pair is named as the copy of the other"
+        f"confusable  {_count(len(pairs), 'pair')} one edit apart under the same Public "
+        "Suffix; no pair is named as the copy of the other"
     )
     return "\n".join(
         [
@@ -764,11 +766,25 @@ def _confusable_table(scored: Scored) -> str:
 
 def _weights_table(scored: Scored) -> str:
     """The published weights and their reasons, read out of the file rather than
-    restated, so the table and the data cannot drift apart."""
-    lines = [f"weights  {scored.weights.path}"]
-    for entry in scored.weights.entries:
-        lines.append(f"  {entry.signal.value.ljust(20)}  {str(entry.weight).rjust(3)}  {entry.rationale}")
-    return "\n".join(lines)
+    restated, so the table and the data cannot drift apart.
+
+    The columns are as wide as the data rather than as wide as this weight set: a
+    Signal added in ticket #10 with a longer name or a weight over three digits would
+    otherwise run into its own reason.
+    """
+    entries = scored.weights.entries
+    name = max(len(entry.signal.value) for entry in entries)
+    figure = max(len(str(entry.weight)) for entry in entries)
+    return "\n".join(
+        [
+            f"weights  {scored.weights.path}",
+            *(
+                f"  {entry.signal.value.ljust(name)}  {str(entry.weight).rjust(figure)}  "
+                f"{entry.rationale}"
+                for entry in entries
+            ),
+        ]
+    )
 
 
 def _footer(scored: Scored) -> str:
@@ -800,11 +816,17 @@ A Planted Campaign that leans on a shared host is lost with the host, so a score
 this way is a lower bound for the same reason a recovery figure is."""
 
 
-def _lines(path: Path) -> Iterator[str]:
-    """Every row of the file, with blank lines skipped as in every other file here."""
-    for line in path.read_text(encoding="utf-8").splitlines():
+def _lines(path: Path) -> Iterator[tuple[int, str]]:
+    """Every row of the file with the line number a reader would call it by.
+
+    The number is the physical line, not the ordinal of the non-blank ones, because
+    the refusal it appears in has to point at the line a reader sees in their editor:
+    counting only the rows that parsed would move every complaint up a line as soon as
+    somebody left a blank one above it.
+    """
+    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if line.strip():
-            yield line
+            yield number, line
 
 
 def _weight(path: Path, number: int, line: str) -> SignalWeight:

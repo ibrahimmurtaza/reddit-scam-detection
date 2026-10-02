@@ -260,11 +260,19 @@ uv run rfi policy-score   # reads the Corpus and the three published lists, writ
 Two Signals reach the score, and both are read from links rather than from text.
 `domain_frequency` fires when a post links a Registrable Domain two or more accounts
 in the Corpus reach, and prints those two figures beside it — `4 posts by 3 accounts`
-is the claim, and `data/domains/post-domains.jsonl` is where a reader checks it.
+is the claim, and `data/domains/post-domains.jsonl` is where a reader counts it.
 `domain_lookalike` fires when a post links a registration one edit away from another
 registration in the Corpus, under the same Public Suffix, and names the other one.
 An edit is an insertion, a deletion, a substitution, or a transposition, because a
 copy of a name is made by doing exactly one of those to it.
+
+That first Signal is not computable from one post, and the project says so rather than
+rounding the claim up: it counts how much of the Corpus reaches a registration. What it
+can promise is that the counts are printed and checkable, and
+`tests/test_policy_score.py` counts them a second time off `post-domains.jsonl` —
+published by a different command over the same Corpus — and requires the two counts to
+agree. Read the post, read the registration table printed beside the Signal, and the
+posts and accounts that put it there are there to be found.
 
 Both Signals need the rest of the Corpus's links and neither needs anything about an
 account. That is the whole of the difference between a Signal and a thing that is not
@@ -285,6 +293,11 @@ is reached by four accounts here, more than any planted registration, and handin
 that to a Signal would reward every post that used a service everybody uses. A
 Planted Campaign leaning on a shared host is lost with it, the same lower bound the
 grouping reports.
+
+One more thing the score cannot do yet: it cannot rank. Two Signals give four subsets
+and this Corpus takes all four, so seven posts tie at 100 and three at 60. Breaking
+those ties is ticket #16's job and not this command's, and the index is ordered by
+score and then by post id so the table is at least stable.
 
 The lookalike Signal fires on both members of a pair and names neither as the copy,
 because the spelling does not say which imitates which: the Corpus plants a

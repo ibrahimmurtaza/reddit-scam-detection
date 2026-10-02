@@ -745,6 +745,7 @@ def _policy_score(
             "the Corpus": corpus_path,
             "the scores": scores_path,
             "the weight set": weights_path,
+            "the known-shared infrastructure list": shared_path,
         }
     )
     _require_present(

@@ -72,10 +72,11 @@ Signal.
 _Avoid_: Feature, indicator, heuristic, input
 
 **Link Signal**:
-A Signal read from a post's links rather than from its text — how much of the Corpus
-reaches a Registrable Domain, whether that registration is one edit away from
-another. A Link Signal may need the rest of the Corpus's links to compute; it never
-needs anything about an account.
+A Signal read from a post's links rather than from its text — how much of the
+Corpus reaches a Registrable Domain, whether that registration is one edit away from
+another. A Link Signal may need the rest of the Corpus's links to compute, so what it
+counted is printed beside it and has to be checkable against the resolved links. It
+never reads anything about an account.
 _Avoid_: Domain Signal, infrastructure signal
 
 **Review Queue**:
@@ -86,7 +87,9 @@ _Avoid_: Inbox, dashboard, results
 
 **Policy Score**:
 The additive 0-100 severity shown to a reviewer, computed from weighted Signals
-with weights chosen and published by this project. Auditable, opinionated, and
+with weights chosen and published by this project. The weights of the Signals a post
+carries are added up and taken as a share of every published weight, so a Signal can
+be added later without any existing score exceeding 100. Auditable, opinionated, and
 not a probability.
 _Avoid_: Risk score, score, scam score
 

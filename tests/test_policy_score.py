@@ -34,6 +34,7 @@ COMMITTED_WEIGHTS = REPO_ROOT / "data" / "signals" / "weights.jsonl"
 COMMITTED_SCORES = REPO_ROOT / "data" / "signals" / "policy-scores.jsonl"
 COMMITTED_CORPUS = REPO_ROOT / "data" / "corpus" / "corpus.jsonl"
 COMMITTED_NUISANCE = REPO_ROOT / "data" / "corpus" / "nuisance.jsonl"
+COMMITTED_POST_DOMAINS = REPO_ROOT / "data" / "domains" / "post-domains.jsonl"
 
 
 class _Opened:
@@ -171,12 +172,6 @@ def domain(item: Row) -> str:
     return text(item, "domain")
 
 
-def figure(item: Row, field: str) -> int:
-    value = item[field]
-    assert isinstance(value, int), f"{field} is not a count: {value!r}"
-    return value
-
-
 def confusable_pairs(printed: str) -> set[tuple[str, str]]:
     """Every pair the output names as confusable, read out of the table."""
     section = printed.split("\nconfusable  ")[1].split("\n\n")[0]
@@ -236,8 +231,8 @@ def test_a_registration_two_accounts_reach_carries_the_domain_frequency_signal(
     for post_id in ("syn_p_0001", "syn_p_0002", "syn_p_0003"):
         shown = evidence(written[post_id], "domain_frequency")
         assert domain(items(shown)[0]) == "vantage-ledger.example", post_id
-        assert figure(items(shown)[0], "posts") == 3, post_id
-        assert figure(items(shown)[0], "accounts") == 2, post_id
+        assert count(items(shown)[0], "posts") == 3, post_id
+        assert count(items(shown)[0], "accounts") == 2, post_id
 
 
 def test_the_frequency_figures_are_the_corpus_reach_and_not_this_posts_share_of_it(
@@ -265,8 +260,8 @@ def test_the_frequency_figures_are_the_corpus_reach_and_not_this_posts_share_of_
     scores_path, _ = run(tmp_path, corpus)
 
     shown = evidence(by_post(scores_path)["syn_p_0001"], "domain_frequency")
-    assert figure(items(shown)[0], "posts") == 5
-    assert figure(items(shown)[0], "accounts") == 4
+    assert count(items(shown)[0], "posts") == 5
+    assert count(items(shown)[0], "accounts") == 4
 
 
 def test_a_registration_the_shared_list_withholds_carries_no_frequency_signal(
@@ -627,6 +622,48 @@ def test_a_signal_is_counted_once_however_many_registrations_fire_it(tmp_path: P
     assert count(row, "score") == 60
 
 
+def test_the_frequency_figures_can_be_counted_off_the_published_resolved_links(
+    tmp_path: Path,
+) -> None:
+    """The evidence is recomputed here from a different file, which is what makes it
+    evidence rather than an assertion.
+
+    `domain_frequency` cannot be worked out from one post: it counts how much of the
+    Corpus reaches a registration, so the two figures it prints are only auditable if a
+    reader can go and count them. This counts them again from
+    `data/domains/post-domains.jsonl` — the file `rfi post-domains` publishes, produced
+    by a different command over the same Corpus — and requires the two counts to agree.
+
+    That is the honest form of the auditability claim for this Signal. It is not "read
+    the post and you have the score": it is "read the post, read the registration table
+    beside the Signal, and find the posts and accounts that put it there". The withheld
+    registrations are excluded here as they are there, which is what the withheld column
+    of the printed table is for.
+    """
+    resolved = rows(COMMITTED_POST_DOMAINS)
+    posts: dict[str, set[str]] = {}
+    accounts: dict[str, set[str]] = {}
+    for row in resolved:
+        for registration in texts(row, "domains"):
+            posts.setdefault(registration, set()).add(text(row, "post_id"))
+            accounts.setdefault(registration, set()).add(text(row, "account"))
+
+    scores_path, _ = run(tmp_path)
+    written = rows(scores_path)
+    checked = 0
+
+    for row in written:
+        if "domain_frequency" not in signals(row):
+            continue
+        for item in items(evidence(row, "domain_frequency")):
+            registration = domain(item)
+            assert count(item, "posts") == len(posts[registration]), registration
+            assert count(item, "accounts") == len(accounts[registration]), registration
+            checked += 1
+
+    assert checked >= 9, f"only {checked} figures were checked off the resolved links"
+
+
 def test_the_console_prints_the_arithmetic_beside_the_score(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -758,7 +795,7 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
     assert count(after["syn_p_0006"], "score") == 0
 
     # And the table quotes the file's numbers rather than a constant.
-    assert "domain_frequency       60" in after_printed
+    assert "domain_frequency  60" in after_printed
     assert "2 Signals, 80 points published" in after_printed
 
 
@@ -902,6 +939,28 @@ def test_a_weight_that_could_not_be_scored_stops_the_run(
 
     assert "broken.jsonl:2" in said
     assert complaint in said
+
+
+def test_the_same_signal_published_twice_stops_the_run(tmp_path: Path) -> None:
+    """A row repeated passes any check on the *names* in the file and then counts twice.
+
+    One name too many and one missing balance out, so a set comparison is satisfied and
+    the run goes on with the weight counted twice: every score drops, the denominator
+    inflates, and a post carrying every Signal lands well under 100 while the breakdown
+    beside it still names one of each. This is the comparison over the list rather than
+    the set of names, asked of the failure a set comparison cannot see.
+    """
+    published = write_weights(
+        tmp_path / "twice.jsonl",
+        (
+            *weight_set(domain_frequency=30, domain_lookalike=20),
+            {"signal": "domain_frequency", "weight": 30, "rationale": "the same reason"},
+        ),
+    )
+
+    said = score_with_weights(tmp_path, published)
+
+    assert "every Signal must be published exactly once" in said
 
 
 def test_a_weight_row_the_reader_cannot_check_is_refused_rather_than_skipped(
