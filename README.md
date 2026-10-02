@@ -18,9 +18,10 @@ Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cache
 and committed, with the base rate of every thematic category computed from it. The
 projection of those categories down to ten Scam Categories. And the pipeline itself,
 as far as grouping goes: the Registrable Domain of every link, then the Campaign
-Candidates those registrations produce. Link Signals, Policy Score, Review Queue,
-and evaluation are not built yet. Their tickets are numbered #9 to #28 in the
-tracker; this README is updated as they land.
+Candidates those registrations produce, with known-shared infrastructure filtered out
+as published data. Link Signals, Policy Score, Review Queue, and evaluation are not
+built yet. Their tickets are numbered #10 to #28 in the tracker; this README is
+updated as they land.
 
 ## Running it
 
@@ -39,7 +40,7 @@ That writes four files, each with one reader:
 | `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. | the pipeline |
 | `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
 | `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
-| `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. | nothing reads it yet; ticket #9 filters on it |
+| `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. Each row carries where the host came from and when it was added. | `rfi campaign-candidates` |
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | a reader, then the corroboration ticket #24 |
@@ -92,10 +93,10 @@ numbers.
 
 One limit is worth stating here rather than discovering later. Every registrable
 domain in this Corpus that more than one account uses belongs either to a Planted
-Campaign or to the shop that is planted there as a decoy, so a correctly filtered
-system produces no false groupings against domains and the interesting false
-groupings live in the shared infrastructure. Ticket #19 measures the rate; this
-Corpus is small enough to read the answer by hand.
+Campaign or to the shop that is planted there as a decoy, so the interesting false
+groupings live entirely in the shared infrastructure — which is why the filter is the
+subject of its own section above rather than a detail of the domain report. Ticket
+#19 measures the rate; this Corpus is small enough to read the answer by hand.
 
 ## Registrable domains
 
@@ -153,7 +154,7 @@ domains that put them together — and it carries its own evidence with it becau
 grouping a reader cannot check is a claim rather than a result.
 
 ```
-uv run rfi campaign-candidates   # reads the Corpus and the Public Suffix List
+uv run rfi campaign-candidates   # reads the Corpus, the Public Suffix List, and the list
 ```
 
 | File | Holds |
@@ -166,30 +167,71 @@ hostname, and beta on `signal-harbor.example` — and it refuses the case ADR-00
 written about: accounts pasting one advert word for word, with nothing shared but
 text, produce no candidate at all. `tests/test_campaign_candidates.py` writes that
 case out by hand and asserts an empty output; the Corpus's own copy of it is joined
-anyway, by the shortener those accounts all use, which is what makes it the case to
-filter next. The Corpus also plants two near-miss pairs for the same reason, and
-neither reaches a candidate, so nothing about the output depends on matching a name
-rather than a registration.
+by nothing but the shortener those accounts all use, so the filter rather than the
+absence of links is what silences it. The Corpus also plants two near-miss pairs for
+the same reason, and neither reaches a candidate, so nothing about the output depends
+on matching a name rather than a registration.
 
-Two of today's five candidates are wrong, and the command says so rather than letting
-you believe otherwise. A link shortener and a link-in-bio page are registrations like
-any other until ticket #9 filters them, so today they group every account that
-touches them: `hopcut.example` reaches four accounts on its own, and with the paste
-site it reaches six, which is `cc-01` in the output. That is what the ticket calls
-the obvious junk this step is allowed to produce, and
-`tests/test_campaign_candidates.py` pins it while it is known to be wrong, so ticket
-#9 has to replace the assertion rather than quietly add to it.
+## Known-shared infrastructure
 
-The figures at the top of the output are a partition of the Corpus's accounts:
-grouped, alone (a registration no other account reaches), and unreachable (no
-registration at all). Two accounts in the Corpus reach nothing and are therefore
-beyond any amount of grouping, which is the floor of the case rather than a defect
-in it.
+Five candidates used to come out of that grouping and two of them were junk: a link
+shortener and a link-in-bio page are Registrable Domains like any other, so they
+grouped every account that touched them — `hopcut.example` alone reached four
+accounts, and with the paste site six, which was `cc-01` in the list. They are
+withheld now, before the grouping rather than after it, so a withheld registration
+joins nothing and cannot bridge two accounts either.
 
-Nothing in this path reads the truth file. The Corpus and the published Public
-Suffix List are the whole input, and `tests/test_campaign_candidates.py` checks that
-by watching which files the run opens rather than by reading the code that decides
-what to open.
+The list of registrations to withhold is
+`data/infrastructure/shared-hosts.jsonl`, and it is read as data rather than written
+into the grouping query (ADR-0009, ADR-0011). Each row carries the host, the kind of
+service, the date it was added, and where the entry came from, and the output quotes
+the path and the date the list was last updated. Every host on it is resolved through
+the same Public Suffix List as any other link, so a host withholds the registration
+it names; a host that resolves to nothing at all stops the run rather than quietly
+filtering nothing.
+
+The consequence is measurable rather than asserted. Every run groups the Corpus twice
+— once with the shared registrations withheld and once with nothing withheld, which
+is the direct-adjacency baseline ADR-0009 asks for — and the output reports the
+difference:
+
+```
+  filtered      3 of 15 registrations withheld, removing 2 of 5 components
+```
+
+followed by what left the graph, so a registration the resolved links hold and no
+candidate names is a decision rather than a gap:
+
+```
+withheld  3 registrations, reached by 10 accounts; no candidate is joined on one of them
+  biopage.example     link in bio     4 accounts
+  hopcut.example      link shortener  4 accounts
+  pastevault.example  paste site      3 accounts
+```
+
+What is left is the two Planted Campaigns and one shop that shares a domain it is
+right to group on — a correct grouping that must never be counted as recovery
+(ADR-0004) — and every Hard Negative that reaches a shared host and nothing else is
+now in no candidate at all. The four account figures above the index are a partition,
+so they add up to the accounts in the Corpus: grouped, alone (a registration nobody
+else reaches), silenced (nothing but known-shared infrastructure), and unreachable (no
+registration at all). `silenced` is a line of its own because the six accounts the
+filter silences are not the ten that touch a shared host — four of those share a
+registration with nobody and are simply alone. The cost is stated rather than hidden:
+a Planted Campaign that leans on a shared host is lost with the host, so a recall
+figure measured this way is a lower bound. `tests/test_campaign_candidates.py` proves
+the list is what decides, by adding a host to a copy of it and watching a candidate
+disappear, and by running with an empty list and watching all five components come
+back.
+
+The figures at the top of the output are a partition of the Corpus's accounts, and two
+accounts in the Corpus reach nothing at all: they are therefore beyond any amount of
+grouping, which is the floor of the case rather than a defect in it.
+
+Nothing in this path reads the truth file or the Nuisance Structure manifest: the
+Corpus, the Public Suffix List, and the shared-infrastructure list are the whole
+input, and `tests/test_campaign_candidates.py` checks that by watching which files
+the run opens rather than by reading the code that decides what to open.
 
 ## The base rates
 
@@ -279,9 +321,10 @@ uv run mypy
   Provider), 0004 (evaluate by recovering Planted Campaigns), 0005 (Campaign
   Candidates require registrable infrastructure), 0007 (Signals come only from
   observable text and links), 0008 (the Corpus file carries no membership), 0009
-  (direct adjacency is the baseline — this command is that baseline, and its
-  corroborated tier is ticket #26), 0010 (CAFC figures are computed from the cache),
-  0011 (the Nuisance Structure has a file of its own, and so does the
-  shared-infrastructure list), 0012 (registrable domains are resolved from the
-  published Public Suffix List), and 0013 (the Scam Categories are CAFC's thematic
-  categories read down to ten, and the 41 in ADR-0006 is corrected).
+  (direct adjacency is the baseline — this command is that baseline, with
+  known-shared infrastructure filtered as published data rather than as a list in
+  the query, and its corroborated tier is ticket #26), 0010 (CAFC figures are
+  computed from the cache), 0011 (the Nuisance Structure has a file of its own, and
+  so does the shared-infrastructure list), 0012 (registrable domains are resolved
+  from the published Public Suffix List), and 0013 (the Scam Categories are CAFC's
+  thematic categories read down to ten, and the 41 in ADR-0006 is corrected).

@@ -117,6 +117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _campaign_candidates(
                 corpus_path=Path(str(args.corpus)),
                 list_path=Path(str(args.list)),
+                shared_path=Path(str(args.shared_infrastructure)),
                 candidates_path=Path(str(args.candidates)),
             )
         case _:
@@ -357,12 +358,15 @@ def _parser() -> argparse.ArgumentParser:
             "The whole path from Corpus to output. Two accounts reach the same "
             "Campaign Candidate when a chain of shared registrable domains connects "
             "them, and on nothing else: the same words, the same hour, and the same "
-            "playbook are not grounds for a grouping (ADR-0005). Every candidate is "
-            "printed with the accounts, the posts, and the shared domains that put "
-            "them together, so a reader can check the claim rather than take it. "
-            "Known-shared infrastructure is not filtered yet, so a shortener or a "
-            "paste site will group accounts that have nothing else in common; this "
-            "command says so in its own output. Reads no network."
+            "playbook are not grounds for a grouping (ADR-0005). Known-shared "
+            "infrastructure is filtered out before the grouping rather than after it, "
+            "so a shortener, a paste site, or a link-in-bio page joins nothing — and "
+            "the list it filters on is published data, not a list in this query, so "
+            "adding a host to it changes the result without a line of code changing "
+            "(ADR-0009). Every candidate is printed with the accounts, the posts, and "
+            "the shared domains that put them together, so a reader can check the "
+            "claim rather than take it, and the output reports how many components "
+            "the filter removed. Reads no network."
         ),
     )
     candidates.add_argument(
@@ -378,6 +382,15 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "the published Public Suffix List to read "
             f"(default: {DEFAULT_SUFFIX_LIST_PATH})"
+        ),
+    )
+    candidates.add_argument(
+        "--shared-infrastructure",
+        type=Path,
+        default=DEFAULT_SHARED_INFRASTRUCTURE_PATH,
+        help=(
+            "the known-shared infrastructure list to filter on "
+            f"(default: {DEFAULT_SHARED_INFRASTRUCTURE_PATH})"
         ),
     )
     candidates.add_argument(
@@ -618,11 +631,32 @@ def _scam_categories(
     return 0
 
 
-def _campaign_candidates(*, corpus_path: Path, list_path: Path, candidates_path: Path) -> int:
-    _refuse_shared_paths({"the Corpus": corpus_path, "the candidates": candidates_path})
-    _require_present({"the Corpus": corpus_path, "the Public Suffix List": list_path})
+def _campaign_candidates(
+    *,
+    corpus_path: Path,
+    list_path: Path,
+    shared_path: Path,
+    candidates_path: Path,
+) -> int:
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the candidates": candidates_path,
+            "the known-shared infrastructure list": shared_path,
+        }
+    )
+    _require_present(
+        {
+            "the Corpus": corpus_path,
+            "the Public Suffix List": list_path,
+            "the known-shared infrastructure list": shared_path,
+        }
+    )
 
-    grouping = group_accounts(corpus_path, list_path)
+    try:
+        grouping = group_accounts(corpus_path, list_path, shared_path)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
     write_campaign_candidates(candidates_path, grouping.candidates)
 
     print(render_candidates(grouping))
