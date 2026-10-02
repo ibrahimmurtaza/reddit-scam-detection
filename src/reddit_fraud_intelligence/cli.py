@@ -14,6 +14,11 @@ from reddit_fraud_intelligence.cafc import (
     write_base_rates,
     write_provenance,
 )
+from reddit_fraud_intelligence.campaigns import (
+    group as group_accounts,
+    render_table as render_candidates,
+    write_campaign_candidates,
+)
 from reddit_fraud_intelligence.categories import OTHER, SCAM_CATEGORIES, TOP_LEVEL_COUNT
 from reddit_fraud_intelligence.corpus import read_corpus, write_corpus
 from reddit_fraud_intelligence.domains import (
@@ -61,6 +66,7 @@ DEFAULT_DOMAINS_PATH = Path("data/domains/post-domains.jsonl")
 DEFAULT_DOMAINS_REPORT_PATH = Path("docs/post-domains.md")
 DEFAULT_CATEGORY_MAPPING_PATH = Path("data/cafc/scam-categories.jsonl")
 DEFAULT_CATEGORY_REPORT_PATH = Path("docs/scam-categories.md")
+DEFAULT_CANDIDATES_PATH = Path("data/campaigns/campaign-candidates.jsonl")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -106,6 +112,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 base_rates_path=Path(str(args.base_rates)),
                 mapping_path=Path(str(args.mapping)),
                 report_path=Path(str(args.report)),
+            )
+        case "campaign-candidates":
+            return _campaign_candidates(
+                corpus_path=Path(str(args.corpus)),
+                list_path=Path(str(args.list)),
+                candidates_path=Path(str(args.candidates)),
             )
         case _:
             parser.error(f"unknown command: {args.command}")
@@ -337,6 +349,43 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_CATEGORY_REPORT_PATH,
         help=f"where to write the report (default: {DEFAULT_CATEGORY_REPORT_PATH})",
     )
+
+    candidates = commands.add_parser(
+        "campaign-candidates",
+        help="group the Corpus into Campaign Candidates by shared registrable domain",
+        description=(
+            "The whole path from Corpus to output. Two accounts reach the same "
+            "Campaign Candidate when a chain of shared registrable domains connects "
+            "them, and on nothing else: the same words, the same hour, and the same "
+            "playbook are not grounds for a grouping (ADR-0005). Every candidate is "
+            "printed with the accounts, the posts, and the shared domains that put "
+            "them together, so a reader can check the claim rather than take it. "
+            "Known-shared infrastructure is not filtered yet, so a shortener or a "
+            "paste site will group accounts that have nothing else in common; this "
+            "command says so in its own output. Reads no network."
+        ),
+    )
+    candidates.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    candidates.add_argument(
+        "--list",
+        type=Path,
+        default=DEFAULT_SUFFIX_LIST_PATH,
+        help=(
+            "the published Public Suffix List to read "
+            f"(default: {DEFAULT_SUFFIX_LIST_PATH})"
+        ),
+    )
+    candidates.add_argument(
+        "--candidates",
+        type=Path,
+        default=DEFAULT_CANDIDATES_PATH,
+        help=f"where to write the candidates (default: {DEFAULT_CANDIDATES_PATH})",
+    )
     return parser
 
 
@@ -387,6 +436,20 @@ def _generate_corpus(
     )
     print("the Corpus holds content, accounts, and links; grep it for `campaign` to check")
     return 0
+
+
+def _require_present(inputs: dict[str, Path]) -> None:
+    """Refuse a missing input by name, rather than failing somewhere inside the run.
+
+    Both commands that read the Corpus and the published list need the same two files,
+    and both would otherwise raise a bare `FileNotFoundError` from a different place.
+    """
+    for what, path in inputs.items():
+        if not path.exists():
+            raise SystemExit(
+                f"{what} is not there: {path}. Run `rfi generate-corpus` and "
+                "`rfi fetch-suffix-list` first."
+            )
 
 
 def _refuse_shared_paths(paths: dict[str, Path]) -> None:
@@ -493,12 +556,7 @@ def _post_domains(
             "the resolved links": domains_path,
         }
     )
-    for what, path in (("the Corpus", corpus_path), ("the Public Suffix List", list_path)):
-        if not path.exists():
-            raise SystemExit(
-                f"{what} is not there: {path}. Run `rfi generate-corpus` and "
-                "`rfi fetch-suffix-list` first."
-            )
+    _require_present({"the Corpus": corpus_path, "the Public Suffix List": list_path})
 
     suffixes = PublicSuffixes.read(list_path)
     rows = post_domains(read_corpus(corpus_path), suffixes)
@@ -557,4 +615,16 @@ def _scam_categories(
     print(f"unplaced       {unplaced_reports(placed):,} reports, plus {other:,} in Other")
     print(f"mapping        {mapping_path}")
     print(f"report         {report_path}")
+    return 0
+
+
+def _campaign_candidates(*, corpus_path: Path, list_path: Path, candidates_path: Path) -> int:
+    _refuse_shared_paths({"the Corpus": corpus_path, "the candidates": candidates_path})
+    _require_present({"the Corpus": corpus_path, "the Public Suffix List": list_path})
+
+    grouping = group_accounts(corpus_path, list_path)
+    write_campaign_candidates(candidates_path, grouping.candidates)
+
+    print(render_candidates(grouping))
+    print(f"candidates     {candidates_path}")
     return 0

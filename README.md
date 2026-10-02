@@ -12,15 +12,15 @@ corresponds to a real person.
 
 ## Where it is
 
-Two things are built. The Corpus generator, which is the credibility boundary the
+Three things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
-projection of those categories down to ten Scam Categories. And the first thing the
-pipeline computes — the Registrable Domain of every link in the Corpus, from the
-published Public Suffix List. Campaign Candidate analysis, Link Signals, Policy
-Score, Review Queue, and evaluation are not built yet. Their tickets are numbered
-#8 to #28 in the tracker; this README is updated as they land.
+projection of those categories down to ten Scam Categories. And the pipeline itself,
+as far as grouping goes: the Registrable Domain of every link, then the Campaign
+Candidates those registrations produce. Link Signals, Policy Score, Review Queue,
+and evaluation are not built yet. Their tickets are numbered #9 to #28 in the
+tracker; this README is updated as they land.
 
 ## Running it
 
@@ -39,9 +39,10 @@ That writes four files, each with one reader:
 | `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. | the pipeline |
 | `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
 | `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
-| `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. | the grouping step, once it is built |
-| `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains` |
-| `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | the grouping step, once it is built |
+| `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. | nothing reads it yet; ticket #9 filters on it |
+| `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
+| `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | a reader, then the corroboration ticket #24 |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -134,13 +135,61 @@ labels deep under the reserved `.example` TLD is truncated to its last two, whic
 is stated in the report and affects nothing in this Corpus.
 
 Two things are stated rather than left to be discovered. The scheme of a link is
-never consulted — `https`, `http`, `ftp` and a protocol-relative `//` all name
-the same registration, and a scheme allowlist would quietly lose infrastructure
+never consulted — `https`, `http`, `ftp` and a protocol-relative `//` all name the
+same registration, and a scheme allowlist would quietly lose infrastructure
 an operator chose the scheme for. And every link produces a row: a link that
 names no registration — a relative path, a bare `co.uk`, an IP address, a host
 with a space in it, one that will not parse — is reported with which of six
 reasons applied, never dropped, because a dropped link is indistinguishable from
 a post that carried none. `docs/post-domains.md` names all six.
+
+## Campaign Candidates
+
+`rfi campaign-candidates` is the whole path from the Corpus to an output: two
+accounts reach the same Campaign Candidate when a chain of shared registrable
+domains connects them, and on nothing else. The console output is the report — an
+index of the candidates, then for each one the accounts, the posts, and the shared
+domains that put them together — and it carries its own evidence with it because a
+grouping a reader cannot check is a claim rather than a result.
+
+```
+uv run rfi campaign-candidates   # reads the Corpus and the Public Suffix List
+```
+
+| File | Holds |
+| --- | --- |
+| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, and each shared registration with the accounts and posts that reach it. |
+
+It recovers both Planted Campaigns from shared registration alone — alpha on
+`vantage-ledger.example`, which one of its accounts reaches through a mirror
+hostname, and beta on `signal-harbor.example` — and it refuses the case ADR-0005 was
+written about: accounts pasting one advert word for word, with nothing shared but
+text, produce no candidate at all. `tests/test_campaign_candidates.py` writes that
+case out by hand and asserts an empty output; the Corpus's own copy of it is joined
+anyway, by the shortener those accounts all use, which is what makes it the case to
+filter next. The Corpus also plants two near-miss pairs for the same reason, and
+neither reaches a candidate, so nothing about the output depends on matching a name
+rather than a registration.
+
+Two of today's five candidates are wrong, and the command says so rather than letting
+you believe otherwise. A link shortener and a link-in-bio page are registrations like
+any other until ticket #9 filters them, so today they group every account that
+touches them: `hopcut.example` reaches four accounts on its own, and with the paste
+site it reaches six, which is `cc-01` in the output. That is what the ticket calls
+the obvious junk this step is allowed to produce, and
+`tests/test_campaign_candidates.py` pins it while it is known to be wrong, so ticket
+#9 has to replace the assertion rather than quietly add to it.
+
+The figures at the top of the output are a partition of the Corpus's accounts:
+grouped, alone (a registration no other account reaches), and unreachable (no
+registration at all). Two accounts in the Corpus reach nothing and are therefore
+beyond any amount of grouping, which is the floor of the case rather than a defect
+in it.
+
+Nothing in this path reads the truth file. The Corpus and the published Public
+Suffix List are the whole input, and `tests/test_campaign_candidates.py` checks that
+by watching which files the run opens rather than by reading the code that decides
+what to open.
 
 ## The base rates
 
@@ -229,9 +278,10 @@ uv run mypy
 - `docs/adr/` — the decisions. The ones this code implements are 0001 (Corpus
   Provider), 0004 (evaluate by recovering Planted Campaigns), 0005 (Campaign
   Candidates require registrable infrastructure), 0007 (Signals come only from
-  observable text and links), 0008 (the Corpus file carries no membership), 0010
-  (CAFC figures are computed from the cache), 0011 (the Nuisance Structure has a
-  file of its own, and so does the shared-infrastructure list), 0012
-  (registrable domains are resolved from the published Public Suffix List), and
-  0013 (the Scam Categories are CAFC's thematic categories read down to ten, and
-  the 41 in ADR-0006 is corrected).
+  observable text and links), 0008 (the Corpus file carries no membership), 0009
+  (direct adjacency is the baseline — this command is that baseline, and its
+  corroborated tier is ticket #26), 0010 (CAFC figures are computed from the cache),
+  0011 (the Nuisance Structure has a file of its own, and so does the
+  shared-infrastructure list), 0012 (registrable domains are resolved from the
+  published Public Suffix List), and 0013 (the Scam Categories are CAFC's thematic
+  categories read down to ten, and the 41 in ADR-0006 is corrected).
