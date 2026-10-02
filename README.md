@@ -12,16 +12,17 @@ corresponds to a real person.
 
 ## Where it is
 
-Three things are built. The Corpus generator, which is the credibility boundary the
+Four things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
-projection of those categories down to ten Scam Categories. And the pipeline itself,
-as far as grouping goes: the Registrable Domain of every link, then the Campaign
-Candidates those registrations produce, with known-shared infrastructure filtered out
-as published data. Link Signals, Policy Score, Review Queue, and evaluation are not
-built yet. Their tickets are numbered #10 to #28 in the tracker; this README is
-updated as they land.
+projection of those categories down to ten Scam Categories. And the pipeline itself:
+the Registrable Domain of every link, then the Campaign Candidates those
+registrations produce, with known-shared infrastructure filtered out as published
+data, then the Policy Score those same links add up to, with the arithmetic printed
+beside it. Content Signals, the Review Queue, and evaluation are not built yet. Their
+tickets are numbered #10 and #16 to #28 in the tracker; this README is updated as
+they land.
 
 ## Running it
 
@@ -45,6 +46,8 @@ steps, which are named against each row. Every file has one reader:
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | a reader, then the corroboration ticket #24 |
+| `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
+| `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | a reader, then the Review Queue ticket #16 |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -234,6 +237,77 @@ Corpus, the Public Suffix List, and the shared-infrastructure list are the whole
 input, and `tests/test_campaign_candidates.py` checks that by watching which files
 the run opens rather than by reading the code that decides what to open.
 
+## The Policy Score
+
+**The Policy Score is a rules engine by design.** It is the published weights of the
+Signals a post carries, added up and printed. No model output feeds it and none ever
+will; the model's contribution to this project is the Confidence, which is measured
+separately and never displayed. A reader can recompute every number from what the
+output prints beside it, and that is testable rather than promised:
+`tests/test_policy_score.py` takes the weights out of the committed file, applies
+them to the Signals each post's own links justify, and requires the result to equal
+the number the command displayed.
+
+```
+uv run rfi policy-score   # reads the Corpus and the three published lists, writes one file
+```
+
+| File | Holds |
+| --- | --- |
+| `data/signals/weights.jsonl` | Every Signal, its weight, and the one-line reason it is that number. Read as data; the scoring rules hold no weight of their own. |
+| `data/signals/policy-scores.jsonl` | One line per post: the score, the points earned, the published total, and each Signal with its weight and the evidence it fired on. |
+
+Two Signals reach the score, and both are read from links rather than from text.
+`domain_frequency` fires when a post links a Registrable Domain two or more accounts
+in the Corpus reach, and prints those two figures beside it — `4 posts by 3 accounts`
+is the claim, and `data/domains/post-domains.jsonl` is where a reader checks it.
+`domain_lookalike` fires when a post links a registration one edit away from another
+registration in the Corpus, under the same Public Suffix, and names the other one.
+An edit is an insertion, a deletion, a substitution, or a transposition, because a
+copy of a name is made by doing exactly one of those to it.
+
+Both Signals need the rest of the Corpus's links and neither needs anything about an
+account. That is the whole of the difference between a Signal and a thing that is not
+one: no account's age, karma, posting rate, or activity change is read on this path,
+and the Corpus file holds no such field to read — a Corpus row carrying one is
+refused rather than ignored, which is what makes the constraint structural.
+`tests/test_policy_score.py` checks it two ways: renaming every account in the Corpus
+leaves every score identical, and the run is watched to open four published files and
+never the truth file.
+
+The three things a reader should be suspicious of are stated rather than buried.
+A Signal is present or absent, so a post linking three shared registrations carries
+`domain_frequency` once, not three times, and the score is a subset-sum of the
+published weights and nothing else. The frequency figures count other posts; they are
+structure to go and look at, not a judgement about them. And the known-shared
+registrations are out of the scoring path rather than scored at zero — `hopcut.example`
+is reached by four accounts here, more than any planted registration, and handing
+that to a Signal would reward every post that used a service everybody uses. A
+Planted Campaign leaning on a shared host is lost with it, the same lower bound the
+grouping reports.
+
+The lookalike Signal fires on both members of a pair and names neither as the copy,
+because the spelling does not say which imitates which: the Corpus plants a
+recruitment firm and a warehouse employer, each one character from a planted
+registration, and nothing in the Corpus tells the four apart. The output says so at
+the point of use. One case it does not reach: a host carrying a homoglyph comes back
+from the Public Suffix List punycoded, so a Cyrillic `а` in `apple.example` makes the
+registration `xn--pple-43d.example` and no edit-distance rule over the resolved form
+can see what it was imitating.
+
+The score takes four values on this Corpus — 0, 40, 60, and 100 — because two
+Signals give four subsets. That is the honest consequence of publishing the
+arithmetic rather than a rescaling that hides it, and the content Signals in ticket
+#10 are what give it more.
+
+Adding a Signal is a two-part change and the run refuses to skip either half: the
+rule goes in `src/reddit_fraud_intelligence/signals.py` and the weight goes in
+`data/signals/weights.jsonl` with its reason. A weight file that leaves a Signal
+unpriced, prices one that does not exist, carries a weight of zero, or leaves a
+rationale blank stops the run and names the file and the row — otherwise a Signal
+could appear in a breakdown that no arithmetic adds up to, which is the failure
+ADR-0007 rules out.
+
 ## The base rates
 
 `docs/cafc-base-rates.md` is the report: the base rate of every one of the
@@ -334,9 +408,11 @@ patch `urllib.request.urlopen` to refuse.
   Candidates require registrable infrastructure), 0007 (Signals come only from
   observable text and links), 0008 (the Corpus file carries no membership), 0009
   (direct adjacency is the baseline — this command is that baseline, with
-  known-shared infrastructure filtered as published data rather than as a list in
-  the query, and its corroborated tier is ticket #26), 0010 (CAFC figures are
+  known-shared infrastructure filtered as published data rather than as a list in the
+  query, and its corroborated tier is ticket #26), 0010 (CAFC figures are
   computed from the cache), 0011 (the Nuisance Structure has a file of its own, and
   so does the shared-infrastructure list), 0012 (registrable domains are resolved
-  from the published Public Suffix List), and 0013 (the Scam Categories are CAFC's
-  thematic categories read down to ten, and the 41 in ADR-0006 is corrected).
+  from the published Public Suffix List), 0013 (the Scam Categories are CAFC's
+  thematic categories read down to ten, and the 41 in ADR-0006 is corrected), and
+  0014 (the Policy Score is a subset-sum of published weights, and a Signal fires
+  once however many registrations fired it).

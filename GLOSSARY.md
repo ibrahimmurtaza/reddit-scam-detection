@@ -71,6 +71,13 @@ contributes to a Policy Score. Anything requiring account history is not yet a
 Signal.
 _Avoid_: Feature, indicator, heuristic, input
 
+**Link Signal**:
+A Signal read from a post's links rather than from its text — how much of the Corpus
+reaches a Registrable Domain, whether that registration is one edit away from
+another. A Link Signal may need the rest of the Corpus's links to compute; it never
+needs anything about an account.
+_Avoid_: Domain Signal, infrastructure signal
+
 **Review Queue**:
 The ranked list of content items a reviewer works through, ordered by Triage
 Priority. The headline metric is the fraction of true findings within its top D

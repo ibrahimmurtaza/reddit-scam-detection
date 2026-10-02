@@ -42,6 +42,11 @@ from reddit_fraud_intelligence.projection import (
     unplaced_reports,
     write_mapping,
 )
+from reddit_fraud_intelligence.signals import (
+    render_table as render_policy_score,
+    score_corpus,
+    write_policy_scores,
+)
 from reddit_fraud_intelligence.suffixes import (
     SOURCE_URL as SUFFIX_LIST_SOURCE_URL,
     PublicSuffixes,
@@ -67,6 +72,8 @@ DEFAULT_DOMAINS_REPORT_PATH = Path("docs/post-domains.md")
 DEFAULT_CATEGORY_MAPPING_PATH = Path("data/cafc/scam-categories.jsonl")
 DEFAULT_CATEGORY_REPORT_PATH = Path("docs/scam-categories.md")
 DEFAULT_CANDIDATES_PATH = Path("data/campaigns/campaign-candidates.jsonl")
+DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
+DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -119,6 +126,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 list_path=Path(str(args.list)),
                 shared_path=Path(str(args.shared_infrastructure)),
                 candidates_path=Path(str(args.candidates)),
+            )
+        case "policy-score":
+            return _policy_score(
+                corpus_path=Path(str(args.corpus)),
+                list_path=Path(str(args.list)),
+                shared_path=Path(str(args.shared_infrastructure)),
+                weights_path=Path(str(args.weights)),
+                scores_path=Path(str(args.scores)),
             )
         case _:
             parser.error(f"unknown command: {args.command}")
@@ -399,6 +414,59 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_CANDIDATES_PATH,
         help=f"where to write the candidates (default: {DEFAULT_CANDIDATES_PATH})",
     )
+
+    scores = commands.add_parser(
+        "policy-score",
+        help="score every post with the published weights and print the arithmetic",
+        description=(
+            "The Policy Score, and the Signal-by-Signal arithmetic behind it. The score "
+            "is a rules engine: an additive sum over Signals computed from a post's own "
+            "text and links and from the registrations those links resolve to, with no "
+            "model output anywhere in it and no account history read on the way (ADR-0007). "
+            "A reader can recompute every number from what is printed beside it. The "
+            "weights are published as data rather than written into the rules, so "
+            "changing one is an edit to a file and not to a line of Python, and each one "
+            "carries a one-line reason. Every Signal the code computes must be published "
+            "in that file, so a Signal cannot be added without publishing what it is "
+            "worth. Reads no network."
+        ),
+    )
+    scores.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    scores.add_argument(
+        "--list",
+        type=Path,
+        default=DEFAULT_SUFFIX_LIST_PATH,
+        help=(
+            "the published Public Suffix List to read "
+            f"(default: {DEFAULT_SUFFIX_LIST_PATH})"
+        ),
+    )
+    scores.add_argument(
+        "--shared-infrastructure",
+        type=Path,
+        default=DEFAULT_SHARED_INFRASTRUCTURE_PATH,
+        help=(
+            "the known-shared infrastructure list to withhold registrations from "
+            f"(default: {DEFAULT_SHARED_INFRASTRUCTURE_PATH})"
+        ),
+    )
+    scores.add_argument(
+        "--weights",
+        type=Path,
+        default=DEFAULT_WEIGHTS_PATH,
+        help=f"the published weight set to read (default: {DEFAULT_WEIGHTS_PATH})",
+    )
+    scores.add_argument(
+        "--scores",
+        type=Path,
+        default=DEFAULT_SCORES_PATH,
+        help=f"where to write the scores (default: {DEFAULT_SCORES_PATH})",
+    )
     return parser
 
 
@@ -661,4 +729,39 @@ def _campaign_candidates(
 
     print(render_candidates(grouping))
     print(f"candidates     {candidates_path}")
+    return 0
+
+
+def _policy_score(
+    *,
+    corpus_path: Path,
+    list_path: Path,
+    shared_path: Path,
+    weights_path: Path,
+    scores_path: Path,
+) -> int:
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the scores": scores_path,
+            "the weight set": weights_path,
+        }
+    )
+    _require_present(
+        {
+            "the Corpus": corpus_path,
+            "the Public Suffix List": list_path,
+            "the known-shared infrastructure list": shared_path,
+            "the weight set": weights_path,
+        }
+    )
+
+    try:
+        scored = score_corpus(corpus_path, list_path, shared_path, weights_path)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+    write_policy_scores(scores_path, scored.scores)
+
+    print(render_policy_score(scored))
+    print(f"scores         {scores_path}")
     return 0
