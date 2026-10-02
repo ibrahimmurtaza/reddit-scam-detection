@@ -27,8 +27,10 @@ jobs:
       # cannot quietly satisfy requires-python with something else. uv installs it;
       # the runner image has no say.
       # uv is pinned to the version in the local toolchain. uv.lock is revision 3,
-      # so an old uv cannot read it and a new one may resolve it differently.
-      - uses: astral-sh/setup-uv@v10
+      # so an old uv cannot read it and a new one may resolve it differently. The
+      # action is pinned to a full release rather than the v10 major, which does
+      # not exist as a tag: the first run of this workflow failed on that.
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           version: "0.11.19"
           python-version: "3.13"
