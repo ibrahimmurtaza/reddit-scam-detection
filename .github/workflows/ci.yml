@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only is enough: nothing here writes to the repository.
+permissions:
+  contents: read
+
+# A superseded pull request run has nothing left to say.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # 3.13 is pinned in pyproject.toml, and this states it again so the runner
+      # cannot quietly satisfy requires-python with something else. uv installs it;
+      # the runner image has no say.
+      # uv is pinned to the version in the local toolchain. uv.lock is revision 3,
+      # so an old uv cannot read it and a new one may resolve it differently.
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.11.19"
+          python-version: "3.13"
+          enable-cache: true
+
+      # --locked, not plain --frozen: the lockfile is committed, so a pull request
+      # that changes pyproject.toml without re-locking fails here rather than
+      # installing something nobody has committed.
+      - name: Install
+        run: uv sync --locked
+
+      - name: Tests
+        run: uv run pytest
+
+      - name: Types
+        run: uv run mypy
+
+      # Every generated file in this repository is committed and held to its bytes
+      # by a test, so a green run that left the tree dirty means something was
+      # written without being compared. `--untracked-files=all` so a file the
+      # suite invented inside the repository counts too; `.venv` and the tool
+      # caches are ignored and so stay quiet.
+      - name: The tree is unchanged
+        run: |
+          dirty=$(git status --porcelain --untracked-files=all)
+          if [ -n "$dirty" ]; then
+            printf '%s\n' "$dirty"
+            echo "::error::The run left files in the working tree."
+            exit 1
+          fi

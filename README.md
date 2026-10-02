@@ -314,6 +314,17 @@ uv run pytest
 uv run mypy
 ```
 
+Both run on every push to `main` and every pull request, on Ubuntu with Python
+3.13, in `.github/workflows/ci.yml`. The run installs from the committed
+`uv.lock` with `uv sync --locked`, so a change to `pyproject.toml` that was
+never re-locked fails the run instead of installing something nobody committed.
+It ends by checking that the working tree is still clean, which is the check
+that would catch a test writing a generated file instead of comparing it —
+every generated file here is committed, and every one is held to its bytes.
+
+The suite needs no network: the tests that exercise the two fetching commands
+patch `urllib.request.urlopen` to refuse.
+
 ## Where things are decided
 
 - `GLOSSARY.md` — the vocabulary, enforced by `tests/test_vocabulary.py` against
