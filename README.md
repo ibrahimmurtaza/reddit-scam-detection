@@ -17,11 +17,12 @@ rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
 projection of those categories down to ten Scam Categories. And the pipeline itself:
-the Registrable Domain of every link, then the Campaign Candidates those
-registrations produce, with known-shared infrastructure filtered out as published
-data, then the Policy Score those same links and posts add up to, with the arithmetic
-printed beside it. The Review Queue and evaluation are not built yet. Their
-tickets are numbered #16 to #28 in the tracker; this README is updated as they land.
+the Registrable Domain of every link, then the Contact Points every post names, then
+the Campaign Candidates those registrations produce, with known-shared infrastructure
+filtered out as published data, then the Policy Score those same links and posts add
+up to, with the arithmetic printed beside it. The Review Queue and evaluation are not
+built yet. Their tickets are numbered #16 to #28 in the tracker; this README is updated
+as they land.
 
 ## Running it
 
@@ -44,6 +45,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. Each row carries where the host came from and when it was added. | `rfi campaign-candidates` |
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
+| `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | a reader, then the grouping-edge ticket #20 |
 | `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | a reader, then the corroboration ticket #24 |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | a reader, then the Review Queue ticket #16 |
@@ -147,14 +149,103 @@ with a space in it, one that will not parse — is reported with which of six
 reasons applied, never dropped, because a dropped link is indistinguishable from
 a post that carried none. `docs/post-domains.md` names all six.
 
+## Contact Points
+
+`docs/contact-points.md` is the report: the Contact Point every post names, per post,
+and the reasoning for reading one the way it is read. Read that rather than the
+summary here.
+
+ADR-0005 lets two accounts reach the same Campaign Candidate on a Contact Point as
+well as on a Registrable Domain, and this is the step that finds them. Two kinds are
+read — an email address and a Telegram handle — from a post's own title, its own body,
+and its links.
+
+```
+uv run rfi contact-points   # reads the Corpus, writes two files
+```
+
+| File | Holds |
+| --- | --- |
+| `data/contacts/post-contacts.jsonl` | One line per post: its Contact Points, every occurrence with the spelling and the field it was found in, and every candidate that named none. |
+| `docs/contact-points.md` | The report, generated from those rows. |
+
+**They are read literally, and that is the decision ADR-0016 records.** Nothing is
+repaired. `nobody@localhost` is nearly an address and `@someone.co.uk` is nearly a
+username, and both come back reported with which of eight faults applied rather than
+turned into something that looks right. The reason is specific to this step: a wrong
+Signal gives a reviewer a wrong severity figure they can discount against the post in
+front of them, whereas a wrong Contact Point gives a shared identifier between two
+accounts that share nothing, and ADR-0005 would then have grounds to group them on the
+strength of a string this project invented. A link the parser refuses is the case this
+command cannot classify at all, so it is the one that carries a reason of its own —
+`malformed`, the same reason `rfi post-domains` gives it.
+
+Two spellings are normalised, and both are printed. Telegram usernames do not
+distinguish case, so `@Syn_VantageLedger` and `@syn_vantageledger` are one Contact
+Point; a full stop at the end of a sentence belongs to the sentence, so a handle written
+`@syn_vantageledger.` is the same handle rather than a different one — and the Corpus
+plants both spellings in both shapes, because `syn_p_0002` ends its sentence with one.
+Normalisation that is not visible is indistinguishable from case folding, so every
+spelling is printed beside the value it was read as. An address is normalised more
+carefully still: the host is case-folded, because RFC 5321 says it is, and the part
+before the `@` is not, because RFC 5321 does not — folding both would merge `Desk@` and
+`desk@` into one mailbox nobody published as one.
+
+A link is read for a Contact Point on the same rule as for a registration: a `mailto:`
+names an address — which is why `rfi post-domains` reports one as naming no
+registration and hands the case here — and a link on Telegram's own host names the
+username in its first path segment. Anything else names a page, so an address inside a
+page is not read; a shortener's query string is the shortener's business. A link to a
+Telegram channel or an invite names no username and is reported as `invite_link`.
+
+**Sharing is counted over accounts, not over posts.** Two accounts naming one Contact
+Point is the claim this command exists to make. One account naming it in four posts is
+not, because it has not acquired a second reach. The Corpus is planted so both planted
+campaigns publish a channel from more than one of their own accounts, and so that not
+every post of a campaign carries one — an extractor that is only ever right about the
+posts advertising a Contact Point has been measured on nothing else.
+
+The most important number in the output is a false grouping waiting to happen. Four
+accounts name `syn_vantageledger`, and one of them is a declared Hard Negative: a person
+who lost money and quoted the channel they were given. That is correct reporting and the
+worst possible grouping input, which is why nothing groups on it yet. ADR-0005 permits a
+Contact Point as a grouping edge and this command builds none — the shared blocks are
+the evidence ticket #20 needs, and an unmeasured grouping edge would put an unmeasured
+input into the recovery figure ADR-0004 measures against.
+
+Every figure the command prints is a lower bound, and it says so beside them rather
+than in the ticket. A handle written with separators between its characters, an address
+written as words, and a screenshot of either are all in the wild and none of them is
+found here; deliberately disguised handles are ticket #15's work, and measuring the
+recall is what that ticket is for. One more limit is stated at the point of use: a
+handle is read as a Telegram handle whatever service it belongs to, because every
+service writes one as `@name` and this build cannot tell them apart.
+
+The Corpus holds one candidate that names no Contact Point — a Hard Negative describing
+a contact form that asks for an address and then names none — so the reporting is
+visible in the committed report and not only in the tests. It deliberately holds no
+Telegram invite link: `t.me` is a real domain, and nothing in the Corpus is anything
+but a Synthetic Entity.
+
+Every Contact Point in this build is a Synthetic Entity because the Corpus is
+synthetic, and which figures say so is printed rather than asserted — an address is one
+when its host sits under a TLD reserved for examples, and a handle when it carries the
+`syn_` marker every Synthetic Entity in this Corpus carries, since Telegram reserves no
+namespace of its own. A Corpus Provider is a swap, so the same lines over real content
+would read `0 of N`, which is what measuring them buys. Nothing on this path reads the
+truth file, the Nuisance Structure manifest, or any published list: what a post says to
+be reached at does not depend on what anybody registered.
+
 ## Campaign Candidates
 
 `rfi campaign-candidates` is the whole path from the Corpus to an output: two
-accounts reach the same Campaign Candidate when a chain of shared registrable
-domains connects them, and on nothing else. The console output is the report — an
+accounts reach the same Campaign Candidate when a chain of shared registrable domains
+connects them, and on nothing else. The console output is the report — an
 index of the candidates, then for each one the accounts, the posts, and the shared
 domains that put them together — and it carries its own evidence with it because a
-grouping a reader cannot check is a claim rather than a result.
+grouping a reader cannot check is a claim rather than a result. The Contact Points above
+are the second thing ADR-0005 permits as an edge, and this command reads neither them
+nor the file they are written to.
 
 ```
 uv run rfi campaign-candidates   # reads the Corpus, the Public Suffix List, and the list
@@ -458,5 +549,7 @@ patch `urllib.request.urlopen` to refuse.
   from the published Public Suffix List), 0013 (the Scam Categories are CAFC's
   thematic categories read down to ten, and the 41 in ADR-0006 is corrected), 0014 (the
   Policy Score is a subset-sum of published weights, and a Signal fires once however many
-  registrations fired it), and 0015 (Content Signals are phrase lists with a
-  sentence-scoped negation guard, and the sentence is the evidence).
+  registrations fired it), 0015 (Content Signals are phrase lists with a
+  sentence-scoped negation guard, and the sentence is the evidence), and 0016
+  (Contact Points are read literally, the ones this build cannot read are reported
+  rather than repaired, and nothing groups on one yet).

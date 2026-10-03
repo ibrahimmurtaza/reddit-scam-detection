@@ -15,7 +15,7 @@ produce, and re-running the command rewrites it byte for byte.
 | Unresolvable | 0 |
 | Distinct registrable domains | 15 |
 | Corpus | `data/corpus/corpus.jsonl` |
-| SHA-256 of the Corpus | `3b5286d9432c2a31e0600cee57582c2e4ea91aa0f0793b38dc5fd5284072f728` |
+| SHA-256 of the Corpus | `75cdc153bf3935715ab1fbbd74f4447e9b85278e6cf7658f6e17b911d8a0b70b` |
 | Public Suffix List | `data/public-suffix/public_suffix_list.dat` (334,832 bytes) |
 | SHA-256 of the list | `73c95828f5f62a3fce06d3fa9b2efd3f0a45a8c8dc2a65411545fab898a576f7` |
 | SHA-256 of the rules, whatever the formatting | `c0ce4c5a0bdf05ec6705085823ba26e8f81668d917e4929f7f29fe127a0fb3c7` |

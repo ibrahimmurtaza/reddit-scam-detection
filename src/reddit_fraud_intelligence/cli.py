@@ -20,6 +20,12 @@ from reddit_fraud_intelligence.campaigns import (
     write_campaign_candidates,
 )
 from reddit_fraud_intelligence.categories import OTHER, SCAM_CATEGORIES, TOP_LEVEL_COUNT
+from reddit_fraud_intelligence.contacts import (
+    contact_points,
+    render_report as render_contacts_report,
+    render_table as render_contacts_table,
+    write_post_contacts,
+)
 from reddit_fraud_intelligence.corpus import read_corpus, write_corpus
 from reddit_fraud_intelligence.domains import (
     post_domains,
@@ -69,6 +75,8 @@ DEFAULT_SUFFIX_LIST_PATH = Path("data/public-suffix/public_suffix_list.dat")
 DEFAULT_SUFFIX_PROVENANCE_PATH = Path("data/public-suffix/provenance.jsonl")
 DEFAULT_DOMAINS_PATH = Path("data/domains/post-domains.jsonl")
 DEFAULT_DOMAINS_REPORT_PATH = Path("docs/post-domains.md")
+DEFAULT_CONTACTS_PATH = Path("data/contacts/post-contacts.jsonl")
+DEFAULT_CONTACTS_REPORT_PATH = Path("docs/contact-points.md")
 DEFAULT_CATEGORY_MAPPING_PATH = Path("data/cafc/scam-categories.jsonl")
 DEFAULT_CATEGORY_REPORT_PATH = Path("docs/scam-categories.md")
 DEFAULT_CANDIDATES_PATH = Path("data/campaigns/campaign-candidates.jsonl")
@@ -112,6 +120,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 corpus_path=Path(str(args.corpus)),
                 list_path=Path(str(args.list)),
                 domains_path=Path(str(args.domains)),
+                report_path=Path(str(args.report)),
+            )
+        case "contact-points":
+            return _contact_points(
+                corpus_path=Path(str(args.corpus)),
+                contacts_path=Path(str(args.contacts)),
                 report_path=Path(str(args.report)),
             )
         case "scam-categories":
@@ -333,6 +347,44 @@ def _parser() -> argparse.ArgumentParser:
         help=f"where to write the report (default: {DEFAULT_DOMAINS_REPORT_PATH})",
     )
 
+    contacts = commands.add_parser(
+        "contact-points",
+        help="report the Contact Points every post names, per post, and which are shared",
+        description=(
+            "The off-platform half of ADR-0005: two accounts may reach one Campaign "
+            "Candidate on a Contact Point as well as on a Registrable Domain, and this "
+            "is the step that finds them. Two kinds are read — an email address and a "
+            "Telegram handle — from a post's own title, its own body, and its links, and "
+            "they are read literally. Nothing is repaired and nothing is dropped: a "
+            "candidate that names no Contact Point is reported with which of seven "
+            "faults applied, because a false positive here is not a wrong severity "
+            "figure as a Signal can be, it is a shared identifier between two accounts "
+            "that share nothing. Sharing is counted over accounts rather than over "
+            "posts, every spelling of every value is printed beside it, and nothing is "
+            "grouped on any of it yet — the shared list is the evidence ticket #20 "
+            "needs, and an unmeasured grouping edge would put an unmeasured input into "
+            "the recovery figure. Reads no network."
+        ),
+    )
+    contacts.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    contacts.add_argument(
+        "--contacts",
+        type=Path,
+        default=DEFAULT_CONTACTS_PATH,
+        help=f"where to write the Contact Points (default: {DEFAULT_CONTACTS_PATH})",
+    )
+    contacts.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_CONTACTS_REPORT_PATH,
+        help=f"where to write the report (default: {DEFAULT_CONTACTS_REPORT_PATH})",
+    )
+
     categories = commands.add_parser(
         "scam-categories",
         help="project CAFC's thematic categories onto the ten Scam Categories",
@@ -519,18 +571,19 @@ def _generate_corpus(
     return 0
 
 
-def _require_present(inputs: dict[str, Path]) -> None:
+def _require_present(inputs: dict[str, Path], hint: str | None = None) -> None:
     """Refuse a missing input by name, rather than failing somewhere inside the run.
 
-    Both commands that read the Corpus and the published list need the same two files,
-    and both would otherwise raise a bare `FileNotFoundError` from a different place.
+    The commands that read the Corpus and the published list all need the same two
+    files, and they would otherwise raise a bare `FileNotFoundError` from a different
+    place. The hint names the commands that produce them, and a command that reads no
+    published list passes its own rather than sending a reader to fetch a rulebook it
+    will never open.
     """
+    remedy = hint or "Run `rfi generate-corpus` and `rfi fetch-suffix-list` first."
     for what, path in inputs.items():
         if not path.exists():
-            raise SystemExit(
-                f"{what} is not there: {path}. Run `rfi generate-corpus` and "
-                "`rfi fetch-suffix-list` first."
-            )
+            raise SystemExit(f"{what} is not there: {path}. {remedy}")
 
 
 def _refuse_shared_paths(paths: dict[str, Path]) -> None:
@@ -653,6 +706,31 @@ def _post_domains(
     print(f"domains        {facts.domains} distinct registrable domains")
     print(f"suffix list    {list_path} ({facts.suffix_list_bytes:,} bytes)")
     print(f"resolved links {domains_path}")
+    print(f"report         {report_path}")
+    return 0
+
+
+def _contact_points(
+    *, corpus_path: Path, contacts_path: Path, report_path: Path
+) -> int:
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the report": report_path,
+            "the Contact Points": contacts_path,
+        }
+    )
+    _require_present(
+        {"the Corpus": corpus_path},
+        "Run `rfi generate-corpus` first; this command reads no published list.",
+    )
+
+    found = contact_points(corpus_path)
+    write_post_contacts(contacts_path, found.rows)
+    _write_text(report_path, render_contacts_report(found))
+
+    print(render_contacts_table(found))
+    print(f"contact points {contacts_path}")
     print(f"report         {report_path}")
     return 0
 
