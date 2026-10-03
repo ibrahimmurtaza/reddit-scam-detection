@@ -39,6 +39,13 @@ from reddit_fraud_intelligence.domains import (
     survey as survey_domains,
     write_post_domains,
 )
+from reddit_fraud_intelligence.evaluation import (
+    RECOVERY_PATH,
+    recover,
+    render_report as render_recovery_report,
+    render_table as render_recovery_table,
+    write_recovery,
+)
 from reddit_fraud_intelligence.generator import (
     corpus_items,
     nuisance_records,
@@ -86,6 +93,8 @@ DEFAULT_CONTACTS_REPORT_PATH = Path("docs/contact-points.md")
 DEFAULT_CATEGORY_MAPPING_PATH = Path("data/cafc/scam-categories.jsonl")
 DEFAULT_CATEGORY_REPORT_PATH = Path("docs/scam-categories.md")
 DEFAULT_CANDIDATES_PATH = Path("data/campaigns/campaign-candidates.jsonl")
+DEFAULT_RECOVERY_PATH = Path(RECOVERY_PATH)
+DEFAULT_RECOVERY_REPORT_PATH = Path("docs/campaign-recovery.md")
 DEFAULT_COMPOSITION_PATH = Path("data/corpus/composition.jsonl")
 DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
@@ -154,6 +163,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 corpus_path=Path(str(args.corpus)),
                 base_rates_path=Path(str(args.base_rates)),
                 composition_path=Path(str(args.composition)),
+                report_path=Path(str(args.report)),
+            )
+        case "campaign-recovery":
+            return _campaign_recovery(
+                corpus_path=Path(str(args.corpus)),
+                candidates_path=Path(str(args.candidates)),
+                truth_path=Path(str(args.truth)),
+                nuisance_path=Path(str(args.nuisance)),
+                recovery_path=Path(str(args.recovery)),
                 report_path=Path(str(args.report)),
             )
         case "policy-score":
@@ -480,6 +498,74 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_CANDIDATES_PATH,
         help=f"where to write the candidates (default: {DEFAULT_CANDIDATES_PATH})",
+    )
+
+    recovery = commands.add_parser(
+        "campaign-recovery",
+        help="report how many Planted Campaigns the grouping recovered, as X of N",
+        description=(
+            "The project's one substantive claim, and the only command permitted to "
+            "read the Planted Campaign membership. It is a separate step over a "
+            "separate file: it joins the membership the generator wrote against the "
+            "candidates `rfi campaign-candidates` published, does no grouping of its "
+            "own, and opens neither the Public Suffix List nor the "
+            "shared-infrastructure list, so measurement cannot reach inference "
+            "(ADR-0018). A candidate counts as a recovery only when it holds a "
+            "campaign's whole membership, and a candidate holding part of one is "
+            "reported beside the figure rather than counted into it — the accounts "
+            "held, missing, and unexpected are all named, so X of N can be taken "
+            "apart. Candidates that reach no campaign are printed with the "
+            "registrations that join them: a shop's accounts sharing a domain is a "
+            "grouping the system is right to produce and is not a miss against N. "
+            "The Nuisance Structure the figure was measured against is read and "
+            "printed, because a recovery rate with no nuisance baseline beside it is "
+            "uninterpretable; the rate at which the grouping is wrong is reported "
+            "separately, and this command says where it comes from rather than "
+            "leaving the figure unaccompanied. No person reviewed any of it and no "
+            "figure over the whole Corpus is published (ADR-0004). Reads no network."
+        ),
+    )
+    recovery.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus the measurement is about (default: {DEFAULT_CORPUS_PATH})",
+    )
+    recovery.add_argument(
+        "--candidates",
+        type=Path,
+        default=DEFAULT_CANDIDATES_PATH,
+        help=(
+            "the Campaign Candidates the grouping published "
+            f"(default: {DEFAULT_CANDIDATES_PATH})"
+        ),
+    )
+    recovery.add_argument(
+        "--truth",
+        type=Path,
+        default=DEFAULT_TRUTH_PATH,
+        help=f"the Planted Campaign membership to read (default: {DEFAULT_TRUTH_PATH})",
+    )
+    recovery.add_argument(
+        "--nuisance",
+        type=Path,
+        default=DEFAULT_NUISANCE_PATH,
+        help=(
+            "the Nuisance Structure the figure was measured against "
+            f"(default: {DEFAULT_NUISANCE_PATH})"
+        ),
+    )
+    recovery.add_argument(
+        "--recovery",
+        type=Path,
+        default=DEFAULT_RECOVERY_PATH,
+        help=f"where to write the join (default: {DEFAULT_RECOVERY_PATH})",
+    )
+    recovery.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_RECOVERY_REPORT_PATH,
+        help=f"where to write the report (default: {DEFAULT_RECOVERY_REPORT_PATH})",
     )
 
     scores = commands.add_parser(
@@ -901,6 +987,57 @@ def _corpus_composition(
 
     print(render_composition_table(composition))
     print(f"composition    {composition_path}")
+    print(f"report         {report_path}")
+    return 0
+
+
+def _campaign_recovery(
+    *,
+    corpus_path: Path,
+    candidates_path: Path,
+    truth_path: Path,
+    nuisance_path: Path,
+    recovery_path: Path,
+    report_path: Path,
+) -> int:
+    """Join the membership against what the grouping published, and report it.
+
+    The seed is passed rather than read from the Corpus because it is not in the Corpus
+    file — there is no field for it, and adding one would put the generator's own
+    bookkeeping into the file the pipeline reads (ADR-0008). It decides nothing here: it
+    is carried so the report names the seed a reader can regenerate the Corpus with,
+    rather than leaving the claim that they can checkable on trust.
+    """
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the candidates": candidates_path,
+            "the membership": truth_path,
+            "the Nuisance Structure": nuisance_path,
+            "the join": recovery_path,
+            "the report": report_path,
+        }
+    )
+    _require_present(
+        {
+            "the Corpus": corpus_path,
+            "the Campaign Candidates": candidates_path,
+            "the Planted Campaign membership": truth_path,
+            "the Nuisance Structure": nuisance_path,
+        },
+        "Run `rfi generate-corpus` and then `rfi campaign-candidates` first; this "
+        "command measures what the grouping published.",
+    )
+
+    try:
+        measured = recover(corpus_path, candidates_path, truth_path, nuisance_path, DEFAULT_SEED)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+    write_recovery(recovery_path, measured.recoveries)
+    _write_text(report_path, render_recovery_report(measured))
+
+    print(render_recovery_table(measured))
+    print(f"join           {recovery_path}")
     print(f"report         {report_path}")
     return 0
 

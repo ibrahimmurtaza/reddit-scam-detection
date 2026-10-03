@@ -23,14 +23,15 @@ is wrong by the next seed.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import StrEnum
 from pathlib import Path
 
 from reddit_fraud_intelligence.content import SyntheticPost, link_hosts
 from reddit_fraud_intelligence.infrastructure import BIO_PAGE, HOP_CUT, PASTE_VAULT
-from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
+from reddit_fraud_intelligence.jsonl import JsonObject, read_rows, write_lines
 
 
 class NuisanceKind(StrEnum):
@@ -695,3 +696,97 @@ def write_nuisance(path: Path, records: Iterable[NuisanceRecord]) -> None:
             }
 
     write_lines(path, objects())
+
+
+def read_nuisance(path: Path) -> tuple[NuisanceRecord, ...]:
+    """The manifest, read back and checked row by row.
+
+    The evaluator reads this file to say what a recovery figure was measured
+    against, so a row it cannot account for would be counted in a baseline nobody
+    can check. Every field is therefore parsed rather than passed through, and the
+    identifiers are held distinct: two rows claiming one identifier would inflate
+    the counts by kind that the recovery report prints beside the figure, and the
+    note is required rather than optional because a record nobody can account for
+    is a record nobody can read either.
+    """
+    records = tuple(_record(path, number, text) for number, text in read_rows(path))
+    identifiers = [record.nuisance_id for record in records]
+    if len(set(identifiers)) != len(identifiers):
+        repeated = sorted(name for name in set(identifiers) if identifiers.count(name) > 1)
+        raise ValueError(
+            f"{path.as_posix()} names {repeated} on two rows each, so the counts beside "
+            "the recovery figure would count them twice"
+        )
+    return records
+
+
+def _record(path: Path, number: int, text: str) -> NuisanceRecord:
+    where = f"{path.as_posix()}:{number}"
+    try:
+        row = json.loads(text)
+    except json.JSONDecodeError as refusal:
+        raise ValueError(f"{where} is not JSON: {text!r}") from refusal
+    if not isinstance(row, dict):
+        raise ValueError(f"{where} is not a row: {text!r}")
+
+    vocabulary = tuple(field.name for field in fields(NuisanceRecord))
+    if set(row) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds {sorted(row)}, which is not the manifest vocabulary "
+            f"{sorted(vocabulary)}"
+        )
+    note = row["note"]
+    if not isinstance(note, str) or not note.strip():
+        raise ValueError(f"{where} has no note, and a record nobody can account for is one")
+    return NuisanceRecord(
+        kind=_kind(where, row["kind"]),
+        nuisance_id=_text(where, row, "nuisance_id"),
+        accounts=_names(where, row, "accounts"),
+        posts=_names(where, row, "posts"),
+        hosts=_names(where, row, "hosts"),
+        characters=_characters(where, row["characters"]),
+        note=note,
+    )
+
+
+def _kind(where: str, value: object) -> NuisanceKind:
+    if not isinstance(value, str):
+        raise ValueError(f"{where} names {value!r}, which is not a kind of Nuisance Structure")
+    try:
+        return NuisanceKind(value)
+    except ValueError as unknown:
+        kinds = ", ".join(kind.value for kind in NuisanceKind)
+        raise ValueError(f"{where} names {value!r}, and the kinds are {kinds}") from unknown
+
+
+def _characters(where: str, value: object) -> tuple[HardNegativeCharacter, ...]:
+    """The character each Hard Negative is recorded as, and nothing else.
+
+    A record of another kind carries none, which the check enforces rather than
+    assumes: a decoy labelled as a joke is a record that would be counted into the
+    wrong baseline.
+    """
+    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
+        raise ValueError(f"{where} has characters={value!r}, which is not a list of names")
+    characters = []
+    for entry in value:
+        try:
+            characters.append(HardNegativeCharacter(entry))
+        except ValueError as unknown:
+            names = ", ".join(character.value for character in HardNegativeCharacter)
+            raise ValueError(f"{where} names {entry!r}, and the characters are {names}") from unknown
+    return tuple(characters)
+
+
+def _names(where: str, row: JsonObject, field_name: str) -> tuple[str, ...]:
+    value = row[field_name]
+    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
+        raise ValueError(f"{where} has {field_name}={value!r}, which is not a list of names")
+    return tuple(value)
+
+
+def _text(where: str, row: JsonObject, field_name: str) -> str:
+    value = row[field_name]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{where} has no {field_name}")
+    return value
