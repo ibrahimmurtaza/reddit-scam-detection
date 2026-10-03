@@ -16,7 +16,8 @@ Four things are built. The Corpus generator, which is the credibility boundary t
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
-projection of those categories down to ten Scam Categories. And the pipeline itself:
+projection of those categories down to ten Scam Categories, and the comparison of
+the Corpus's own distribution against those base rates. And the pipeline itself:
 the Registrable Domain of every link, then the Contact Points every post names, then
 the Campaign Candidates those registrations produce, with known-shared infrastructure
 filtered out as published data, then the Policy Score those same links and posts add
@@ -42,6 +43,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. | the pipeline |
 | `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
 | `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
+| `data/corpus/composition.jsonl` | Every post's Scam Category, with the sentences of its own text that placed it. | a reader, then the category-conflict ticket #18 |
 | `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. Each row carries where the host came from and when it was added. | `rfi campaign-candidates` |
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
@@ -514,6 +516,62 @@ enumeration the mapping is guaranteed against, and a new value in a new release
 stops the command until the projection accounts for it. Committing the annex, so
 that the transcription is checkable against bytes, is not done here.
 
+## The Corpus composition
+
+`docs/corpus-composition.md` is the report ADR-0006 asked for: the Corpus's own
+distribution over the ten Scam Categories, with CAFC's published base rate for the
+same class beside it and the difference between them on the line. A post is placed
+by reading its own title and body against a published phrase list per Scam Category,
+the same way a Content Signal fires, so a reader holding the post can put the lists
+beside it and arrive at the same placement.
+
+```
+uv run rfi corpus-composition   # reads the Corpus and the base rates, writes two files
+```
+
+| File | Holds |
+| --- | --- |
+| `data/corpus/composition.jsonl` | One line per post: its Scam Category, the sentences of its own text that placed it, and any other class the same post matched. |
+| `docs/corpus-composition.md` | The report: both distributions, the widest gap, what the Corpus holds nothing of, the Other bucket, and every phrase list. |
+
+**The comparison is the finding, and on this Corpus it is blunt.** Eight of the ten
+Scam Categories hold no post at all, and **82.5% of real reports land in classes
+this Corpus has nothing to say about**. The two classes it does hold are the two the
+generator writes:
+
+```
+  category                           posts  corpus   CAFC  difference
+  Work and Payroll                   12  44.4%   4.1%  +40.3pp
+    corpus  ##############################  44.4%
+    CAFC    ###                             4.1%
+  Investment and Money Offers         9  33.3%   7.5%  +25.8pp
+    corpus  #######################         33.3%
+    CAFC    #####                           7.5%
+  Other                               6  22.2%   3.0%  +19.2pp
+    corpus  ###############                 22.2%
+    CAFC    ##                              3.0%
+```
+
+Every recovery figure this project will publish is bounded by that, which is why the
+report prints it rather than leaving it in a ticket. The Other bucket is a row
+beside the ten rather than a remainder below them, held against CAFC's own residual
+category at 3.0%: CAFC filed that one for a report its analysts could not describe
+any other way, which is the position the projection is in when no list matches a post.
+The two are a share of posts this project wrote and a share of reports Canada filed,
+so they are read against each other rather than equated.
+
+Two limits are stated in the report rather than buried here. **CAFC carries no
+free-text field**, so it constrains which Scam Categories exist and what their
+priors are and it cannot validate a text classifier — every placement in the file is
+unvalidated by construction. And the lists read what a post is talking about, not
+whether it is a scam: the Corpus plants genuine job adverts, satire about both
+planted pitches, and complaints from people who lost money to one, and all of them
+land in the class of the pitch they make. 158 phrases across ten classes is enough to
+place the Corpus this project wrote and blunt enough to be wrong often on real
+content. `tests/test_corpus_composition.py` asserts the first of those against the
+Nuisance Structure manifest, which is the only direction ADR-0011 lets that file be
+read in.
+
 
 ## Tests
 
@@ -550,6 +608,8 @@ patch `urllib.request.urlopen` to refuse.
   thematic categories read down to ten, and the 41 in ADR-0006 is corrected), 0014 (the
   Policy Score is a subset-sum of published weights, and a Signal fires once however many
   registrations fired it), 0015 (Content Signals are phrase lists with a
-  sentence-scoped negation guard, and the sentence is the evidence), and 0016
+  sentence-scoped negation guard, and the sentence is the evidence), 0016
   (Contact Points are read literally, the ones this build cannot read are reported
-  rather than repaired, and nothing groups on one yet).
+  rather than repaired, and nothing groups on one yet), and 0017 (a post's Scam
+  Category is read off its own text with published phrase lists, the first match wins,
+  and CAFC cannot validate the reading).

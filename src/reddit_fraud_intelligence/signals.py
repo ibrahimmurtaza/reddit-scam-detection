@@ -41,7 +41,6 @@ import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
-from functools import lru_cache
 from pathlib import Path
 
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
@@ -49,6 +48,7 @@ from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedInfrastructure
 from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
+from reddit_fraud_intelligence.text import matcher, sentences, spans, wrap
 
 _HEADING = "Policy Score"
 _SUBHEADING = """\
@@ -154,12 +154,6 @@ _NEGATORS = frozenset(
         "wouldn't",
     }
 )
-
-# A sentence is what ends in `.`, `!`, or `?` followed by a space: the unit the
-# negation guard reads, and the unit printed as evidence. Splitting anywhere finer would
-# lose the case where one negator governs a list — "we do not ask for a deposit, a kit
-# fee, or any money up front" is one request denied three times, not three requests.
-_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
 
 # A run of letters and digits, with apostrophes inside a word rather than at its edges,
 # so `don't` is one word and can be a negator.
@@ -667,14 +661,12 @@ def _content(item: CorpusItem, signal: SignalName) -> tuple[Evidence, ...]:
     """
     found: list[PhraseMatch] = []
     for field, text in (("title", item.title), ("body", item.body)):
-        for sentence in _sentences(text):
+        for sentence in sentences(text):
             fired = tuple(
                 sorted(
                     phrase
                     for phrase in _PHRASES[signal]
-                    if any(
-                        not _negated(sentence, at) for at in _spans(sentence, phrase)
-                    )
+                    if any(not _negated(sentence, at) for at in spans(sentence, phrase))
                 )
             )
             if fired:
@@ -687,21 +679,6 @@ def _content(item: CorpusItem, signal: SignalName) -> tuple[Evidence, ...]:
                     )
                 )
     return tuple(found)
-
-
-def _sentences(text: str) -> tuple[str, ...]:
-    """The sentences of one field, each one a substring of the text it came from.
-
-    That last part is what the auditability claim rests on: the evidence is quoted
-    rather than summarised or trimmed, so a reader can hold it against the post they are
-    looking at and find it there, character for character.
-    """
-    return tuple(part for part in _SENTENCE_BREAK.split(text.strip()) if part)
-
-
-def _spans(sentence: str, phrase: str) -> tuple[int, ...]:
-    """Where one published phrase appears in one sentence, counted from the start."""
-    return tuple(found.start() for found in _matcher(phrase).finditer(sentence.lower()))
 
 
 def _negated(sentence: str, start: int) -> bool:
@@ -728,19 +705,6 @@ def _negated(sentence: str, start: int) -> bool:
     if any(word in _NEGATORS for word in words):
         return True
     return words[-1] == "no"
-
-
-@lru_cache(maxsize=None)
-def _matcher(phrase: str) -> re.Pattern[str]:
-    """The pattern one published phrase is matched with.
-
-    Case is folded by the caller and whitespace between the words is the only freedom,
-    so a phrase cannot fire across a paragraph break. The lookaround stops `48-hour`
-    matching inside `148-hour` and `guaranteed` matching inside `unguaranteed`, which a
-    reader re-applying the rule by eye would not do.
-    """
-    body = r"\s+".join(re.escape(word) for word in phrase.split())
-    return re.compile(rf"(?<![0-9a-z]){body}(?![0-9a-z])")
 
 
 def _normalise(points: int, published: int) -> int:
@@ -1031,33 +995,13 @@ def _phrases_table() -> str:
         'same sentence, or where a bare "no" stands directly before it'
     ]
     lines.extend(
-        _wrap(f"negators  {', '.join(f'\"{word}\"' for word in sorted(_NEGATORS))}", indent=2)
+        wrap(f"negators  {', '.join(f'\"{word}\"' for word in sorted(_NEGATORS))}", indent=2)
     )
     for signal in _CONTENT_SIGNALS:
         phrases = _PHRASES[signal]
         lines.append(f"  {signal.value}  {_count(len(phrases), 'phrase')}")
-        lines.extend(_wrap(", ".join(f'"{phrase}"' for phrase in phrases)))
+        lines.extend(wrap(", ".join(f'"{phrase}"' for phrase in phrases)))
     return "\n".join(lines)
-
-
-def _wrap(quoted: str, indent: int = 4, width: int = 78) -> list[str]:
-    """One string wrapped to the console's width, with the continuation indented.
-
-    Wrapped rather than printed on one line because the phrase list is longer than a
-    console is wide, and an output that runs off the edge is an output a reviewer has to
-    reflow before they can paste it into an issue.
-    """
-    lines: list[str] = []
-    current = ""
-    for word in quoted.split():
-        if current and len(current) + 1 + len(word) + indent > width:
-            lines.append(f"{' ' * indent}{current}")
-            current = word
-        else:
-            current = f"{current} {word}".strip()
-    if current:
-        lines.append(f"{' ' * indent}{current}")
-    return lines
 
 
 def _footer(scored: Scored) -> str:
