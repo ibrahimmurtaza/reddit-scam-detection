@@ -12,18 +12,20 @@ corresponds to a real person.
 
 ## Where it is
 
-Four things are built. The Corpus generator, which is the credibility boundary the
+Five things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
 projection of those categories down to ten Scam Categories, and the comparison of
-the Corpus's own distribution against those base rates. And the pipeline itself:
-the Registrable Domain of every link, then the Contact Points every post names, then
+the Corpus's own distribution against those base rates. The pipeline itself: the
+Registrable Domain of every link, then the Contact Points every post names, then
 the Campaign Candidates those registrations produce, with known-shared infrastructure
 filtered out as published data, then the Policy Score those same links and posts add
-up to, with the arithmetic printed beside it. The Review Queue and evaluation are not
-built yet. Their tickets are numbered #16 to #28 in the tracker; this README is updated
-as they land.
+up to, with the arithmetic printed beside it. And the measurement: how many of the two
+Planted Campaigns that grouping recovered, as X of N, joined by a command that runs
+after it rather than inside it. The Review Queue, the false-grouping rate beside that
+figure, the Confidence, and the corroborated grouping tier are not built yet. Their
+tickets are numbered #16 to #28 in the tracker; this README is updated as they land.
 
 ## Running it
 
@@ -49,6 +51,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | a reader, then the grouping-edge ticket #20 |
 | `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | a reader, then the corroboration ticket #24 |
+| `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, then the false-grouping ticket #19 |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | a reader, then the Review Queue ticket #16 |
 
@@ -102,8 +105,10 @@ One limit is worth stating here rather than discovering later. Every registrable
 domain in this Corpus that more than one account uses belongs either to a Planted
 Campaign or to the shop that is planted there as a decoy, so the interesting false
 groupings live entirely in the shared infrastructure — which is why the filter is the
-subject of its own section above rather than a detail of the domain report. Ticket
-#19 measures the rate; this Corpus is small enough to read the answer by hand.
+subject of its own section above rather than a detail of the domain report. The
+recovery report below prints that shop beside the figure, because a recovery rate
+readable without knowing what the other candidates are is not readable; ticket #19
+measures the rate. This Corpus is small enough to read the answer by hand.
 
 ## Registrable domains
 
@@ -328,6 +333,71 @@ Nothing in this path reads the truth file or the Nuisance Structure manifest: th
 Corpus, the Public Suffix List, and the shared-infrastructure list are the whole
 input, and `tests/test_campaign_candidates.py` checks that by watching which files
 the run opens rather than by reading the code that decides what to open.
+
+## The recovery figure
+
+`docs/campaign-recovery.md` is the report: how many of the two Planted Campaigns the
+grouping recovered. **2 of 2**, with the shop printed beside them.
+
+```
+uv run rfi campaign-candidates   # writes the candidates this measures
+uv run rfi campaign-recovery     # reads them, and the membership, and writes two files
+```
+
+| File | Holds |
+| --- | --- |
+| `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. |
+| `docs/campaign-recovery.md` | The report: the figure, the join behind it, the candidates that are not a recovery, the Nuisance Structure it was measured against, and what the number cannot say. |
+
+**It is a separate command, and that is the point.** It reads the candidates
+`rfi campaign-candidates` published and does no grouping of its own — it opens neither
+the Public Suffix List nor the shared-infrastructure list — and nothing in the grouping
+path opens the truth file or the Nuisance Structure manifest. The two steps are two
+commands and a committed file between them rather than one process with a boundary
+drawn inside it (ADR-0018), and
+`tests/test_campaign_recovery.py` checks it by watching which files each of the two
+opens. The evaluator also refuses a membership or a candidates file naming an account
+the Corpus does not hold, and refuses a candidates file carrying a field it does not
+know: a `campaign_id` there would be Planted Campaign membership in the pipeline's
+own output, and quietly ignoring a field that has appeared is the first way to stop
+being able to say the file does not carry one.
+
+A candidate counts as a recovery only when it holds a campaign's whole membership.
+That is stricter than it sounds: two accounts of a three-account campaign grouped on
+their own registration is a real grouping and not a recovery, and a candidate holding
+a campaign's three accounts and one of its own is an over-grouping rather than half a
+recovery. Both are reported as `partial`, with the accounts held, missing, and
+unexpected named, and neither is counted into the figure. The three outcomes —
+recovered, partial, missed — partition the membership, so a reader can add them up and
+get N rather than take the numerator on trust.
+
+**Nobody reviewed any of it.** The figure is computed by this command against
+membership the generator planted, and the report says so in its own words, because a
+reader who cannot tell a command from a reviewer has been told something false about
+how the number came about. The report also names the Nuisance Structure the figure
+sits on — 19 records over six kinds, every kind counted — because a recovery rate over
+a Corpus that held nothing else would be a figure about a generator that planted two
+campaigns and said so nowhere.
+
+No figure over the whole Corpus is published in either view. Every label in this
+Corpus was assigned by the generator that wrote the posts, so such a figure would
+measure agreement with the generator rather than anything about fraud (ADR-0004), and
+`tests/test_campaign_recovery.py` asserts the string that would name it appears
+nowhere in the report.
+
+The figure is reproducible from the seed the report prints, and the test proves that
+rather than the report claiming it: it reads the seed out of the page, regenerates the
+Corpus, the membership, the manifest, and the shared-infrastructure list at that seed,
+re-runs the grouping over them, and joins again for the same figure and the same bytes.
+
+The report states the limits rather than leaving them in the tickets, and one of them
+is why the figure is only half the claim. A Planted Campaign leaning on a shared host
+is lost with the host, an account that reaches no registration cannot be proposed at
+all, and a campaign that rotates its registration per post is invisible by
+construction — so this is a lower bound. Recovery on its own can also be produced by
+a grouping that merges unrelated accounts, so the rate of false groupings against the
+same manifest is not measured yet (ticket #19), and until it arrives a reader should
+treat the figure as uninterpretable on its own.
 
 ## The Policy Score
 
@@ -612,4 +682,6 @@ patch `urllib.request.urlopen` to refuse.
   (Contact Points are read literally, the ones this build cannot read are reported
   rather than repaired, and nothing groups on one yet), and 0017 (a post's Scam
   Category is read off its own text with published phrase lists, the first match wins,
-  and CAFC cannot validate the reading).
+  and CAFC cannot validate the reading), and 0018 (the evaluator joins the published
+  candidates in a command of its own, so measurement cannot reach inference and the
+  two steps are a file apart rather than a boundary drawn inside one process).

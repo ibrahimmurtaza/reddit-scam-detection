@@ -6,7 +6,8 @@ committed Corpus, the resolved links, the generated CAFC report, the generated
 registrable-domain report, the generated Contact Points and their report, the
 generated Scam Category projection, the generated Corpus composition and its
 report, the generated
-Campaign Candidates, and the generated Policy Scores — the project's own prose
+Campaign Candidates, the generated Policy Scores, and the generated recovery
+report and its join — the project's own prose
 wherever it lands. Not scanned: this
 directory, which is where the phrases live; `data/cafc/base_rates.jsonl`, which holds
 CAFC's category names and not ours; and `data/public-suffix/public_suffix_list.dat`,
@@ -74,8 +75,10 @@ def scanned() -> list[Path]:
         REPO_ROOT / "data" / "campaigns" / "campaign-candidates.jsonl",
         REPO_ROOT / "data" / "contacts" / "post-contacts.jsonl",
         REPO_ROOT / "data" / "domains" / "post-domains.jsonl",
+        REPO_ROOT / "data" / "evaluation" / "recovery.jsonl",
         REPO_ROOT / "data" / "infrastructure" / "shared-hosts.jsonl",
         REPO_ROOT / "data" / "signals" / "policy-scores.jsonl",
+        REPO_ROOT / "docs" / "campaign-recovery.md",
         REPO_ROOT / "docs" / "cafc-base-rates.md",
         REPO_ROOT / "docs" / "contact-points.md",
         REPO_ROOT / "docs" / "corpus-composition.md",

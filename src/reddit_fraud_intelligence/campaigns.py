@@ -41,13 +41,21 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedHost, SharedInfrastructure
-from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
+from reddit_fraud_intelligence.jsonl import (
+    JsonObject,
+    read_names,
+    read_object,
+    read_rows,
+    read_text,
+    refuse_repeated,
+    write_lines,
+)
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 
 _HEADING = "Campaign Candidates"
@@ -464,6 +472,91 @@ def write_campaign_candidates(path: Path, candidates: Sequence[CampaignCandidate
             }
 
     write_lines(path, objects())
+
+
+def read_campaign_candidates(path: Path) -> tuple[CampaignCandidate, ...]:
+    """The candidates this project published, checked row by row.
+
+    The reader lives beside the writer because they are one vocabulary: a field
+    cannot be added to `CampaignCandidate` and left out of the file, and a field
+    cannot be in the file that the reader does not check. That is the same
+    arrangement `CorpusItem` has, and it is checked in the same way — an unknown
+    field is refused rather than ignored, because the one field that must never
+    appear in this file is a Planted Campaign's identifier, and a reader that
+    skipped what it did not recognise would skip that without saying so
+    (ADR-0008). The evaluator is what depends on this: it is the only command
+    allowed to read the truth file, so the file it measures against has to be one
+    it can prove carries no membership of its own.
+
+    A row naming one account is refused as well. A component of one is not a
+    Campaign Candidate (ADR-0005), so a file holding one is a file describing a
+    grouping this project does not produce, and the recovery figure would then be
+    joining against something other than the grouping's output.
+    """
+    candidates = tuple(_candidate(path, number, text) for number, text in read_rows(path))
+    refuse_repeated(
+        path.as_posix(),
+        (candidate.candidate_id for candidate in candidates),
+        "a join would count a candidate twice",
+    )
+    return candidates
+
+
+def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
+    where = f"{path.as_posix()}:{number}"
+    record = read_object(where, text)
+    vocabulary = tuple(field.name for field in fields(CampaignCandidate))
+    if set(record) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds {sorted(record)}, which is not the candidate vocabulary "
+            f"{sorted(vocabulary)}"
+        )
+    accounts = read_names(where, record, "accounts")
+    if len(accounts) < 2:
+        raise ValueError(
+            f"{where} names {_count(len(accounts), 'account')}, and a component of one is "
+            "not a Campaign Candidate (ADR-0005)"
+        )
+    shared = record["shared_domains"]
+    if not isinstance(shared, list):
+        raise ValueError(f"{where} has shared_domains={shared!r}, which is not a list")
+    return CampaignCandidate(
+        candidate_id=read_text(where, record, "candidate_id"),
+        accounts=accounts,
+        posts=read_names(where, record, "posts"),
+        shared_domains=tuple(
+            _shared(where, entry, accounts) for entry in shared if isinstance(entry, dict)
+        ),
+        first_seen=read_text(where, record, "first_seen"),
+    )
+
+
+def _shared(where: str, record: JsonObject, accounts: tuple[str, ...]) -> SharedDomain:
+    """One registration a candidate is joined on, checked as a row of its own.
+
+    The accounts named here have to be the candidate's own, because a registration
+    under a candidate naming an account outside it would be evidence for a grouping
+    nobody proposed. The file has no column saying so, so it is checked.
+    """
+    vocabulary = tuple(field.name for field in fields(SharedDomain))
+    if set(record) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds a shared registration with {sorted(record)}, which is not "
+            f"the registration vocabulary {sorted(vocabulary)}"
+        )
+    named = read_names(where, record, "accounts")
+    outside = sorted(set(named) - set(accounts))
+    if outside:
+        raise ValueError(
+            f"{where} names a registration reached by {outside}, which is not in the "
+            "candidate it is printed under"
+        )
+    return SharedDomain(
+        domain=read_text(where, record, "domain"),
+        accounts=named,
+        posts=read_names(where, record, "posts"),
+    )
+
 
 
 def render_table(grouping: Grouping) -> str:

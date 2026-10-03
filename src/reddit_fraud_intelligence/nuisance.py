@@ -24,13 +24,21 @@ is wrong by the next seed.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import StrEnum
 from pathlib import Path
 
 from reddit_fraud_intelligence.content import SyntheticPost, link_hosts
 from reddit_fraud_intelligence.infrastructure import BIO_PAGE, HOP_CUT, PASTE_VAULT
-from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
+from reddit_fraud_intelligence.jsonl import (
+    JsonObject,
+    read_names,
+    read_object,
+    read_rows,
+    read_text,
+    refuse_repeated,
+    write_lines,
+)
 
 
 class NuisanceKind(StrEnum):
@@ -695,3 +703,73 @@ def write_nuisance(path: Path, records: Iterable[NuisanceRecord]) -> None:
             }
 
     write_lines(path, objects())
+
+
+def read_nuisance(path: Path) -> tuple[NuisanceRecord, ...]:
+    """The manifest, read back and checked row by row.
+
+    The evaluator reads this file to say what a recovery figure was measured
+    against, so a row it cannot account for would be counted in a baseline nobody
+    can check. Every field is therefore parsed rather than passed through, and the
+    identifiers are held distinct: two rows claiming one identifier would inflate
+    the counts by kind that the recovery report prints beside the figure, and the
+    note is required rather than optional because a record nobody can account for
+    is a record nobody can read either.
+    """
+    records = tuple(_record(path, number, text) for number, text in read_rows(path))
+    refuse_repeated(
+        path.as_posix(),
+        (record.nuisance_id for record in records),
+        "the counts printed beside the recovery figure would count them twice",
+    )
+    return records
+
+
+def _record(path: Path, number: int, text: str) -> NuisanceRecord:
+    where = f"{path.as_posix()}:{number}"
+    record = read_object(where, text)
+    vocabulary = tuple(field.name for field in fields(NuisanceRecord))
+    if set(record) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds {sorted(record)}, which is not the manifest vocabulary "
+            f"{sorted(vocabulary)}"
+        )
+    return NuisanceRecord(
+        kind=_kind(where, record["kind"]),
+        nuisance_id=read_text(where, record, "nuisance_id"),
+        accounts=read_names(where, record, "accounts"),
+        posts=read_names(where, record, "posts"),
+        hosts=read_names(where, record, "hosts"),
+        characters=_characters(where, record["characters"]),
+        note=read_text(where, record, "note"),
+    )
+
+
+def _kind(where: str, value: object) -> NuisanceKind:
+    if not isinstance(value, str):
+        raise ValueError(f"{where} names {value!r}, which is not a kind of Nuisance Structure")
+    try:
+        return NuisanceKind(value)
+    except ValueError as unknown:
+        kinds = ", ".join(kind.value for kind in NuisanceKind)
+        raise ValueError(f"{where} names {value!r}, and the kinds are {kinds}") from unknown
+
+
+def _characters(where: str, value: object) -> tuple[HardNegativeCharacter, ...]:
+    """The character each Hard Negative is recorded as, and nothing else.
+
+    A record of another kind carries none, which the check enforces rather than
+    assumes: a decoy labelled as a joke is a record that would be counted into the
+    wrong baseline.
+    """
+    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
+        raise ValueError(f"{where} has characters={value!r}, which is not a list of names")
+    characters = []
+    for entry in value:
+        try:
+            characters.append(HardNegativeCharacter(entry))
+        except ValueError as unknown:
+            names = ", ".join(character.value for character in HardNegativeCharacter)
+            raise ValueError(f"{where} names {entry!r}, and the characters are {names}") from unknown
+    return tuple(characters)
+

@@ -46,7 +46,7 @@ from pathlib import Path
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedInfrastructure
-from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
+from reddit_fraud_intelligence.jsonl import JsonObject, read_rows, write_lines
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 from reddit_fraud_intelligence.text import matcher, sentences, spans, wrap
 
@@ -211,9 +211,7 @@ class Weights:
         published-weights claim is made of. Every direction is refused, so the file and
         this module cannot describe different sets of Signals.
         """
-        entries = tuple(
-            _weight(path, number, text) for number, text in _lines(path)
-        )
+        entries = tuple(_weight(path, number, text) for number, text in read_rows(path))
         published = [entry.signal for entry in entries]
         known = set(SignalName)
         if sorted(published) != sorted(known):
@@ -1046,19 +1044,6 @@ change the file and watch every score move:
 
 A Planted Campaign that leans on a shared host is lost with the host, so a score built
 this way is a lower bound for the same reason a recovery figure is."""
-
-
-def _lines(path: Path) -> Iterator[tuple[int, str]]:
-    """Every row of the file with the line number a reader would call it by.
-
-    The number is the physical line, not the ordinal of the non-blank ones, because
-    the refusal it appears in has to point at the line a reader sees in their editor:
-    counting only the rows that parsed would move every complaint up a line as soon as
-    somebody left a blank one above it.
-    """
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if line.strip():
-            yield number, line
 
 
 def _weight(path: Path, number: int, line: str) -> SignalWeight:
