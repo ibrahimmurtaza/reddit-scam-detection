@@ -19,10 +19,9 @@ and committed, with the base rate of every thematic category computed from it. T
 projection of those categories down to ten Scam Categories. And the pipeline itself:
 the Registrable Domain of every link, then the Campaign Candidates those
 registrations produce, with known-shared infrastructure filtered out as published
-data, then the Policy Score those same links add up to, with the arithmetic printed
-beside it. Content Signals, the Review Queue, and evaluation are not built yet. Their
-tickets are numbered #10 and #16 to #28 in the tracker; this README is updated as
-they land.
+data, then the Policy Score those same links and posts add up to, with the arithmetic
+printed beside it. The Review Queue and evaluation are not built yet. Their
+tickets are numbered #16 to #28 in the tracker; this README is updated as they land.
 
 ## Running it
 
@@ -257,14 +256,50 @@ uv run rfi policy-score   # reads the Corpus and the three published lists, writ
 | `data/signals/weights.jsonl` | Every Signal, its weight, and the one-line reason it is that number. Read as data; the scoring rules hold no weight of their own. |
 | `data/signals/policy-scores.jsonl` | One line per post: the score, the points earned, the published total, and each Signal with its weight and the evidence it fired on. |
 
-Two Signals reach the score, and both are read from links rather than from text.
-`domain_frequency` fires when a post links a Registrable Domain two or more accounts
-in the Corpus reach, and prints those two figures beside it — `4 posts by 3 accounts`
-is the claim, and `data/domains/post-domains.jsonl` is where a reader counts it.
-`domain_lookalike` fires when a post links a registration one edit away from another
-registration in the Corpus, under the same Public Suffix, and names the other one.
-An edit is an insertion, a deletion, a substitution, or a transposition, because a
-copy of a name is made by doing exactly one of those to it.
+Five Signals reach the score. Two are read from links and three from the post's own text.
+Nothing in this path needs anything about an account, and that is the whole of the
+difference between a Signal and a thing that is not one: no account's age, karma, posting
+rate, or activity change is read, and the Corpus file holds no such field to read — a
+Corpus row carrying one is refused rather than ignored, which is what makes the constraint
+structural. `tests/test_policy_score.py` checks it two ways: renaming every account in the
+Corpus leaves every score identical, and the run is watched to open four published files
+and never the truth file.
+
+The two Link Signals are `domain_frequency`, which fires when a post links a
+Registrable Domain two or more accounts in the Corpus reach and prints those two figures
+beside it — `4 posts by 3 accounts` is the claim, and `data/domains/post-domains.jsonl`
+is where a reader counts it — and `domain_lookalike`, which fires when a post links a
+registration one edit away from another registration in the Corpus, under the same Public
+Suffix, and names the other one. An edit is an insertion, a deletion, a substitution, or
+a transposition, because a copy of a name is made by doing exactly one of those to it.
+
+The three Content Signals read the post and nothing else, and they read it literally: a
+Signal fires where one of its phrases appears in the post's own title or body.
+`guaranteed_return` is the post claiming the outcome cannot fail, `payment_request` is
+money asked for before any work is done, and `urgency_language` is a deadline or a claim
+that waiting costs the reader the place. The whole of every phrase list is printed with
+the weights, because a reviewer holding the post can only check a match if they can see
+what the rule was looking for.
+
+Each Content Signal carries the sentence it fired on rather than the phrase alone,
+because the sentence is the judgement a reviewer wants to make — it either names the
+claim or denies it — and it is the whole of what the rule looked at. One match is
+silenced by a negator standing earlier in the same sentence, and the whole of the
+negator list is printed with the phrase lists, so a reader can reproduce a match the run
+dropped and not only one it kept. What that buys on this Corpus is `syn_p_0018`: a
+declared Hard Negative, a genuine job post that spells out that it asks for no deposit,
+whose title and body match three of `payment_request`'s phrases and lose all three to
+the guard. `syn_p_0026` loses one more; the other posts that disclaim a deposit never
+match at all. The guard is scoped to the sentence because `We do not ask for a deposit, a
+kit fee, or any money up front` is one request denied three times, and a guard stopping at
+the comma would read the second and third as requests.
+
+The guard costs something and the output says so rather than leaving it in the ADR: a
+post that asks for money in one sentence and denies asking in the next carries no
+`payment_request`. A bare `no` is the one exception, counting only when it stands
+directly before the phrase — `no experience needed` is in every job post ever written, so
+a `no` that counted anywhere in the sentence would silence the Signal on exactly the posts
+it exists for, which in this Corpus means `syn_p_0027`.
 
 That first Signal is not computable from one post, and the project says so rather than
 rounding the claim up: it counts how much of the Corpus reaches a registration. What it
@@ -274,30 +309,23 @@ published by a different command over the same Corpus — and requires the two c
 agree. Read the post, read the registration table printed beside the Signal, and the
 posts and accounts that put it there are there to be found.
 
-Both Signals need the rest of the Corpus's links and neither needs anything about an
-account. That is the whole of the difference between a Signal and a thing that is not
-one: no account's age, karma, posting rate, or activity change is read on this path,
-and the Corpus file holds no such field to read — a Corpus row carrying one is
-refused rather than ignored, which is what makes the constraint structural.
-`tests/test_policy_score.py` checks it two ways: renaming every account in the Corpus
-leaves every score identical, and the run is watched to open four published files and
-never the truth file.
-
 The three things a reader should be suspicious of are stated rather than buried.
 A Signal is present or absent, so a post linking three shared registrations carries
-`domain_frequency` once, not three times, and the score is a subset-sum of the
-published weights and nothing else. The frequency figures count other posts; they are
-structure to go and look at, not a judgement about them. And the known-shared
-registrations are out of the scoring path rather than scored at zero — `hopcut.example`
-is reached by four accounts here, more than any planted registration, and handing
-that to a Signal would reward every post that used a service everybody uses. A
+`domain_frequency` once, not three times, and a post using four phrases from one Content
+Signal's list carries that Signal once, not four times. The score is a subset-sum of the
+published weights and nothing else: the points earned as a share of the published total,
+to the nearest whole number out of 100 with halves going up. The frequency figures count
+other posts; they are structure to go and look at, not a judgement about them. And the
+known-shared registrations are out of the scoring path rather than scored at zero —
+`hopcut.example` is reached by four accounts here, more than any planted registration, and
+handing that to a Signal would reward every post that used a service everybody uses. A
 Planted Campaign leaning on a shared host is lost with it, the same lower bound the
 grouping reports.
 
-One more thing the score cannot do yet: it cannot rank. Two Signals give four subsets
-and this Corpus takes all four, so seven posts tie at 100 and three at 60. Breaking
-those ties is ticket #16's job and not this command's, and the index is ordered by
-score and then by post id so the table is at least stable.
+One more thing the score cannot do yet: it cannot rank. Five Signals give thirty-two
+subsets and this Corpus takes eight of them, so five posts tie at 45 and three at 14.
+Breaking those ties is ticket #16's job and not this command's, and the index is ordered
+by score and then by post id so the table is at least stable.
 
 The lookalike Signal fires on both members of a pair and names neither as the copy,
 because the spelling does not say which imitates which: the Corpus plants a
@@ -308,10 +336,12 @@ from the Public Suffix List punycoded, so a Cyrillic `а` in `apple.example` mak
 registration `xn--pple-43d.example` and no edit-distance rule over the resolved form
 can see what it was imitating.
 
-The score takes four values on this Corpus — 0, 40, 60, and 100 — because two
-Signals give four subsets. That is the honest consequence of publishing the
-arithmetic rather than a rescaling that hides it, and the content Signals in ticket
-#10 are what give it more.
+Nothing in this Corpus promises a guaranteed return, and that is a finding rather than a
+gap: the two Planted Campaigns go out of their way to publish their losing months, which
+is the whole of their craft. `guaranteed_return` is published anyway, because it is the
+strongest claim a post can make in its own words and it is a rule a reader can apply to a
+real Corpus. `syn_p_0021`, a post about money already lost, carries no Content Signal at
+all: the Signals score the pitch rather than the aftermath.
 
 Adding a Signal is a two-part change and the run refuses to skip either half: the
 rule goes in `src/reddit_fraud_intelligence/signals.py` and the weight goes in
@@ -426,6 +456,7 @@ patch `urllib.request.urlopen` to refuse.
   computed from the cache), 0011 (the Nuisance Structure has a file of its own, and
   so does the shared-infrastructure list), 0012 (registrable domains are resolved
   from the published Public Suffix List), 0013 (the Scam Categories are CAFC's
-  thematic categories read down to ten, and the 41 in ADR-0006 is corrected), and
-  0014 (the Policy Score is a subset-sum of published weights, and a Signal fires
-  once however many registrations fired it).
+  thematic categories read down to ten, and the 41 in ADR-0006 is corrected), 0014 (the
+  Policy Score is a subset-sum of published weights, and a Signal fires once however many
+  registrations fired it), and 0015 (Content Signals are phrase lists with a
+  sentence-scoped negation guard, and the sentence is the evidence).

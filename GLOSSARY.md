@@ -79,6 +79,14 @@ counted is printed beside it and has to be checkable against the resolved links.
 never reads anything about an account.
 _Avoid_: Domain Signal, infrastructure signal
 
+**Content Signal**:
+A Signal read from a post's own title and body against a published list of phrases —
+a claim that an outcome cannot fail, money asked for up front, a deadline put on the
+reader. One post is all it needs. The whole of the phrase list is printed with the
+scores, and the sentence each match was found in is the evidence, so the decision is
+one a reviewer can redo and overturn.
+_Avoid_: Text Signal, keyword, keyword list
+
 **Review Queue**:
 The ranked list of content items a reviewer works through, ordered by Triage
 Priority. The headline metric is the fraction of true findings within its top D
