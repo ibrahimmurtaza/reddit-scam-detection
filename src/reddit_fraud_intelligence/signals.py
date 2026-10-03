@@ -1,4 +1,4 @@
-"""Link Signals, the published weights, and the Policy Score they add up to.
+"""Link Signals, Content Signals, the published weights, and the Policy Score.
 
 The Policy Score is an additive rules engine and deliberately nothing else: every
 Signal that contributes is computable from a post's own text and links, the weights
@@ -8,34 +8,43 @@ apply the weights, arrive at the displayed figure — so the weight set lives in
 `data/signals/weights.jsonl` rather than beside the rules below. Adding a Signal is
 then a published change a reader can argue with, and not a line of Python.
 
-A Signal is present or absent. A post that links three shared registrations carries
-`domain_frequency` once, not three times: the score is a subset-sum of the published
-weights, which is the arithmetic a reader can hold in their head, and it does not
-reward a post for how many links it carries. Every Signal that fires names the
-registrations that fired it, so a reader who doubts one can look at those and find
-the posts behind them in `data/domains/post-domains.jsonl`.
+A Signal is present or absent. A post that links three shared registrations, or that
+uses four phrases from one Content Signal's list, carries that Signal once rather than
+once per match: the score is a subset-sum of the published weights, which is the
+arithmetic a reader can hold in their head, and it does not reward a post for how much
+of it there is. Every Signal that fires names what fired it, so a reader who doubts one
+can look at those and find the evidence behind them.
 
 Two Signals read the Corpus's links, and both are Link Signals because neither can be
 computed from one post alone. That is not account history: no account's age, karma,
 posting rate, or activity change is read anywhere in this path, and none exists in the
-Corpus file to read (ADR-0008). What is read is which registrations other posts'
-links resolve to, which is structure the reviewer can go and look at.
+Corpus file to read (ADR-0008). What is read is which registrations other posts' links
+resolve to, which is structure the reviewer can go and look at.
+
+Three Signals read the post's own title and body against a list of phrases, and are
+Content Signals because a single post is all they need. The list is printed beside the
+weights, because a reviewer holding the post can only check a match if they can see
+what the rule was looking for, and the sentence the phrase was found in is the evidence
+rather than the phrase alone: it is what a reader reads to decide whether the post
+really makes the claim.
 
 Nothing here reads the truth file or the Nuisance Structure manifest. The Corpus, the
-published Public Suffix List, the shared-infrastructure list, and the weight set are
-the whole input.
+published Public Suffix List, the shared-infrastructure list, and the weight set are the
+whole input.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
+from functools import lru_cache
 from pathlib import Path
 
-from reddit_fraud_intelligence.corpus import read_corpus
+from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedInfrastructure
 from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
@@ -63,10 +72,98 @@ class SignalName(StrEnum):
     `Weights.read` refuses a file naming a Signal that does not exist here, and
     refuses one that leaves a Signal here unweighted. Adding a Signal therefore
     cannot be done by adding an evaluator alone — the run stops and names it.
+
+    Declaration order is the order Signals are printed in, which is stated here rather
+    than derived from a set so a run over the same Corpus writes the same file.
     """
 
     DOMAIN_FREQUENCY = "domain_frequency"
     DOMAIN_LOOKALIKE = "domain_lookalike"
+    GUARANTEED_RETURN = "guaranteed_return"
+    PAYMENT_REQUEST = "payment_request"
+    URGENCY_LANGUAGE = "urgency_language"
+
+
+# Every phrase a Content Signal matches, and the whole of each Signal: nothing outside
+# these strings fires one. Published by being printed rather than held in a file
+# alongside the weights, because a phrase list is a rule and not a number — a reader who
+# disagrees with one has to be able to see it and quote it, and `tests/test_policy_score.py`
+# reads this table back out of the command's own output.
+_PHRASES: Mapping[SignalName, tuple[str, ...]] = {
+    SignalName.GUARANTEED_RETURN: (
+        "assured",
+        "cannot lose",
+        "can't lose",
+        "guaranteed",
+        "no risk",
+        "no way it fails",
+        "no way to lose",
+        "risk free",
+        "risk-free",
+        "safe return",
+        "will not lose",
+        "won't lose",
+    ),
+    SignalName.PAYMENT_REQUEST: (
+        "buy up front",
+        "deposit before",
+        "deposit for",
+        "equipment charge",
+        "kit fee",
+        "materials deposit",
+        "money up front",
+        "pay up front",
+        "refundable deposit",
+    ),
+    SignalName.URGENCY_LANGUAGE: (
+        "48-hour",
+        "act now",
+        "before it goes",
+        "fills fast",
+        "fills up fast",
+        "last chance",
+        "limited time",
+        "place goes to",
+        "slot goes to",
+        "while it lasts",
+        "within 48 hours",
+    ),
+}
+
+_CONTENT_SIGNALS = tuple(signal for signal in SignalName if signal in _PHRASES)
+
+# Words that cancel a match wherever they stand in the sentence before it. A bare `no`
+# is not among them and is handled in `_negated` instead, because it is the one English
+# word in the set that carries no negation of its own.
+_NEGATORS = frozenset(
+    {
+        "aren't",
+        "can't",
+        "cannot",
+        "didn't",
+        "doesn't",
+        "don't",
+        "isn't",
+        "neither",
+        "never",
+        "nor",
+        "nothing",
+        "not",
+        "without",
+        "won't",
+        "wouldn't",
+    }
+)
+
+# A sentence is what ends in `.`, `!`, or `?` followed by a space: the unit the
+# negation guard reads, and the unit printed as evidence. Splitting anywhere finer would
+# lose the case where one negator governs a list — "we do not ask for a deposit, a kit
+# fee, or any money up front" is one request denied three times, not three requests.
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+")
+
+# A run of letters and digits, with apostrophes inside a word rather than at its edges,
+# so `don't` is one word and can be a negator.
+_WORD = re.compile(r"[a-z0-9]+(?:['’-][a-z0-9]+)*")
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +253,11 @@ class DomainFrequency:
     def signal(self) -> SignalName:
         return SignalName.DOMAIN_FREQUENCY
 
-    def sentence(self) -> str:
+    @property
+    def registrations(self) -> tuple[str, ...]:
+        return (self.domain,)
+
+    def line(self) -> str:
         return f"{self.domain}: {self.posts} posts by {self.accounts} accounts"
 
 
@@ -178,11 +279,44 @@ class ConfusablePair:
     def signal(self) -> SignalName:
         return SignalName.DOMAIN_LOOKALIKE
 
-    def sentence(self) -> str:
+    @property
+    def registrations(self) -> tuple[str, ...]:
+        return (self.domain, self.other)
+
+    def line(self) -> str:
         return f"{self.domain}: one edit from {self.other}"
 
 
-Evidence = DomainFrequency | ConfusablePair
+@dataclass(frozen=True, slots=True)
+class PhraseMatch:
+    """One sentence of a post's own text, and the phrases that matched inside it.
+
+    The sentence is the evidence rather than the phrase, for two reasons that point the
+    same way. It is what a reviewer reads to decide whether the post really makes the
+    claim the Signal names, and it is the whole of what the negation guard looked at, so
+    a reader who thinks a match was wrongly cancelled has everything needed to see why
+    it was. `phrases` is every published phrase that fired in it, so the reader does not
+    have to re-apply the list to find out which of them did — though they are free to,
+    because the list is printed too.
+
+    `field` is carried because a claim in the title is not the claim in the fourth
+    paragraph, and a breakdown that did not say which would be making one of them.
+    """
+
+    signal: SignalName
+    field: str
+    phrases: tuple[str, ...]
+    sentence: str
+
+    @property
+    def registrations(self) -> tuple[str, ...]:
+        return ()
+
+    def line(self) -> str:
+        return f'{self.field}: "{self.sentence}"'
+
+
+Evidence = DomainFrequency | ConfusablePair | PhraseMatch
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,8 +345,8 @@ class SignalHit:
                 "that mean something else"
             )
 
-    def sentence(self) -> str:
-        return "; ".join(item.sentence() for item in self.evidence)
+    def line(self) -> str:
+        return "; ".join(item.line() for item in self.evidence)
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,7 +580,8 @@ def score_corpus(
     weights = Weights.read(weights_path)
     suffixes = PublicSuffixes.read(list_path)
     shared = SharedInfrastructure.read(shared_path, suffixes)
-    rows = post_domains(read_corpus(corpus_path), suffixes)
+    items = read_corpus(corpus_path)
+    rows = post_domains(items, suffixes)
     index = LinkIndex.of(rows, shared.withheld())
 
     scores = tuple(
@@ -459,8 +594,8 @@ def score_corpus(
             published_signals=len(weights.entries),
             hits=hits,
         )
-        for row in rows
-        for hits in (_hits(row, index, weights),)
+        for item, row in zip(items, rows, strict=True)
+        for hits in (_hits(item, row, index, weights),)
         for points in (sum(hit.weight for hit in hits),)
     )
 
@@ -473,15 +608,36 @@ def score_corpus(
     )
 
 
-def _hits(row: PostDomains, index: LinkIndex, weights: Weights) -> tuple[SignalHit, ...]:
+def _hits(
+    item: CorpusItem, row: PostDomains, index: LinkIndex, weights: Weights
+) -> tuple[SignalHit, ...]:
     """The Signals one post carries, each with the evidence a reader checks it with.
 
     Every Signal is asked for on every post, and the one that is not there is simply
-    absent: nothing here can decide not to look.
-    """
-    hits: list[SignalHit] = []
+    absent: nothing here can decide not to look. They come out in `SignalName` order,
+    so the order a breakdown is written in is a property of the enum rather than of the
+    order the rules happen to be written below.
 
-    frequency = tuple(
+    Both halves of the post are handed over rather than one of them: the resolved links
+    carry no text, and the text carries no resolved links, and a Signal is allowed to
+    read either. The map below is exhaustive over the enum by construction — two Link
+    Signals written out, and every Signal that has a phrase list — so a Signal added to
+    the enum without an evaluator here stops the run rather than scoring nothing.
+    """
+    by_signal: dict[SignalName, tuple[Evidence, ...]] = {
+        SignalName.DOMAIN_FREQUENCY: _domain_frequency(row, index),
+        SignalName.DOMAIN_LOOKALIKE: _domain_lookalike(row, index),
+        **{signal: _content(item, signal) for signal in _CONTENT_SIGNALS},
+    }
+    return tuple(
+        SignalHit(signal=signal, weight=weights.of(signal), evidence=evidence)
+        for signal in SignalName
+        if (evidence := by_signal[signal])
+    )
+
+
+def _domain_frequency(row: PostDomains, index: LinkIndex) -> tuple[Evidence, ...]:
+    return tuple(
         DomainFrequency(
             domain=domain,
             posts=index.reached_by(domain).posts,
@@ -490,30 +646,101 @@ def _hits(row: PostDomains, index: LinkIndex, weights: Weights) -> tuple[SignalH
         for domain in row.domains
         if domain not in index.withheld and index.reached_by(domain).accounts >= _MIN_ACCOUNTS
     )
-    if frequency:
-        hits.append(
-            SignalHit(
-                signal=SignalName.DOMAIN_FREQUENCY,
-                weight=weights.of(SignalName.DOMAIN_FREQUENCY),
-                evidence=frequency,
-            )
-        )
 
-    confusable = tuple(
+
+def _domain_lookalike(row: PostDomains, index: LinkIndex) -> tuple[Evidence, ...]:
+    return tuple(
         ConfusablePair(domain=domain, other=other)
         for domain in row.domains
         for other in index.confusable.get(domain, ())
     )
-    if confusable:
-        hits.append(
-            SignalHit(
-                signal=SignalName.DOMAIN_LOOKALIKE,
-                weight=weights.of(SignalName.DOMAIN_LOOKALIKE),
-                evidence=confusable,
-            )
-        )
 
-    return tuple(hits)
+
+def _content(item: CorpusItem, signal: SignalName) -> tuple[Evidence, ...]:
+    """What one Content Signal finds in a post's own text, one row per sentence.
+
+    A sentence rather than a phrase, so the evidence a reviewer reads is the thing they
+    would read, and so the whole of the negation guard is in front of them: the printed
+    sentence either names the claim or denies it, and either way they can see which. The
+    title is read before the body because it is what a reviewer sees first, and a claim
+    made there is not the same claim as one made in the fourth paragraph.
+    """
+    found: list[PhraseMatch] = []
+    for field, text in (("title", item.title), ("body", item.body)):
+        for sentence in _sentences(text):
+            fired = tuple(
+                sorted(
+                    phrase
+                    for phrase in _PHRASES[signal]
+                    if any(
+                        not _negated(sentence, at) for at in _spans(sentence, phrase)
+                    )
+                )
+            )
+            if fired:
+                found.append(
+                    PhraseMatch(
+                        signal=signal,
+                        field=field,
+                        phrases=fired,
+                        sentence=sentence,
+                    )
+                )
+    return tuple(found)
+
+
+def _sentences(text: str) -> tuple[str, ...]:
+    """The sentences of one field, each one a substring of the text it came from.
+
+    That last part is what the auditability claim rests on: the evidence is quoted
+    rather than summarised or trimmed, so a reader can hold it against the post they are
+    looking at and find it there, character for character.
+    """
+    return tuple(part for part in _SENTENCE_BREAK.split(text.strip()) if part)
+
+
+def _spans(sentence: str, phrase: str) -> tuple[int, ...]:
+    """Where one published phrase appears in one sentence, counted from the start."""
+    return tuple(found.start() for found in _matcher(phrase).finditer(sentence.lower()))
+
+
+def _negated(sentence: str, start: int) -> bool:
+    """Whether a negator stands between this match and the start of its sentence.
+
+    The sentence and not the phrase, because a negation is a claim about a whole
+    statement: "we do not ask for a deposit, a kit fee, or any money up front" is one
+    request denied three times, and stopping at the comma would read the last two as
+    requests.
+
+    A bare `no` is the exception and counts only when it stands directly before the
+    phrase. `no experience needed` is in every job post ever written, so a `no` that
+    counted anywhere in the sentence would cancel a deposit named in the same breath as
+    it and leave the Signal silent on exactly the posts it exists for. Everywhere else it
+    means nothing at all, which is why it is not in the list above.
+
+    The cost is a post that asks for money in one sentence and denies asking in the next
+    one. It is lost, and it is lost in the direction of not scoring a post, which is the
+    cheaper of the two mistakes to make with a severity figure a reviewer will act on.
+    """
+    words: list[str] = _WORD.findall(sentence[:start].lower())
+    if not words:
+        return False
+    if any(word in _NEGATORS for word in words):
+        return True
+    return words[-1] == "no"
+
+
+@lru_cache(maxsize=None)
+def _matcher(phrase: str) -> re.Pattern[str]:
+    """The pattern one published phrase is matched with.
+
+    Case is folded by the caller and whitespace between the words is the only freedom,
+    so a phrase cannot fire across a paragraph break. The lookaround stops `48-hour`
+    matching inside `148-hour` and `guaranteed` matching inside `unguaranteed`, which a
+    reader re-applying the rule by eye would not do.
+    """
+    body = r"\s+".join(re.escape(word) for word in phrase.split())
+    return re.compile(rf"(?<![0-9a-z]){body}(?![0-9a-z])")
 
 
 def _normalise(points: int, published: int) -> int:
@@ -606,6 +833,7 @@ def render_table(scored: Scored) -> str:
         _registrations(scored),
         _confusable_table(scored),
         _weights_table(scored),
+        _phrases_table(),
         _footer(scored),
     )
     return "\n\n".join(section for section in sections if section) + "\n"
@@ -694,7 +922,7 @@ def _block(score: PostScore) -> str:
     for hit in score.hits:
         lines.append(
             f"  {hit.signal.value.ljust(name)}  {str(hit.weight).rjust(figures)}  "
-            f"{hit.sentence()}"
+            f"{hit.line()}"
         )
     lines.append(
         f"  {'total'.ljust(name)}  {str(score.points).rjust(figures)}  "
@@ -722,7 +950,7 @@ def _registrations(scored: Scored) -> str:
                 for score in scored.scores
                 for hit in score.hits
                 for item in hit.evidence
-                if item.domain == domain
+                if domain in item.registrations
             }
         )
         rows.append(
@@ -787,24 +1015,84 @@ def _weights_table(scored: Scored) -> str:
     )
 
 
+def _phrases_table() -> str:
+    """Every phrase a Content Signal matches, printed in full so the rule can be applied
+    to the post text by hand.
+
+    The weights above are data and can be argued with in a file; a phrase list is a rule
+    and lives in the code, so publishing it is the only way a reader gets to see what the
+    Signal was actually looking for. Without this a breakdown says a sentence fired
+    `payment_request` and leaves the strings that decide it unsaid, which is half the
+    auditability claim missing.
+    """
+    lines = [
+        "phrases  the whole of each Content Signal's list, and nothing outside it fires "
+        'one. A match is dropped where one of the negators below stands earlier in the '
+        'same sentence, or where a bare "no" stands directly before it'
+    ]
+    lines.extend(
+        _wrap(f"negators  {', '.join(f'\"{word}\"' for word in sorted(_NEGATORS))}", indent=2)
+    )
+    for signal in _CONTENT_SIGNALS:
+        phrases = _PHRASES[signal]
+        lines.append(f"  {signal.value}  {_count(len(phrases), 'phrase')}")
+        lines.extend(_wrap(", ".join(f'"{phrase}"' for phrase in phrases)))
+    return "\n".join(lines)
+
+
+def _wrap(quoted: str, indent: int = 4, width: int = 78) -> list[str]:
+    """One string wrapped to the console's width, with the continuation indented.
+
+    Wrapped rather than printed on one line because the phrase list is longer than a
+    console is wide, and an output that runs off the edge is an output a reviewer has to
+    reflow before they can paste it into an issue.
+    """
+    lines: list[str] = []
+    current = ""
+    for word in quoted.split():
+        if current and len(current) + 1 + len(word) + indent > width:
+            lines.append(f"{' ' * indent}{current}")
+            current = word
+        else:
+            current = f"{current} {word}".strip()
+    if current:
+        lines.append(f"{' ' * indent}{current}")
+    return lines
+
+
 def _footer(scored: Scored) -> str:
     """What the score can and cannot claim, and what it is worth on its own.
 
-    The three limits are the ones a reader would otherwise have to guess at: the
-    arithmetic is a subset-sum and no more, the frequency figures count other posts
-    and not the reader's judgement of them, and the withheld registrations are out of
-    the scoring path entirely rather than scored at zero.
+    The limits are the ones a reader would otherwise have to guess at: the arithmetic is
+    a subset-sum and no more, the frequency figures count other posts and not the
+    reader's judgement of them, the phrase rules lose the posts that deny a request in
+    the same sentence they make it, and the withheld registrations are out of the scoring
+    path entirely rather than scored at zero.
     """
     return f"""\
-A Signal is present or absent, so a post that links three shared registrations carries
-`domain_frequency` once and not three times: the score is a subset-sum of the weights
-above and nothing else. It is a severity judgement by this project, published so it can
-be argued with, and it is not a probability that anything is what it appears to be.
+A Signal is present or absent, so a post that links three shared registrations, or that
+uses four phrases from one Content Signal's list, carries that Signal once and not four
+times: the score is a subset-sum of the weights above and nothing else. It is a severity
+judgement by this project, published so it can be argued with, and it is not a
+probability that anything is what it appears to be.
+
+The score is the points earned as a share of the published total, to the nearest whole
+number out of 100 with halves going up, so it can differ from the share by half a point.
+Dividing by the published total rather than by 100 is what lets a Signal be added later
+without any existing score exceeding 100.
 
 No account's age, karma, posting rate, or activity change is read on this path, and the
 Corpus file holds no such field to read (ADR-0008). What the frequency Signal reads is
 which registrations other posts' links resolve to, which is structure the reader can go
 and look at; the figures are printed with the Signal for exactly that reason.
+
+The Content Signals read the post and nothing else, and they read it literally: a Signal
+fires where a published phrase appears in the post's own title or body and no negator
+stands between it and the start of that sentence. The sentence is printed with the match
+because that is the judgement a reader may want to overturn, and the cost of the guard
+is stated rather than hidden: a post that asks for money in one sentence and denies
+asking in the next carries no `payment_request`, and a bare "no" cancels only the phrase
+directly after it, because "no experience needed" is in every job post ever written.
 
 The registrations on the known-shared list are out of the scoring path rather than
 scored at zero, and the list is named above so a reader who wants a different one can

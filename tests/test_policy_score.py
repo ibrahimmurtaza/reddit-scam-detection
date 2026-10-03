@@ -1,16 +1,17 @@
-"""Link Signals, the Policy Score, and the arithmetic behind both.
+"""Link Signals, Content Signals, the Policy Score, and the arithmetic behind all three.
 
-Two Signals reach the Policy Score from the Corpus's links: one registration reached
-by more than one account, and two registrations one edit apart. Both are here
-because they can be checked by looking at the post, which is the whole claim
-ADR-0007 makes about the Policy Score.
+Two Signals reach the Policy Score from the Corpus's links: one registration reached by
+more than one account, and two registrations one edit apart. Three more reach it from a
+post's own text: a promise that the outcome is certain, money asked for up front, and a
+deadline put on the reader. All five are here because a reviewer can check them by
+reading the post, which is the whole claim ADR-0007 makes about the Policy Score.
 
 Seam under test: the `policy-score` command, observed through the file it writes and
 the table it prints. Nothing here inspects the code that wrote them.
 
-The auditability claim is the thing under test, so it is asked as a question about
-the output rather than about the code: the published weights, applied to the Signals
-a reviewer can see in a post's own links, have to produce the number the command
+The auditability claim is the thing under test, so it is asked as a question about the
+output rather than about the code: the published weights, applied to the Signals a
+reviewer can see in a post's own links and text, have to produce the number the command
 displays. A Signal that could not be recomputed by hand would pass a test asserting
 that it fires, and would still break the claim the score is published under.
 """
@@ -132,13 +133,14 @@ def post(
     account: str,
     *links: str,
     body: str = "body",
+    title: str | None = None,
     created_at: str = "2026-01-05T09:00:00Z",
 ) -> CorpusItem:
     return CorpusItem(
         post_id=post_id,
         account=account,
         subreddit="test",
-        title=f"title of {post_id}",
+        title=title if title is not None else f"title of {post_id}",
         body=body,
         created_at=created_at,
         links=links,
@@ -170,6 +172,51 @@ def nested(row: Row, field: str) -> Row:
 
 def domain(item: Row) -> str:
     return text(item, "domain")
+
+
+def registrations_in(item: Row) -> tuple[str, ...] | None:
+    """The registrations one piece of evidence names, or `None` when it names none.
+
+    A piece of evidence is either about a registration the post's own links resolve to
+    or about a sentence of the post's own text, and the shape of the row says which. The
+    two tests that check this read the shape rather than a list of which Signal is meant
+    to be which kind, so a Signal added later is held to the same thing whichever kind it
+    turns out to be.
+    """
+    if "domain" not in item:
+        return None
+    return (domain(item),) if "other" not in item else (domain(item), text(item, "other"))
+
+
+def rests_on_the_post(post_id: str, item: Row) -> bool:
+    """Whether one piece of evidence rests on something a reviewer has in front of them.
+
+    Two things are in front of a reviewer of a post: the registrations its own links
+    resolve to, and its own title and body. Evidence is either a registration among the
+    first or a sentence of the second, so a Signal resting on anything else cannot be
+    written at all without failing here.
+    """
+    linked = registrations_in(item)
+    if linked is not None:
+        return set(linked) <= VISIBLE[post_id]
+
+    quoted = text(item, "sentence")
+    return text(item, "field") in ("title", "body") and any(
+        quoted in field for field in VISIBLE_TEXT[post_id]
+    )
+
+
+def _line_starts(section: str, prefix: str) -> int:
+    """Where in a printed section the line naming this thing begins.
+
+    Taken from the line rather than from the first occurrence of the word in the section,
+    because the section's own heading says what the thing is before it lists it.
+    """
+    lines = section.splitlines()
+    for number, line in enumerate(lines):
+        if line.strip().startswith(prefix):
+            return number
+    raise AssertionError(f"{section!r} prints no line beginning {prefix!r}")
 
 
 def confusable_pairs(printed: str) -> set[tuple[str, str]]:
@@ -458,6 +505,315 @@ def test_a_lookalike_to_a_shared_service_still_fires(
     assert "domain_lookalike" in carried
     assert "domain_frequency" not in carried
 
+# --- the Content Signals ---------------------------------------------------------
+
+
+def quoted(hit: Row) -> list[str]:
+    """The sentences of a post's own text one Content Signal was fired on."""
+    return [text(item, "sentence") for item in items(hit)]
+
+
+def fired_where(row: Row, signal: str) -> list[tuple[str, list[str], str]]:
+    """Every match of one Content Signal, as (field, phrases, sentence)."""
+    return [
+        (
+            text(item, "field"),
+            sorted(texts(item, "phrases")),
+            text(item, "sentence"),
+        )
+        for item in items(evidence(row, signal))
+    ]
+
+
+def only_body(matched: list[tuple[str, list[str], str]]) -> tuple[list[str], str]:
+    """The one match of one Content Signal, in a post whose only match is in the body."""
+    assert len(matched) == 1, f"expected one match, found {matched}"
+    field, phrases, sentence = matched[0]
+    assert field == "body", f"the match is in the {field}, not the body"
+    return phrases, sentence
+
+
+def test_a_post_claiming_an_outcome_cannot_fail_carries_the_guaranteed_return_signal(
+    tmp_path: Path,
+) -> None:
+    """The Signal, in the shape it exists for: a promise that the result is certain.
+
+    The claim is quoted rather than summarised because the Signal is the string, and a
+    reviewer who disagrees with the rule can be shown exactly what it matched on. Two
+    sentences fire it and each is evidence of its own, because a post promising a
+    guaranteed outcome in two places is no stronger than one promising it in one.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0101",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                body="Risk free and guaranteed, whatever the market does. "
+                "You cannot lose on this desk.",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    row = by_post(scores_path)["syn_p_0101"]
+
+    assert signals(row) == ["guaranteed_return"]
+    assert fired_where(row, "guaranteed_return") == [
+        ("body", ["guaranteed", "risk free"], "Risk free and guaranteed, whatever the market does."),
+        ("body", ["cannot lose"], "You cannot lose on this desk."),
+    ]
+    assert count(row, "points") == 25
+    assert count(row, "score") == 23
+
+
+def test_a_post_asking_for_money_before_the_work_carries_the_payment_request_signal(
+    tmp_path: Path,
+) -> None:
+    """Money asked for up front, which is the step a reader cannot undo afterwards.
+
+    Two of the phrases fire in the same sentence and are one piece of evidence between
+    them, because the sentence is the thing a reviewer reads to decide whether the post
+    really does ask for money. Counting them as two would put a Signal in the breakdown
+    that its own evidence does not support the shape of.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0102",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                body="Equipment is provided but there is a refundable materials deposit "
+                "for the workstation.",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    row = by_post(scores_path)["syn_p_0102"]
+
+    assert signals(row) == ["payment_request"]
+    phrases, sentence = only_body(fired_where(row, "payment_request"))
+    assert phrases == ["deposit for", "materials deposit"]
+    assert sentence == (
+        "Equipment is provided but there is a refundable materials deposit for the workstation."
+    )
+    assert count(row, "points") == 20
+
+
+def test_a_post_putting_a_deadline_on_the_reader_carries_the_urgency_language_signal(
+    tmp_path: Path,
+) -> None:
+    """A deadline and a claim that waiting costs the reader the place, which is the
+    whole mechanism: the post is asking to be acted on before it is checked."""
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0103",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                body="Two places open this week, and the intake has to be finished "
+                "within 48 hours or the slot goes to somebody else.",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    row = by_post(scores_path)["syn_p_0103"]
+
+    assert signals(row) == ["urgency_language"]
+    phrases, sentence = only_body(fired_where(row, "urgency_language"))
+    assert phrases == ["slot goes to", "within 48 hours"]
+    assert sentence == (
+        "Two places open this week, and the intake has to be finished within 48 hours "
+        "or the slot goes to somebody else."
+    )
+    assert count(row, "points") == 15
+
+
+def test_a_match_in_the_title_is_evidence_and_says_which_field_it_was_in(
+    tmp_path: Path,
+) -> None:
+    """The title is as visible to a reviewer as the body, and often is the whole post.
+
+    A phrase there is evidence in the same way one in the body is, and the field is
+    carried on the evidence rather than left for the reader to guess: a Signal firing on
+    a title is a claim about what the post leads with, which is not the same claim as
+    one buried in the fourth paragraph.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0104",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                title="Guaranteed returns, and a refundable deposit for the kit",
+                body="Nothing in the body of this post is a claim about money.",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    row = by_post(scores_path)["syn_p_0104"]
+
+    assert signals(row) == ["guaranteed_return", "payment_request"]
+    assert fired_where(row, "guaranteed_return") == [
+        ("title", ["guaranteed"], "Guaranteed returns, and a refundable deposit for the kit")
+    ]
+    assert fired_where(row, "payment_request") == [
+        (
+            "title",
+            ["deposit for", "refundable deposit"],
+            "Guaranteed returns, and a refundable deposit for the kit",
+        )
+    ]
+
+
+def test_a_phrase_the_post_denies_does_not_fire_the_signal(tmp_path: Path) -> None:
+    """A post that says in so many words that it asks for no money carries no
+    `payment_request`.
+
+    The Corpus plants four posts that go out of their way to disclaim a deposit, and a
+    Signal announcing that they ask for one would be the sort of mistake that costs a
+    reviewer their trust in the rest of the output. The guard is a negator standing
+    between the match and the start of its sentence, which is why the sentence is
+    printed: the judgement is the reader's to overturn.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0105",
+                "syn_alpha_0001",
+                body="There is a refundable materials deposit for the workstation.",
+            ),
+            post(
+                "syn_p_0106",
+                "syn_beta_0002",
+                body="We do not ask for a deposit, a kit fee, or any money up front, "
+                "and there is no equipment charge at any point in the process.",
+                created_at="2026-01-05T10:00:00Z",
+            ),
+            post(
+                "syn_p_0107",
+                "syn_gamma_0003",
+                title="Hiring: tagging work, eighteen an hour, nothing to buy up front",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    written = by_post(scores_path)
+
+    assert signals(written["syn_p_0105"]) == ["payment_request"]
+    assert signals(written["syn_p_0106"]) == []
+    assert signals(written["syn_p_0107"]) == []
+
+
+def test_a_bare_no_cancels_the_phrase_after_it_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    """The one exception the guard makes, and the reason for it.
+
+    `no experience needed` is in every job post ever written. If a bare `no` counted
+    anywhere in the sentence it cancelled a deposit named in the same breath as it, so
+    the Signal would be silent on exactly the posts it exists for. A bare `no` therefore
+    counts only when it stands directly before the phrase, which is the one place it
+    governs the phrase and not the sentence around it.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0108",
+                "syn_alpha_0001",
+                body="No experience needed, and there is a refundable materials "
+                "deposit for the workstation.",
+            ),
+            post(
+                "syn_p_0109",
+                "syn_beta_0002",
+                body="No experience needed here, and there is no kit fee to pay.",
+                created_at="2026-01-05T10:00:00Z",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    written = by_post(scores_path)
+
+    assert signals(written["syn_p_0108"]) == ["payment_request"]
+    assert signals(written["syn_p_0109"]) == []
+
+
+def test_a_content_signal_fires_once_however_many_phrases_and_sentences_match(
+    tmp_path: Path,
+) -> None:
+    """Three matches of one Signal in one post is one Signal.
+
+    The same subset-sum rule the Link Signals are counted under (ADR-0014): a Signal is
+    present or absent, so the number of phrases a post happens to use cannot move the
+    score. All of them are still printed, because they are the evidence.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0110",
+                "syn_alpha_0001",
+                body="This one fills fast, and so does the one above it. Last chance, "
+                "act now, while it lasts.",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    row = by_post(scores_path)["syn_p_0110"]
+
+    assert signals(row) == ["urgency_language"]
+    assert [phrases for _, phrases, _ in fired_where(row, "urgency_language")] == [
+        ["fills fast"],
+        ["act now", "last chance", "while it lasts"],
+    ]
+    assert count(row, "points") == 15
+
+
+def test_the_output_publishes_the_phrases_each_content_signal_matches(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The rule itself, not just the weight, has to be in front of the reader.
+
+    A reviewer holding the post text can only check a match if they can see what the
+    Signal was looking for, so the whole of every phrase list is printed. Without it the
+    breakdown shows that a sentence fired the Signal and says nothing about the strings
+    that decide it, which is the half of the auditability claim that a phrase rule is.
+
+    The negator list is printed for the same reason and is the harder half: a reader can
+    reproduce a match the run kept from the phrase lists alone, and cannot reproduce one
+    it dropped without knowing what would have dropped it.
+    """
+    _, printed = run(tmp_path, capsys=capsys)
+
+    section = printed.split("\nphrases  ")[1].split("\n\n")[0]
+    flat = " ".join(section.split())
+    for signal in ("guaranteed_return", "payment_request", "urgency_language"):
+        assert signal in section, signal
+    for phrase in ("guaranteed", "refundable deposit", "within 48 hours"):
+        assert f'"{phrase}"' in flat, phrase
+
+    negators = " ".join(
+        section.splitlines()[_line_starts(section, "negators") :]
+    ).split("guaranteed_return")[0]
+    for negator in ("not", "nothing", "without", "never", "neither"):
+        assert f'"{negator}"' in negators, negator
+    assert '"no"' not in negators, "a bare no is not a negator until it stands before the phrase"
+
+
 # --- the Policy Score, recomputed by hand ---------------------------------------
 
 
@@ -472,12 +828,14 @@ def published_weights() -> dict[str, int]:
     return {text(row, "signal"): count(row, "weight") for row in rows(COMMITTED_WEIGHTS)}
 
 
-# The Corpus the hand-recomputation below is worked out on. Four posts carry a Signal
-# and two do not, and between them they use every combination the weight set can
-# produce, so the arithmetic has no untested case left in it.
+# The Corpus the hand-recomputation below is worked out on. Six posts carry a Signal
+# and three do not, and between them every Signal in the weight set fires at least
+# once, alone and beside others, so the arithmetic has no untested case left in it.
 #
 #   syn_p_0001  vantage-ledger.example      2 accounts share it, one edit from
-#   syn_p_0002  mirror.vantage-ledger         vantage-ledgers.example  ->  30 + 20 = 50
+#   syn_p_0002  mirror.vantage-ledger         vantage-ledgers.example, and the body
+#                                             makes all three claims  ->  30 + 20
+#                                                                     + 25 + 20 + 15
 #   syn_p_0003  vantage-ledgers.example     no other account reaches it, but it is
 #                                             still one edit away            ->  20
 #   syn_p_0004  hopcut.example, hopcuty.example
@@ -485,10 +843,31 @@ def published_weights() -> dict[str, int]:
 #                                         another, both withheld            ->  20
 #   syn_p_0005  nothing                    no links at all               ->   0
 #   syn_p_0006  plainsaw.example           one account, nothing near it  ->   0
+#   syn_p_0007  no links, a deposit asked for          payment_request    ->  20
+#   syn_p_0008  no links, a deadline pressed         urgency_language   ->  15
+#   syn_p_0009  no links, and every one of those phrases denied  ->   0
 #
-# 50 of 50 published points is 100, 20 of 50 is 40, and 0 of 50 is 0.
+# 110 of 110 published points is 100, 50 of 110 is 45, 20 of 110 is 18, 15 of 110
+# is 14, and 0 of 110 is 0.
+_HAND_PITCH = (
+    "Guaranteed returns every month, and the intake has to be finished within 48 "
+    "hours or the slot goes to somebody else. Equipment is provided but there is a "
+    "refundable materials deposit for the workstation."
+)
+_HAND_DEPOSIT = (
+    "Equipment is provided but there is a refundable materials deposit for the "
+    "workstation."
+)
+_HAND_DEADLINE = (
+    "Two places open this week and the slot goes to whoever applies first."
+)
+_HAND_DENIAL = (
+    "We do not ask for a deposit, a kit fee, or any money up front, and there is no "
+    "equipment charge at any point in the process."
+)
 HAND_CORPUS = (
-    post("syn_p_0001", "syn_alpha_0001", "https://vantage-ledger.example/entry"),
+    post("syn_p_0001", "syn_alpha_0001", "https://vantage-ledger.example/entry",
+         body=_HAND_PITCH),
     post(
         "syn_p_0002",
         "syn_beta_0002",
@@ -506,9 +885,15 @@ HAND_CORPUS = (
     post("syn_p_0005", "syn_epsilon_0005", created_at="2026-01-05T12:00:00Z"),
     post("syn_p_0006", "syn_zeta_0006", "https://plainsaw.example/bench",
          created_at="2026-01-05T13:00:00Z"),
+    post("syn_p_0007", "syn_eta_0007", body=_HAND_DEPOSIT,
+         created_at="2026-01-05T14:00:00Z"),
+    post("syn_p_0008", "syn_theta_0008", body=_HAND_DEADLINE,
+         created_at="2026-01-05T15:00:00Z"),
+    post("syn_p_0009", "syn_iota_0009", body=_HAND_DENIAL,
+         created_at="2026-01-05T16:00:00Z"),
 )
 
-# What a reviewer can see in each of those posts' own links, and therefore what each
+# What a reviewer can see in each of those posts' own links, and therefore what a Link
 # Signal is allowed to rest on. Written out rather than derived, because deriving it
 # from the run's own output would let a Signal stand on something the run invented.
 VISIBLE = {
@@ -518,15 +903,37 @@ VISIBLE = {
     "syn_p_0004": {"hopcut.example", "hopcuty.example"},
     "syn_p_0005": set(),
     "syn_p_0006": {"plainsaw.example"},
+    "syn_p_0007": set(),
+    "syn_p_0008": set(),
+    "syn_p_0009": set(),
 }
 
+# The other half of what a reviewer has in front of them: the text of the post itself.
+# A Content Signal has to rest on one of these two things and nothing else, which is
+# why the recomputation below checks every piece of evidence against one or the other
+# rather than against a list of which Signal is supposed to be which kind.
+VISIBLE_TEXT = {item.post_id: (item.title, item.body) for item in HAND_CORPUS}
+
 EXPECTED = {
-    "syn_p_0001": (["domain_frequency", "domain_lookalike"], 50, 100),
-    "syn_p_0002": (["domain_frequency", "domain_lookalike"], 50, 100),
-    "syn_p_0003": (["domain_lookalike"], 20, 40),
-    "syn_p_0004": (["domain_lookalike"], 20, 40),
+    "syn_p_0001": (
+        [
+            "domain_frequency",
+            "domain_lookalike",
+            "guaranteed_return",
+            "payment_request",
+            "urgency_language",
+        ],
+        110,
+        100,
+    ),
+    "syn_p_0002": (["domain_frequency", "domain_lookalike"], 50, 45),
+    "syn_p_0003": (["domain_lookalike"], 20, 18),
+    "syn_p_0004": (["domain_lookalike"], 20, 18),
     "syn_p_0005": ([], 0, 0),
     "syn_p_0006": ([], 0, 0),
+    "syn_p_0007": (["payment_request"], 20, 18),
+    "syn_p_0008": (["urgency_language"], 15, 14),
+    "syn_p_0009": ([], 0, 0),
 }
 
 
@@ -535,17 +942,21 @@ def test_the_published_weights_applied_to_what_a_reviewer_can_see_produce_the_sc
 ) -> None:
     """The auditability claim, asked of the output rather than of the code.
 
-    Three things have to hold at once, and none of them holds because the code says
-    so. The Signals a post carries have to be the ones its own links justify, so no
-    Signal can rest on anything the reviewer cannot look at. The weight beside each
-    Signal has to be the weight published in the data file, so the arithmetic a reader
-    does is the arithmetic the run did. And the score has to be the sum of those
-    published weights as a share of all of them, out of one hundred — worked out by
-    hand in the table above and written down there.
+    Four things have to hold at once, and none of them holds because the code says
+    so. The Signals a post carries have to be the ones its own links and its own text
+    justify, so no Signal can rest on anything the reviewer cannot look at. The weight
+    beside each Signal has to be the weight published in the data file, so the
+    arithmetic a reader does is the arithmetic the run did. And the score has to be the
+    sum of those published weights as a share of all of them, out of one hundred —
+    worked out by hand in the table above and written down there.
 
-    A Signal needing account history would break the first of the three and is
-    therefore not addable without failing this, which is what makes the constraint
-    structural rather than a promise in a docstring (ADR-0007).
+    A Signal needing account history would break the first of the four and is therefore
+    not addable without failing this, which is what makes the constraint structural
+    rather than a promise in a docstring (ADR-0007). So would a Signal whose evidence is
+    neither a registration the post links nor a sentence of the post's own text: the
+    check below reads the shape of each piece of evidence rather than a list of which
+    Signal is meant to be which kind, so a new Signal of either kind is held to the same
+    thing and a Signal resting on anything else has nowhere to go.
     """
     corpus = write_corpus(tmp_path / "corpus.jsonl", HAND_CORPUS)
 
@@ -553,7 +964,13 @@ def test_the_published_weights_applied_to_what_a_reviewer_can_see_produce_the_sc
     written = by_post(scores_path)
     weights = published_weights()
 
-    assert weights == {"domain_frequency": 30, "domain_lookalike": 20}
+    assert weights == {
+        "domain_frequency": 30,
+        "domain_lookalike": 20,
+        "guaranteed_return": 25,
+        "payment_request": 20,
+        "urgency_language": 15,
+    }
     assert sorted(written) == sorted(EXPECTED)
 
     for post_id, (expected_signals, expected_points, expected_score) in EXPECTED.items():
@@ -568,12 +985,10 @@ def test_the_published_weights_applied_to_what_a_reviewer_can_see_produce_the_sc
             assert count(hit, "weight") == weights[text(hit, "signal")], post_id
             assert items(hit), post_id
             for item in items(hit):
-                assert domain(item) in VISIBLE[post_id], (
-                    f"{post_id} carries {text(hit, 'signal')} on {domain(item)}, which is "
-                    "not in its own links"
+                assert rests_on_the_post(post_id, item), (
+                    f"{post_id} carries {text(hit, 'signal')} on {item!r}, which is "
+                    "neither one of its own links nor a sentence of its own text"
                 )
-                if text(hit, "signal") == "domain_lookalike":
-                    assert text(item, "other") in VISIBLE[post_id], post_id
 
 
 def test_a_signal_is_counted_once_however_many_registrations_fire_it(tmp_path: Path) -> None:
@@ -619,7 +1034,7 @@ def test_a_signal_is_counted_once_however_many_registrations_fire_it(tmp_path: P
         "vantage-ledger.example",
         "rivermill-bikes.example",
     }
-    assert count(row, "score") == 60
+    assert count(row, "score") == 27
 
 
 def test_the_frequency_figures_can_be_counted_off_the_published_resolved_links(
@@ -680,12 +1095,14 @@ def test_the_console_prints_the_arithmetic_beside_the_score(
     _, printed = run(tmp_path, corpus, capsys)
 
     block = printed.split("syn_p_0001  syn_alpha_0001  100/100")[1].split("\n\n")[0]
-    assert "domain_frequency  30  vantage-ledger.example: 2 posts by 2 accounts" in block
+    assert "domain_frequency   30  vantage-ledger.example: 2 posts by 2 accounts" in block
     assert (
-        "domain_lookalike  20  vantage-ledger.example: one edit from "
+        "domain_lookalike   20  vantage-ledger.example: one edit from "
         "vantage-ledgers.example" in block
     )
-    assert "total             50  of 50 published points, 2 of 2 Signals" in block
+    assert 'guaranteed_return  25  body: "Guaranteed returns every month' in block
+    assert 'payment_request    20  body: "Equipment is provided' in block
+    assert "total              110  of 110 published points, 5 of 5 Signals" in block
 
     # The weights are quoted from the file, with the reason each one is that number.
     assert "data/signals/weights.jsonl" in printed
@@ -701,10 +1118,14 @@ def test_every_post_in_the_corpus_scores_the_published_weights_of_the_signals_it
     """The same claim over the Corpus the project ships, every post of it.
 
     The expected score is worked out from the committed weight file — data somebody
-    wrote down on purpose — rather than from the run's own figures, so a change to
-    the normalisation or to a weight is a change this test sees. The division is exact
-    for this weight set, which is asserted rather than assumed, so nothing here depends
-    on how the run rounds.
+    wrote down on purpose — rather than from the run's own figures, so a change to the
+    normalisation or to a weight is a change this test sees.
+
+    The division is not exact for this weight set, so the rounding is part of the claim
+    and is checked two ways rather than one. The documented rule is reproduced here in
+    integer arithmetic, and the result is also held to be within half a point of the
+    exact share, so a run that rounded towards zero, away from zero, or to the nearest
+    even number fails even where the two rules happen to agree.
     """
     scores_path, _ = run(tmp_path)
 
@@ -715,14 +1136,14 @@ def test_every_post_in_the_corpus_scores_the_published_weights_of_the_signals_it
 
     assert len(written) == len(corpus)
     for row in written:
+        post_id = text(row, "post_id")
         earned = sum(weights[signal] for signal in set(signals(row)))
-        assert earned == count(row, "points"), text(row, "post_id")
-        assert 100 * earned % published == 0, (
-            f"{text(row, 'post_id')} does not divide evenly, so the score would depend on "
-            "how the run rounds"
+        assert earned == count(row, "points"), post_id
+        assert count(row, "score") == (200 * earned + published) // (2 * published), post_id
+        assert abs(2 * count(row, "score") * published - 200 * earned) <= published, (
+            f"{post_id} is more than half a point away from {100 * earned / published}"
         )
-        assert count(row, "score") == 100 * earned // published, text(row, "post_id")
-        assert count(row, "published_points") == published, text(row, "post_id")
+        assert count(row, "published_points") == published, post_id
 # --- the weights are data --------------------------------------------------------
 
 
@@ -755,19 +1176,30 @@ def weight_set(**weights: int) -> tuple[Row, ...]:
     )
 
 
+def published_set() -> tuple[Row, ...]:
+    """The committed weight set, with its own numbers, for tests that change one Signal
+    rather than every number."""
+    return tuple(
+        {"signal": text(row, "signal"), "weight": count(row, "weight"),
+         "rationale": text(row, "rationale")}
+        for row in rows(COMMITTED_WEIGHTS)
+    )
+
+
 def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_changes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The claim that the weights live outside the scoring code, shown by changing them.
 
     Two runs over one Corpus and one weight file edited between them: `domain_frequency`
-    at 30 becomes 60, and `domain_lookalike` stays at 20. Out of the 80 points now
-    published, a post carrying the frequency Signal alone is 75 and a post carrying the
-    lookalike alone is 25 - both exact, so nothing here depends on how the run rounds.
-    A post carrying both is 100 either way, because carrying every Signal is carrying
-    all of the weight there is; that is the normalisation doing its job rather than a
-    detail, and it is why adding a Signal later moves the scores rather than pushing
-    the existing ones over the top.
+    at 30 becomes 60, and every other weight is published at a number chosen so the two
+    sets still divide evenly - the point here is that the file decides, not that the
+    arithmetic is awkward. Out of the 100 points the second set publishes, a post
+    carrying the frequency Signal alone is 60 and a post carrying the lookalike alone is
+    20. A post carrying every Signal is 100 either way, because carrying every Signal is
+    carrying all of the weight there is; that is the normalisation doing its job rather
+    than a detail, and it is why adding a Signal later moves the scores rather than
+    pushing the existing ones over the top.
 
     No code changes between the two runs, which is the whole point. If the weights were
     a constant beside the rules, the second run would print the first run's numbers and
@@ -776,7 +1208,13 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
     corpus = write_corpus(tmp_path / "corpus.jsonl", HAND_CORPUS)
     heavier = write_weights(
         tmp_path / "heavier.jsonl",
-        weight_set(domain_frequency=60, domain_lookalike=20),
+        weight_set(
+            domain_frequency=60,
+            domain_lookalike=20,
+            guaranteed_return=10,
+            payment_request=5,
+            urgency_language=5,
+        ),
     )
 
     before_path, _ = run(tmp_path / "before", corpus)
@@ -784,19 +1222,25 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
 
     before = by_post(before_path)
     after = by_post(after_path)
-    assert published_weights() == {"domain_frequency": 30, "domain_lookalike": 20}
+    assert published_weights() == {
+        "domain_frequency": 30,
+        "domain_lookalike": 20,
+        "guaranteed_return": 25,
+        "payment_request": 20,
+        "urgency_language": 15,
+    }
 
     # syn_p_0003 carries only the lookalike Signal, so only that weight is in play.
-    assert count(before["syn_p_0003"], "score") == 40
-    assert count(after["syn_p_0003"], "score") == 25
-    assert count(after["syn_p_0003"], "published_points") == 80
+    assert count(before["syn_p_0003"], "score") == 18
+    assert count(after["syn_p_0003"], "score") == 20
+    assert count(after["syn_p_0003"], "published_points") == 100
 
     # syn_p_0006 carries nothing at all, so it is 0 whatever the weights say.
     assert count(after["syn_p_0006"], "score") == 0
 
     # And the table quotes the file's numbers rather than a constant.
     assert "domain_frequency  60" in after_printed
-    assert "2 Signals, 80 points published" in after_printed
+    assert "5 Signals, 100 points published" in after_printed
 
 
 def test_each_published_weight_carries_its_own_reason_and_the_output_quotes_them(
@@ -861,7 +1305,10 @@ def test_a_signal_with_no_published_weight_stops_the_run(tmp_path: Path) -> None
     said = score_with_weights(tmp_path, published)
 
     assert "publishes ['domain_frequency']" in said
-    assert "computes ['domain_frequency', 'domain_lookalike']" in said
+    assert (
+        "computes ['domain_frequency', 'domain_lookalike', 'guaranteed_return', "
+        "'payment_request', 'urgency_language']" in said
+    )
 
 
 def test_a_published_weight_naming_no_signal_this_project_computes_stops_the_run(
@@ -872,7 +1319,7 @@ def test_a_published_weight_naming_no_signal_this_project_computes_stops_the_run
     published = write_weights(
         tmp_path / "spare.jsonl",
         (
-            *weight_set(domain_frequency=30, domain_lookalike=20),
+            *published_set(),
             {"signal": "account_history", "weight": 15, "rationale": "a reason for "
                                                                        "something that "
                                                                        "does not exist"},
@@ -882,7 +1329,10 @@ def test_a_published_weight_naming_no_signal_this_project_computes_stops_the_run
     said = score_with_weights(tmp_path, published)
 
     assert "names 'account_history'" in said
-    assert "the Signals are domain_frequency, domain_lookalike" in said
+    assert (
+        "the Signals are domain_frequency, domain_lookalike, guaranteed_return, "
+        "payment_request, urgency_language" in said
+    )
 
 
 @pytest.mark.parametrize(
@@ -953,7 +1403,7 @@ def test_the_same_signal_published_twice_stops_the_run(tmp_path: Path) -> None:
     published = write_weights(
         tmp_path / "twice.jsonl",
         (
-            *weight_set(domain_frequency=30, domain_lookalike=20),
+            *published_set(),
             {"signal": "domain_frequency", "weight": 30, "rationale": "the same reason"},
         ),
     )
@@ -1146,7 +1596,14 @@ def test_the_command_refuses_to_write_over_the_weight_set(tmp_path: Path) -> Non
     is compared against, so a collision at that path would leave the scores in the
     repository resting on whatever had been written over the weights."""
     published = write_weights(
-        tmp_path / "weights.jsonl", weight_set(domain_frequency=30, domain_lookalike=20)
+        tmp_path / "weights.jsonl",
+        weight_set(
+            domain_frequency=30,
+            domain_lookalike=20,
+            guaranteed_return=25,
+            payment_request=20,
+            urgency_language=15,
+        ),
     )
     before = published.read_bytes()
 
@@ -1172,8 +1629,9 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_change(
     A seed with a different Nuisance Structure draws different accounts onto the shared
     registrations and plants different confusable pairs, so the Signals this run fires
     move and the ones it does not fire stay unfired. What must hold for every seed is
-    that each Signal's evidence names a registration the run actually knows about, that
-    every Signal a post carries is one the published weight set prices, and that a post
+    that every piece of evidence rests on something in the post it is attached to - a
+    registration the run resolved or a sentence of that post's own text - that every
+    Signal a post carries is one the published weight set prices, and that a post
     carrying no Signal scores nothing at all.
     """
     for seed in (DEFAULT_SEED, DEFAULT_SEED + 1):
@@ -1201,9 +1659,10 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_change(
             for line in printed.split("\nregistrations  ")[1].split("\n\n")[0].splitlines()[1:]
             if line.strip()
         }
+        posts = {item.post_id: item for item in read_corpus(corpus_path)}
 
         assert known, f"seed {seed} resolved no registrations at all"
-        assert len(written) == len(read_corpus(corpus_path))
+        assert len(written) == len(posts)
         weights = published_weights()
         for row in written:
             carried = records(row, "signals")
@@ -1211,8 +1670,23 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_change(
                 assert count(row, "points") == 0 and count(row, "score") == 0, text(
                     row, "post_id"
                 )
+            post_id = text(row, "post_id")
+            visible = {"title": posts[post_id].title, "body": posts[post_id].body}
             for hit in carried:
                 assert text(hit, "signal") in weights, f"seed {seed}: {text(hit, 'signal')}"
-                assert items(hit), text(row, "post_id")
+                assert items(hit), post_id
                 for item in items(hit):
-                    assert domain(item) in known, f"seed {seed}: {domain(item)}"
+                    linked = registrations_in(item)
+                    if linked is not None:
+                        assert domain(item) in known, f"seed {seed}: {domain(item)}"
+                    else:
+                        field = text(item, "field")
+                        assert field in visible, f"seed {seed}: {field!r}"
+                        assert text(item, "sentence") in visible[field], (
+                            f"seed {seed}: {post_id} carries {text(hit, 'signal')} on a "
+                            f"sentence that is not in its own {field}"
+                        )
+                        for phrase in texts(item, "phrases"):
+                            assert phrase in text(item, "sentence").lower(), (
+                                f"seed {seed}: {phrase!r} is not in the sentence it fired on"
+                            )
