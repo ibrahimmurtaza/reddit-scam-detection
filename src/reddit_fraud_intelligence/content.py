@@ -62,6 +62,12 @@ class PlantedScript:
 # compulsory call, the same published losing months, in four accounts' own words.
 # Matching repeated strings finds nothing here, and text similarity is what finds all
 # four — which is exactly the evidence ADR-0005 refuses to accept on its own.
+#
+# Three of the four posts name the desk's Telegram handle and one names an intake
+# address, because a campaign that shares infrastructure shares the address people
+# are told to reach it at as well. Not every post carries it: the one that does not
+# is the point, because an extractor that is only ever right about the posts that
+# advertise a Contact Point has not been measured on anything else.
 _ALPHA = PlantedScript(
     campaign_id="syn-campaign-alpha",
     accounts=("syn_quantproof_2841", "syn_harborlight_5517", "syn_pinecrest_9032"),
@@ -104,7 +110,9 @@ _ALPHA = PlantedScript(
                 "reports come out monthly either way, the months they lost included, "
                 "annotated trade by trade. Three months in: one flat month, two green, and "
                 "one call I would have preferred to skip. If you have already paid for one of "
-                "the trading courses, read this before you pay for another."
+                "the trading courses, read this before you pay for another. If you would rather "
+                "look at one of their published months before paying anything, their Telegram "
+                "is @syn_vantageledger."
             ),
             links=("https://mirror.vantage-ledger.example/month-log",),
         ),
@@ -120,7 +128,9 @@ _ALPHA = PlantedScript(
                 "trying it is that they write up the bad months as well as the good ones, in "
                 "full, in the month they happen. Two months in, so read this as one person's "
                 "early result rather than as a conclusion. Happy to answer questions about "
-                "what the onboarding involves, the intake form takes a couple of minutes."
+                "what the onboarding involves, the intake form takes a couple of minutes. They "
+                "answer read-only questions on @Syn_VantageLedger if you would rather ask than "
+                "pay first."
             ),
             links=("https://vantage-ledger.example/entry",),
         ),
@@ -134,7 +144,8 @@ _ALPHA = PlantedScript(
                 "whole pitch is that you see the bad months too. Reminder for anyone asking: the "
                 "minimum ticket is 500 USDT, the onboarding call is compulsory, and they do not "
                 "onboard without it. The full write-up of the month is on their page, drawdown "
-                "included."
+                "included. Questions go to intake@vantage-ledger.example, which is the only "
+                "address they answer, or @syn_vantageledger if Telegram is easier."
             ),
             links=("https://vantage-ledger.example/month-log",),
         ),
@@ -145,6 +156,11 @@ _ALPHA = PlantedScript(
 # Three posts from two accounts, linking signal-harbor.example. Staggered, and not a
 # paraphrase group: this campaign repeats one advert because two people are repeating
 # it, which is a different case from three accounts rewording the same offer.
+#
+# Two of the three posts name the intake channel, from both of the campaign's accounts.
+# A recruitment advert whose two posters put the same channel in front of a reader is
+# the clearest case in the Corpus of a Contact Point that is worth reporting, because
+# the handle is the only thing the two posts share that a registrable domain is not.
 _BETA = PlantedScript(
     campaign_id="syn-campaign-beta",
     accounts=("syn_northwindhire_7736", "syn_clearpathwork_3184"),
@@ -160,7 +176,8 @@ _BETA = PlantedScript(
                 "the first two days. Equipment is provided but there is a refundable materials "
                 "deposit for the workstation, and you have to finish the intake within 48 hours "
                 "or the slot goes to someone else. I am not putting the link in the post because "
-                "they took it down last time, message me and I will send it."
+                "they took it down last time, message me and I will send it. Their intake "
+                "channel is @syn_northwindhire if you would rather not wait for me."
             ),
             links=("https://signal-harbor.example/roles/annotation",),
         ),
@@ -173,7 +190,9 @@ _BETA = PlantedScript(
                 "you from scratch so there is no experience requirement. They do ask for a "
                 "refundable deposit for the equipment before they ship it, which I will not "
                 "pretend is normal, but it came back within a week for both of us. Intake has to "
-                "be completed in 48 hours. Happy to answer questions here rather than in DMs."
+                "be completed in 48 hours. Happy to answer questions here rather than in DMs. The "
+                "intake form is on their Telegram, @syn_northwindhire, which is the only "
+                "place it is."
             ),
             links=("https://signal-harbor.example/intake",),
         ),

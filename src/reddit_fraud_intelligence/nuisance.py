@@ -439,7 +439,9 @@ _HARD_NEGATIVES = (
                 "publishing the losing months is what convinced me, and it turns out that "
                 "was true: they published them, in detail, three weeks after the account was "
                 "gone. Transcript of the last fortnight is on the paste. I have the "
-                "statements and I am not putting them up here."
+                "statements and I am not putting them up here. The channel they had me "
+                "add was @Syn_VantageLedger, which is how I found the rest of it in the "
+                "first place."
             ),
             links=(f"https://{PASTE_VAULT}/g7k",),
         ),
@@ -507,8 +509,10 @@ _HARD_NEGATIVES = (
                 "page, the withdrawal rules change depending on how you phrase the question, "
                 "and support answers arrive under a different name each time. Screenshots and "
                 "dates are side by side on the paste so anyone can judge them rather than take "
-                "my word. I am not claiming it is the same operation as anything else. I am "
-                "saying I would not have spotted it without writing it down."
+                "my word. The contact form is half-built: it asks for an address and then tells "
+                "me to send it to intake@, which is not an address. I am not claiming it is the "
+                "same operation as anything else. I am saying I would not have spotted it without "
+                "writing it down."
             ),
             links=(f"https://{PASTE_VAULT}/broker-check",),
         ),
