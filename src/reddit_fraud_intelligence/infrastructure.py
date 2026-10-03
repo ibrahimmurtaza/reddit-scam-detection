@@ -32,13 +32,13 @@ feed reports.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, fields
 from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
-from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
+from reddit_fraud_intelligence.jsonl import JsonObject, read_rows, write_lines
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 
 
@@ -99,7 +99,7 @@ class SharedInfrastructure:
         filter that quietly did nothing is the one failure this module exists to
         prevent: the output would report groupings it believes it has filtered.
         """
-        hosts = tuple(_host(path, number, text) for number, text in _lines(path))
+        hosts = tuple(_host(path, number, text) for number, text in read_rows(path))
         return cls(
             hosts=hosts,
             registrations=_registrations(path, hosts, suffixes),
@@ -169,14 +169,6 @@ def write_shared_infrastructure(path: Path, hosts: Iterable[SharedHost]) -> None
             yield asdict(host)
 
     write_lines(path, objects())
-
-
-def _lines(path: Path) -> Iterator[tuple[int, str]]:
-    """Every row of the file with the number a reader would call it by. Blank lines are
-    skipped, as in every other file this project reads."""
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if line.strip():
-            yield number, line
 
 
 def _host(path: Path, number: int, line: str) -> SharedHost:

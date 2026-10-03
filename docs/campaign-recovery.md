@@ -45,8 +45,9 @@ puts accounts in a Campaign Candidate when they share a registrable domain, and 
 business whose three accounts share its own domain is a grouping the system is *right*
 to produce — the Corpus plants exactly that as a decoy account cluster. Counting it
 against N would report correct behaviour as a failure and would put N above the number
-of things that were planted. The rate at which the grouping is wrong, measured against
-the same manifest, is reported separately.
+of things that were planted. The rate at which the grouping is wrong is measured against
+the same manifest, and it is not in this page: it is the companion figure this one is
+missing.
 
 ## What it was measured against
 
@@ -105,9 +106,9 @@ measured this way is a statement about planted structure in a synthetic Corpus, 
 not an estimate of fraud found in the world.
 
 **The figure has no companion yet.** Recovery alone can be produced by a grouping that
-also merges unrelated accounts, so it is only half the claim: the rate of false groupings
-against the manifest above is reported separately, and a reader should treat this number
-as uninterpretable until it arrives.
+also merges unrelated accounts, so it is only half the claim: the rate of groupings that
+are not recoveries, measured against the manifest above, is not in this page, and a
+reader should treat this number as uninterpretable until it is.
 
 ## Reproducing it
 

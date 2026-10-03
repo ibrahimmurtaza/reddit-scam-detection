@@ -20,9 +20,8 @@ it open the file the grouping published (ADR-0018).
 The report names the Nuisance Structure the figure was measured against, because X of N
 over a Corpus that held nothing else would be a figure about a generator that planted two
 campaigns and said so nowhere. The rate at which the grouping is wrong — the other half
-of the claim, and the reason the manifest exists — is reported separately rather than
-half-measured here, and this report says where it is coming from instead of implying
-there is no companion to the figure.
+of the claim, and the reason the manifest exists — is not measured here yet, and this
+report says so rather than implying there is no companion to the figure.
 
 It also says what the figure is not. Every label in this Corpus was assigned by the
 generator that wrote the posts, so a share of the posts called right or wrong would
@@ -52,9 +51,9 @@ from reddit_fraud_intelligence.truth import PlantedCampaign, read_truth
 
 _HEADING = "Campaign recovery"
 _SUBHEADING = """\
-How many Planted Campaigns the grouping recovered, and what it did with the ones it did not.
-A candidate counts as a recovery only when it holds a campaign's whole membership, and
-anything less is reported beside the figure rather than counted into it."""
+How many Planted Campaigns the grouping recovered, and what it did with the ones it did
+not. A candidate counts as a recovery only when it holds a campaign's whole membership,
+and anything less is reported beside the figure rather than counted into it."""
 
 # Where the join is published, as the command writes it by default. Named here rather
 # than read out of the run, because the report points at the file a reader should open
@@ -99,6 +98,16 @@ class Match:
     missing: tuple[str, ...]
     extra: tuple[str, ...]
 
+    @property
+    def whole(self) -> bool:
+        """Whether this candidate holds the membership and nothing else.
+
+        Asked of the match rather than worked out again by the callers, because the
+        figure, the console, and the report all need the same answer and three
+        definitions of it would be three chances to disagree.
+        """
+        return not self.missing and not self.extra
+
 
 @dataclass(frozen=True, slots=True)
 class CampaignRecovery:
@@ -123,11 +132,24 @@ class CampaignRecovery:
         is what was planted, and a grouping that reached past it is grouping wrongly, so
         it is reported as the partial it is rather than counted into the figure.
         """
-        if any(match.accounts == self.accounts for match in self.matches):
+        if any(match.whole for match in self.matches):
             return Outcome.RECOVERED
         if self.matches:
             return Outcome.PARTIAL
         return Outcome.MISSED
+
+    @property
+    def partial_matches(self) -> tuple[Match, ...]:
+        """The candidates holding only part of this membership, however the outcome came
+        out.
+
+        Asked of every campaign rather than only the partial ones, because a campaign
+        recovered whole by one candidate can still have a second candidate holding two
+        of its three accounts. That match is a real grouping of real accounts and it is
+        not part of the recovery, so the views that report it have to report it whatever
+        the campaign's own outcome was.
+        """
+        return tuple(match for match in self.matches if not match.whole)
 
     @property
     def candidate_ids(self) -> tuple[str, ...]:
@@ -190,10 +212,12 @@ class NuisanceBaseline:
 class RecoveryFacts:
     """What reading the four files establishes, as claims about bytes.
 
-    The digests are here so the figure can be traced to the files it was measured
-    against, and the seed is carried rather than looked up: it decides nothing here, and
-    it is printed so a reader can regenerate the Corpus this figure is about rather than
-    trust the claim that they can.
+    Every figure the table prints lives here rather than being worked out again where it
+    is printed, so the figures block reads one object and the two views cannot disagree
+    about a count. The digests are here so the figure can be traced to the files it was
+    measured against, and the seed is carried rather than looked up: it decides nothing
+    here, and it is printed so a reader can regenerate the Corpus this figure is about
+    rather than trust the claim that they can.
     """
 
     accounts: int
@@ -201,9 +225,13 @@ class RecoveryFacts:
     candidates: int
     candidates_path: str
     candidates_sha256: str
+    campaigns: int
+    campaign_posts: int
     corpus_path: str
     corpus_sha256: str
+    nuisance_kinds: int
     nuisance_path: str
+    nuisance_records: int
     nuisance_sha256: str
     posts: int
     seed: int
@@ -244,14 +272,21 @@ class Recovery:
 
     @property
     def partial_candidates(self) -> int:
-        """The candidates that took part in a partial match, however many campaigns
-        they reached."""
+        """The candidates holding only part of some campaign's membership.
+
+        Counted over every campaign rather than only the partial ones, because a partial
+        match is a property of a candidate's reach rather than of a campaign's outcome:
+        a campaign recovered whole by one candidate can still have a second candidate
+        holding two of its three accounts, and that match is exactly what the figure
+        must not quietly drop. The campaign's outcome says the recovery happened; this
+        says something else also happened.
+        """
         return len(
             {
-                candidate_id
+                match.candidate_id
                 for recovery in self.recoveries
-                if recovery.outcome is Outcome.PARTIAL
-                for candidate_id in recovery.candidate_ids
+                for match in recovery.matches
+                if not match.whole
             }
         )
 
@@ -296,7 +331,15 @@ def recover(
     }
     return Recovery(
         facts=_facts(
-            corpus_path, candidates_path, truth_path, nuisance_path, items, candidates, campaigns, seed
+            corpus_path,
+            candidates_path,
+            truth_path,
+            nuisance_path,
+            items,
+            candidates,
+            campaigns,
+            manifest,
+            seed,
         ),
         recoveries=recoveries,
         joined=frozenset(joined),
@@ -326,12 +369,13 @@ def _check(
     """
     authors = {item.post_id: item.account for item in items}
     accounts = set(authors.values())
-    for campaign in campaigns:
-        _check_accounts(campaign.campaign_id, campaign.accounts, accounts, "membership")
-        _check_posts(campaign.campaign_id, campaign.posts, campaign.accounts, authors)
-    for candidate in candidates:
-        _check_accounts(candidate.candidate_id, candidate.accounts, accounts, "grouping")
-        _check_posts(candidate.candidate_id, candidate.posts, candidate.accounts, authors)
+    named = (
+        *((c.campaign_id, c.accounts, c.posts, "membership") for c in campaigns),
+        *((c.candidate_id, c.accounts, c.posts, "grouping") for c in candidates),
+    )
+    for named_by, of_accounts, posts, what in named:
+        _check_accounts(named_by, of_accounts, accounts, what)
+        _check_posts(named_by, posts, of_accounts, authors)
 
 
 def _check_accounts(
@@ -463,6 +507,7 @@ def _facts(
     items: Sequence[CorpusItem],
     candidates: Sequence[CampaignCandidate],
     campaigns: Sequence[PlantedCampaign],
+    manifest: Sequence[NuisanceRecord],
     seed: int,
 ) -> RecoveryFacts:
     """Every figure about the four files the table prints, computed rather than
@@ -475,9 +520,13 @@ def _facts(
         candidates=len(candidates),
         candidates_path=candidates_path.as_posix(),
         candidates_sha256=hashlib.sha256(candidates_path.read_bytes()).hexdigest(),
+        campaigns=len(campaigns),
+        campaign_posts=sum(len(campaign.posts) for campaign in campaigns),
         corpus_path=corpus_path.as_posix(),
         corpus_sha256=hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
+        nuisance_kinds=len(NuisanceKind),
         nuisance_path=nuisance_path.as_posix(),
+        nuisance_records=len(manifest),
         nuisance_sha256=hashlib.sha256(nuisance_path.read_bytes()).hexdigest(),
         posts=len(items),
         seed=seed,
@@ -559,24 +608,24 @@ def _figures(recovery: Recovery) -> str:
         ("candidates sha256", facts.candidates_sha256),
         (
             "truth",
-            f"{facts.truth_path} ({_count(len(recovery.recoveries), 'Planted Campaign')}, "
-            f"{_count(sum(len(campaign.posts) for campaign in recovery.recoveries), 'post')})",
+            f"{facts.truth_path} ({_count(facts.campaigns, 'Planted Campaign')}, "
+            f"{_count(facts.campaign_posts, 'post')})",
         ),
         ("truth sha256", facts.truth_sha256),
         (
             "nuisance",
-            f"{facts.nuisance_path} ({_count(recovery.nuisance.records, 'record')} over "
-            f"{len(recovery.nuisance.by_kind)} kinds)",
+            f"{facts.nuisance_path} ({_count(facts.nuisance_records, 'record')} over "
+            f"{facts.nuisance_kinds} kinds)",
         ),
         ("nuisance sha256", facts.nuisance_sha256),
         (
             "recovered",
-            f"{recovery.recovered} of {len(recovery.recoveries)} Planted Campaigns",
+            f"{recovery.recovered} of {facts.campaigns} Planted Campaigns",
         ),
         (
             "partial",
-            f"{recovery.partial} Planted Campaigns, "
-            f"{recovery.partial_candidates} of {recovery.facts.candidates} candidates",
+            f"{recovery.partial} Planted Campaigns, {recovery.partial_candidates} of "
+            f"{facts.candidates} candidates hold only part of one",
         ),
         ("missed", f"{recovery.missed} Planted Campaigns"),
         (
@@ -620,10 +669,13 @@ def _table(headings: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
 def _campaigns_table(recovery: Recovery) -> str:
     """Every Planted Campaign, its outcome, and the candidates that reached it.
 
-    A campaign that was not recovered has its join printed under it, because "partial"
-    and "missed" on their own are not diagnosable: a reader who wants to know whether
-    the system was nearly right needs to see which accounts it held, which it did not,
-    and which it reached for that the membership never named.
+    Every match that is not a whole-membership match is printed under its campaign,
+    whatever the campaign's own outcome was, because "partial" and "missed" on their
+    own are not diagnosable: a reader who wants to know whether the system was nearly
+    right needs to see which accounts it held, which it did not, and which it reached
+    for that the membership never named. A campaign recovered by one candidate and
+    half-reached by another has both facts to show, and printing only the recovery
+    would be the output agreeing with itself.
     """
     headings = ("campaign", "outcome", "accounts", "posts", "candidates")
     rows = [
@@ -638,10 +690,11 @@ def _campaigns_table(recovery: Recovery) -> str:
     ]
     lines = [_table(headings, rows)]
     for campaign in recovery.recoveries:
-        if campaign.outcome is Outcome.RECOVERED:
+        partials = campaign.partial_matches
+        if not partials and campaign.matches:
             continue
-        lines.extend(f"  {campaign.campaign_id}")
-        lines.extend(_match(match, campaign) for match in campaign.matches)
+        lines.append(f"  {campaign.campaign_id}")
+        lines.extend(_match(match, campaign) for match in partials)
         if not campaign.matches:
             lines.append(f"    no candidate names {', '.join(campaign.accounts)}")
     return "\n".join(lines)
@@ -668,18 +721,17 @@ def _unmatched_table(recovery: Recovery) -> str:
     A candidate a reader cannot account for is the thing that makes X of N
     uninterpretable: `2 of 2` beside three candidates is a claim about one third of the
     output. The registrations are printed for the same reason the grouping prints its
-    own — the shared domain is the whole of the reason those accounts are together, so
+    own - the shared domain is the whole of the reason those accounts are together, so
     the reason is what a reader needs.
     """
     if not recovery.unmatched:
         return "unmatched  no candidate; every one of them reached a Planted Campaign"
 
     heading = (
-        f"unmatched  {_count(recovery.facts.candidates, 'candidate')} published, "
-        f"{len(recovery.unmatched)} of which {_verb(len(recovery.unmatched))} no Planted "
-        "Campaign, and not one of them is counted against the figure above"
+        f"unmatched  {_count(recovery.facts.candidates, 'candidate')} published, of which "
+        f"{len(recovery.unmatched)} {_verb(len(recovery.unmatched))} no Planted Campaign."
     )
-    lines = [heading]
+    lines = [heading, "  not one of them is counted against the figure above"]
     for candidate in recovery.unmatched:
         lines.append(
             f"  {candidate.candidate_id}  {_count(len(candidate.accounts), 'account')}, "
@@ -697,12 +749,12 @@ def _nuisance_table(recovery: Recovery) -> str:
     held. Accounts and posts are counted once per kind: an account reaching a shortener
     and a paste site is in two records and is one account.
     """
-    baseline = recovery.nuisance
+    facts = recovery.facts
     lines = [
-        f"nuisance  {baseline.path} ({_count(baseline.records, 'record')} over "
-        f"{len(baseline.by_kind)} kinds)"
+        f"nuisance  {facts.nuisance_path} "
+        f"({_count(facts.nuisance_records, 'record')} over {facts.nuisance_kinds} kinds)"
     ]
-    for count in baseline.by_kind:
+    for count in recovery.nuisance.by_kind:
         lines.append(
             f"  {count.kind.value.ljust(_KIND_WIDTH)}  {_count(count.records, 'record')}  "
             f"{_count(len(count.accounts), 'account')}  "
@@ -721,38 +773,50 @@ def _footer(recovery: Recovery) -> str:
     the system, and so would one that read as a rate of finding fraud in the world. The
     bounds are the ones a reader would otherwise have to guess at, and they are why the
     figure is a lower bound rather than an estimate.
+
+    Every sentence carrying figures is worked out above the block and dropped in on a
+    line of its own, because a line that is 200 columns wide is not a paragraph and
+    wrapping it by hand inside the string would mean re-wrapping it whenever a figure
+    changes length.
     """
     facts = recovery.facts
-    unmatched = len(recovery.unmatched)
+    records_line = (
+        f"The manifest holds {facts.nuisance_records} records over "
+        f"{facts.nuisance_kinds} kinds."
+    )
+    candidates_line = (
+        f"Of the {facts.candidates} candidates, {len(recovery.unmatched)} "
+        f"{_verb(len(recovery.unmatched))} no Planted Campaign."
+    )
     return f"""\
-Measured by `rfi campaign-recovery`, against the Planted Campaign membership in \
-{facts.truth_path}. No person reviewed any of it: there is no reviewer behind this \
-number, nothing was clicked, and a Campaign Candidate is a proposal rather than a \
+Measured by `rfi campaign-recovery`, against the Planted Campaign membership in
+{facts.truth_path}. No person reviewed any of it: there is no reviewer behind this
+number, nothing was clicked, and a Campaign Candidate is a proposal rather than a
 finding.
 
-No figure over the whole Corpus is published here or in the page beside this one. Every \
-label in this Corpus was assigned by the generator that wrote the posts, so a share of \
-the posts called right or wrong would measure agreement with the generator rather than \
-anything about fraud, and publishing it would be a number nobody could falsify \
+No figure over the whole Corpus is published here or in the page beside this one. Every
+label in this Corpus was assigned by the generator that wrote the posts, so a share of
+the posts called right or wrong would measure agreement with the generator rather than
+anything about fraud, and publishing it would be a number nobody could falsify
 (ADR-0004).
 
-What the figure is bounded by is stated rather than left in the tickets. A Planted \
-Campaign that leans on a known-shared host is lost with the host, an account that reaches \
-no registration cannot be proposed at all, and a campaign that rotates its registration \
-from one post to the next is invisible by construction. Recovery measured this way is a \
+What the figure is bounded by is stated rather than left in the tickets. A Planted
+Campaign that leans on a known-shared host is lost with the host, an account that reaches
+no registration cannot be proposed at all, and a campaign that rotates its registration
+from one post to the next is invisible by construction. Recovery measured this way is a
 statement about planted structure in a synthetic Corpus, and it is a lower bound.
 
-The Nuisance Structure above is the other half of the claim: {facts.nuisance_path} holds \
-{recovery.nuisance.records} records, and {unmatched} of {facts.candidates} candidates \
-reached no Planted Campaign at all. The rate at which the grouping is wrong — measured \
-against that same manifest — is reported separately, and until it lands this figure has \
-no companion, which is why the baseline is printed here rather than left to be found.
+The Nuisance Structure above is the other half of the claim.
+{records_line}
+{candidates_line}
+The rate at which the grouping is wrong is the companion figure this one is missing, and
+it is not in this output yet, which is why the baseline is printed here rather than left
+to be found.
 
-Nothing in this command reads anything the grouping reads, and nothing in the grouping \
-reads the membership or the manifest: this is a separate command over \
-{facts.candidates_path}, which `rfi campaign-candidates` wrote (ADR-0018). The digests \
-above are what a reader would check those files against."""
-
+Nothing in this command reads anything the grouping reads, and nothing in the grouping
+reads the membership or the manifest: this is a separate command over the candidates file
+named above, which `rfi campaign-candidates` wrote (ADR-0018). The digests above are what
+a reader would check those files against."""
 
 def render_report(recovery: Recovery) -> str:
     """The reader-facing page, generated from the four files the run read.
@@ -844,8 +908,9 @@ puts accounts in a Campaign Candidate when they share a registrable domain, and 
 business whose three accounts share its own domain is a grouping the system is *right*
 to produce — the Corpus plants exactly that as a decoy account cluster. Counting it
 against N would report correct behaviour as a failure and would put N above the number
-of things that were planted. The rate at which the grouping is wrong, measured against
-the same manifest, is reported separately.
+of things that were planted. The rate at which the grouping is wrong is measured against
+the same manifest, and it is not in this page: it is the companion figure this one is
+missing.
 
 ## What it was measured against
 
@@ -899,9 +964,9 @@ measured this way is a statement about planted structure in a synthetic Corpus, 
 not an estimate of fraud found in the world.
 
 **The figure has no companion yet.** Recovery alone can be produced by a grouping that
-also merges unrelated accounts, so it is only half the claim: the rate of false groupings
-against the manifest above is reported separately, and a reader should treat this number
-as uninterpretable until it arrives.
+also merges unrelated accounts, so it is only half the claim: the rate of groupings that
+are not recoveries, measured against the manifest above, is not in this page, and a
+reader should treat this number as uninterpretable until it is.
 
 ## Reproducing it
 

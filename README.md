@@ -396,8 +396,8 @@ is lost with the host, an account that reaches no registration cannot be propose
 all, and a campaign that rotates its registration per post is invisible by
 construction — so this is a lower bound. Recovery on its own can also be produced by
 a grouping that merges unrelated accounts, so the rate of false groupings against the
-same manifest is reported separately (ticket #19), and until it arrives a reader
-should treat the figure as uninterpretable on its own.
+same manifest is not measured yet (ticket #19), and until it arrives a reader should
+treat the figure as uninterpretable on its own.
 
 ## The Policy Score
 

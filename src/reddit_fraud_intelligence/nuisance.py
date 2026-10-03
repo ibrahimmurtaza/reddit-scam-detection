@@ -23,7 +23,6 @@ is wrong by the next seed.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
 from enum import StrEnum
@@ -31,7 +30,15 @@ from pathlib import Path
 
 from reddit_fraud_intelligence.content import SyntheticPost, link_hosts
 from reddit_fraud_intelligence.infrastructure import BIO_PAGE, HOP_CUT, PASTE_VAULT
-from reddit_fraud_intelligence.jsonl import JsonObject, read_rows, write_lines
+from reddit_fraud_intelligence.jsonl import (
+    JsonObject,
+    read_names,
+    read_object,
+    read_rows,
+    read_text,
+    refuse_repeated,
+    write_lines,
+)
 
 
 class NuisanceKind(StrEnum):
@@ -710,42 +717,31 @@ def read_nuisance(path: Path) -> tuple[NuisanceRecord, ...]:
     is a record nobody can read either.
     """
     records = tuple(_record(path, number, text) for number, text in read_rows(path))
-    identifiers = [record.nuisance_id for record in records]
-    if len(set(identifiers)) != len(identifiers):
-        repeated = sorted(name for name in set(identifiers) if identifiers.count(name) > 1)
-        raise ValueError(
-            f"{path.as_posix()} names {repeated} on two rows each, so the counts beside "
-            "the recovery figure would count them twice"
-        )
+    refuse_repeated(
+        path.as_posix(),
+        (record.nuisance_id for record in records),
+        "the counts printed beside the recovery figure would count them twice",
+    )
     return records
 
 
 def _record(path: Path, number: int, text: str) -> NuisanceRecord:
     where = f"{path.as_posix()}:{number}"
-    try:
-        row = json.loads(text)
-    except json.JSONDecodeError as refusal:
-        raise ValueError(f"{where} is not JSON: {text!r}") from refusal
-    if not isinstance(row, dict):
-        raise ValueError(f"{where} is not a row: {text!r}")
-
+    record = read_object(where, text)
     vocabulary = tuple(field.name for field in fields(NuisanceRecord))
-    if set(row) != set(vocabulary):
+    if set(record) != set(vocabulary):
         raise ValueError(
-            f"{where} holds {sorted(row)}, which is not the manifest vocabulary "
+            f"{where} holds {sorted(record)}, which is not the manifest vocabulary "
             f"{sorted(vocabulary)}"
         )
-    note = row["note"]
-    if not isinstance(note, str) or not note.strip():
-        raise ValueError(f"{where} has no note, and a record nobody can account for is one")
     return NuisanceRecord(
-        kind=_kind(where, row["kind"]),
-        nuisance_id=_text(where, row, "nuisance_id"),
-        accounts=_names(where, row, "accounts"),
-        posts=_names(where, row, "posts"),
-        hosts=_names(where, row, "hosts"),
-        characters=_characters(where, row["characters"]),
-        note=note,
+        kind=_kind(where, record["kind"]),
+        nuisance_id=read_text(where, record, "nuisance_id"),
+        accounts=read_names(where, record, "accounts"),
+        posts=read_names(where, record, "posts"),
+        hosts=read_names(where, record, "hosts"),
+        characters=_characters(where, record["characters"]),
+        note=read_text(where, record, "note"),
     )
 
 
@@ -777,16 +773,3 @@ def _characters(where: str, value: object) -> tuple[HardNegativeCharacter, ...]:
             raise ValueError(f"{where} names {entry!r}, and the characters are {names}") from unknown
     return tuple(characters)
 
-
-def _names(where: str, row: JsonObject, field_name: str) -> tuple[str, ...]:
-    value = row[field_name]
-    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
-        raise ValueError(f"{where} has {field_name}={value!r}, which is not a list of names")
-    return tuple(value)
-
-
-def _text(where: str, row: JsonObject, field_name: str) -> str:
-    value = row[field_name]
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{where} has no {field_name}")
-    return value

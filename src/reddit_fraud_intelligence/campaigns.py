@@ -40,7 +40,6 @@ the evaluator after this has finished (ADR-0008).
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -48,7 +47,15 @@ from pathlib import Path
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedHost, SharedInfrastructure
-from reddit_fraud_intelligence.jsonl import JsonObject, read_rows, write_lines
+from reddit_fraud_intelligence.jsonl import (
+    JsonObject,
+    read_names,
+    read_object,
+    read_rows,
+    read_text,
+    refuse_repeated,
+    write_lines,
+)
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 
 _HEADING = "Campaign Candidates"
@@ -487,26 +494,24 @@ def read_campaign_candidates(path: Path) -> tuple[CampaignCandidate, ...]:
     joining against something other than the grouping's output.
     """
     candidates = tuple(_candidate(path, number, text) for number, text in read_rows(path))
-    identifiers = [candidate.candidate_id for candidate in candidates]
-    if len(set(identifiers)) != len(identifiers):
-        repeated = sorted(name for name in set(identifiers) if identifiers.count(name) > 1)
-        raise ValueError(
-            f"{path.as_posix()} names {repeated} on two rows each, so a join would count "
-            "a candidate twice"
-        )
+    refuse_repeated(
+        path.as_posix(),
+        (candidate.candidate_id for candidate in candidates),
+        "a join would count a candidate twice",
+    )
     return candidates
 
 
 def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
     where = f"{path.as_posix()}:{number}"
-    record = _record(where, text)
+    record = read_object(where, text)
     vocabulary = tuple(field.name for field in fields(CampaignCandidate))
     if set(record) != set(vocabulary):
         raise ValueError(
             f"{where} holds {sorted(record)}, which is not the candidate vocabulary "
             f"{sorted(vocabulary)}"
         )
-    accounts = _names(where, record, "accounts")
+    accounts = read_names(where, record, "accounts")
     if len(accounts) < 2:
         raise ValueError(
             f"{where} names {_count(len(accounts), 'account')}, and a component of one is "
@@ -516,13 +521,13 @@ def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
     if not isinstance(shared, list):
         raise ValueError(f"{where} has shared_domains={shared!r}, which is not a list")
     return CampaignCandidate(
-        candidate_id=_text(where, record, "candidate_id"),
+        candidate_id=read_text(where, record, "candidate_id"),
         accounts=accounts,
-        posts=_names(where, record, "posts"),
+        posts=read_names(where, record, "posts"),
         shared_domains=tuple(
             _shared(where, entry, accounts) for entry in shared if isinstance(entry, dict)
         ),
-        first_seen=_text(where, record, "first_seen"),
+        first_seen=read_text(where, record, "first_seen"),
     )
 
 
@@ -539,7 +544,7 @@ def _shared(where: str, record: JsonObject, accounts: tuple[str, ...]) -> Shared
             f"{where} holds a shared registration with {sorted(record)}, which is not "
             f"the registration vocabulary {sorted(vocabulary)}"
         )
-    named = _names(where, record, "accounts")
+    named = read_names(where, record, "accounts")
     outside = sorted(set(named) - set(accounts))
     if outside:
         raise ValueError(
@@ -547,36 +552,11 @@ def _shared(where: str, record: JsonObject, accounts: tuple[str, ...]) -> Shared
             "candidate it is printed under"
         )
     return SharedDomain(
-        domain=_text(where, record, "domain"),
+        domain=read_text(where, record, "domain"),
         accounts=named,
-        posts=_names(where, record, "posts"),
+        posts=read_names(where, record, "posts"),
     )
 
-
-def _record(where: str, text: str) -> JsonObject:
-    try:
-        record = json.loads(text)
-    except json.JSONDecodeError as refusal:
-        raise ValueError(f"{where} is not JSON: {text!r}") from refusal
-    if not isinstance(record, dict):
-        raise ValueError(f"{where} is not a row: {text!r}")
-    return record
-
-
-def _names(where: str, record: JsonObject, field_name: str) -> tuple[str, ...]:
-    value = record[field_name]
-    if not isinstance(value, list) or not all(isinstance(entry, str) for entry in value):
-        raise ValueError(f"{where} has {field_name}={value!r}, which is not a list of names")
-    if len(set(value)) != len(value):
-        raise ValueError(f"{where} names one thing twice in {field_name}")
-    return tuple(value)
-
-
-def _text(where: str, record: JsonObject, field_name: str) -> str:
-    value = record[field_name]
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{where} has no {field_name}")
-    return value
 
 
 def render_table(grouping: Grouping) -> str:

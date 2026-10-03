@@ -519,9 +519,9 @@ def _parser() -> argparse.ArgumentParser:
             "grouping the system is right to produce and is not a miss against N. "
             "The Nuisance Structure the figure was measured against is read and "
             "printed, because a recovery rate with no nuisance baseline beside it is "
-            "uninterpretable; the rate at which the grouping is wrong is reported "
-            "separately, and this command says where it comes from rather than "
-            "leaving the figure unaccompanied. No person reviewed any of it and no "
+            "uninterpretable; the rate at which the grouping is wrong is not measured "
+            "yet, and this command says so rather than leaving the figure "
+            "unaccompanied. No person reviewed any of it and no "
             "figure over the whole Corpus is published (ADR-0004). Reads no network."
         ),
     )

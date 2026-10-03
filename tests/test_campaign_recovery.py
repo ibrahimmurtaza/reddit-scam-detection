@@ -580,7 +580,106 @@ def test_the_report_states_the_nuisance_structure_it_was_measured_against(
         of_kind = [row for row in manifest if text(row, "kind") == kind.value]
         assert of_kind, f"the manifest holds no {kind.value}"
         assert f"| `{kind.value}` | {len(of_kind)} |" in page
-    assert "reported separately" in page
+    assert "companion figure" in page
+
+
+def test_a_partial_match_beside_a_recovery_is_reported_in_every_view(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The case where the campaign was recovered and something else also happened.
+
+    One candidate holds the whole membership, so the figure is 1 of 1, and a second
+    candidate holds two of the three accounts. The recovery is the outcome, and the
+    second candidate is a real grouping of real accounts that is not part of it — so the
+    console has to name it as well. A console that printed only the outcome would say
+    `partial 0` beside two candidates, which is the one combination of the two views
+    that could hide a grouping being wrong.
+    """
+    corpus = corpus_of(
+        tmp_path,
+        post("syn_p_0001", "syn_alpha_0001"),
+        post("syn_p_0002", "syn_beta_0002"),
+        post("syn_p_0003", "syn_gamma_0003"),
+    )
+    candidates = write_rows(
+        tmp_path / "campaign-candidates.jsonl",
+        [
+            candidate(
+                "cc-01",
+                ("syn_alpha_0001", "syn_beta_0002", "syn_gamma_0003"),
+                ("syn_p_0001", "syn_p_0002", "syn_p_0003"),
+            ),
+            candidate(
+                "cc-02",
+                ("syn_alpha_0001", "syn_beta_0002"),
+                ("syn_p_0001", "syn_p_0002"),
+            ),
+        ],
+    )
+    truth = write_rows(
+        tmp_path / "truth.jsonl",
+        [
+            campaign(
+                "syn-campaign-one",
+                ("syn_alpha_0001", "syn_beta_0002", "syn_gamma_0003"),
+                ("syn_p_0001", "syn_p_0002", "syn_p_0003"),
+            )
+        ],
+    )
+    nuisance_path = write_rows(
+        tmp_path / "nuisance.jsonl",
+        [nuisance("syn-nuisance-single", NuisanceKind.SINGLE_ACCOUNT_DOMAIN)],
+    )
+
+    recovery, report, printed = run(
+        tmp_path / "out",
+        corpus=corpus,
+        candidates=candidates,
+        truth=truth,
+        nuisance=nuisance_path,
+        capsys=capsys,
+    )
+    recovered = rows(recovery)
+    page = report.read_text(encoding="utf-8")
+
+    assert figure(printed) == "1 of 1 Planted Campaigns"
+    assert text(recovered[0], "outcome") == "recovered"
+    partial = next(
+        line for line in printed.splitlines() if line.strip().startswith("partial")
+    )
+    assert partial.split(maxsplit=1)[1] == (
+        "0 Planted Campaigns, 1 of 2 candidates hold only part of one"
+    )
+    # The console names the second candidate and what it failed to hold.
+    assert "cc-02" in printed
+    assert "syn_gamma_0003" in printed
+    assert "cc-02" in page
+
+
+def test_the_console_output_is_ascii_and_wrapped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The console is pasted into issues and diffed between runs, so it has to be one
+    thing on every terminal.
+
+    The claim every table in this project makes about its own output: ASCII only, so a
+    console that cannot encode anything else prints it the same way as one that can, and
+    wrapped at the width a terminal gives you, so nothing is one line of three hundred
+    columns that has to be re-wrapped by hand before it goes in an issue. Asserted on
+    the output rather than on the source, because the claim is about what prints.
+    """
+    recovery, report, printed = run(tmp_path, capsys=capsys)
+
+    assert printed.isascii(), "the console output carries a character a console may not have"
+    # The two lines the command echoes name the paths the caller chose, which it does
+    # not control; everything else is the table's own text.
+    echoed = (str(recovery), str(report))
+    too_wide = [
+        line
+        for line in printed.splitlines()
+        if len(line) > 100 and not any(path in line for path in echoed)
+    ]
+    assert not too_wide, f"{len(too_wide)} lines over 100 columns: {too_wide[:2]}"
 
 
 # --- the boundary between the two steps -------------------------------------------
