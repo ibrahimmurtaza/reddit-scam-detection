@@ -554,10 +554,11 @@ generator writes:
 
 Every recovery figure this project will publish is bounded by that, which is why the
 report prints it rather than leaving it in a ticket. The Other bucket is a row
-beside the ten rather than a remainder below them, against CAFC's own residual
+beside the ten rather than a remainder below them, held against CAFC's own residual
 category at 3.0%: CAFC filed that one for a report its analysts could not describe
-any other way, which is the same position the projection is in when no list matches
-a post.
+any other way, which is the position the projection is in when no list matches a post.
+The two are a share of posts this project wrote and a share of reports Canada filed,
+so they are read against each other rather than equated.
 
 Two limits are stated in the report rather than buried here. **CAFC carries no
 free-text field**, so it constrains which Scam Categories exist and what their

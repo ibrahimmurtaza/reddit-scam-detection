@@ -48,7 +48,7 @@ from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedInfrastructure
 from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
-from reddit_fraud_intelligence.text import matcher, sentences, spans
+from reddit_fraud_intelligence.text import matcher, sentences, spans, wrap
 
 _HEADING = "Policy Score"
 _SUBHEADING = """\
@@ -995,33 +995,13 @@ def _phrases_table() -> str:
         'same sentence, or where a bare "no" stands directly before it'
     ]
     lines.extend(
-        _wrap(f"negators  {', '.join(f'\"{word}\"' for word in sorted(_NEGATORS))}", indent=2)
+        wrap(f"negators  {', '.join(f'\"{word}\"' for word in sorted(_NEGATORS))}", indent=2)
     )
     for signal in _CONTENT_SIGNALS:
         phrases = _PHRASES[signal]
         lines.append(f"  {signal.value}  {_count(len(phrases), 'phrase')}")
-        lines.extend(_wrap(", ".join(f'"{phrase}"' for phrase in phrases)))
+        lines.extend(wrap(", ".join(f'"{phrase}"' for phrase in phrases)))
     return "\n".join(lines)
-
-
-def _wrap(quoted: str, indent: int = 4, width: int = 78) -> list[str]:
-    """One string wrapped to the console's width, with the continuation indented.
-
-    Wrapped rather than printed on one line because the phrase list is longer than a
-    console is wide, and an output that runs off the edge is an output a reviewer has to
-    reflow before they can paste it into an issue.
-    """
-    lines: list[str] = []
-    current = ""
-    for word in quoted.split():
-        if current and len(current) + 1 + len(word) + indent > width:
-            lines.append(f"{' ' * indent}{current}")
-            current = word
-        else:
-            current = f"{current} {word}".strip()
-    if current:
-        lines.append(f"{' ' * indent}{current}")
-    return lines
 
 
 def _footer(scored: Scored) -> str:

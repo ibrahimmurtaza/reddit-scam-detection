@@ -22,8 +22,8 @@ fraud is actually reported.
 ## The two distributions
 
 The Other bucket is a row beside the ten rather than a remainder below them, because its
-size is what neither the generator nor the projection covered and a remainder is read
-as rounding.
+size is a finding about what neither the generator nor the projection covered, and a
+remainder is read as rounding.
 
 | Scam Category | Posts | Corpus | CAFC | Difference |
 | --- | ---: | ---: | ---: | ---: |
@@ -80,16 +80,18 @@ this Corpus was written to hold.
 
 **Other holds 6 of 27 posts, 22.2%, against
 CAFC's own residual category at 3.0%.** CAFC filed that one for a report
-its analysts could not describe any other way, which is the same position this
-projection is in when no list matches a post, so the two figures measure the same kind
-of gap and are worth reading against each other.
+its analysts could not describe any other way, which is the position this projection is
+in when no list matches a post. The two are not the same population — one is a share of
+posts this project wrote, the other a share of reports Canada filed — so they are worth
+reading against each other and not equated: a large bucket here says the generator and
+these lists left something out, and a large bucket there says CAFC's analysts did.
 
 A post lands in Other by carrying no phrase from any of the ten lists, which means the
 lists say nothing about it rather than that it is not fraud. The 6 posts are
-syn_p_0008, syn_p_0009, syn_p_0010, syn_p_0011, syn_p_0015, syn_p_0016, and every one of them is in `data/corpus/composition.jsonl` with
-an empty `evidence` list, which is the file's way of saying a list placed them nowhere.
-The bucket is measured rather than tuned away: a Corpus whose every post is a pitch is a
-Corpus that cannot be measured against anything.
+syn_p_0008, syn_p_0009, syn_p_0010, syn_p_0011, syn_p_0015, syn_p_0016, and every one of them is in `data/corpus/composition.jsonl` with an empty
+`evidence` list, which is the file's way of saying a list placed them nowhere. The bucket
+is measured rather than tuned away: a Corpus whose every post is a pitch is a Corpus that
+cannot be measured against anything.
 
 ## How a post is placed
 
@@ -132,6 +134,8 @@ course", "trading desk", "trading signals", "usdt", "withdrawal fee", "withdrawa
 Content that fits none of the ten. Its size is the finding: the share of real reports it would hold is how much the projection does not represent.
 
 6 of the Corpus's posts, 22.2% against a base rate of 3.0%, a difference of +19.2pp. The posts are listed in `data/corpus/composition.jsonl`, each with the sentences that placed it.
+
+No list places a post here. The bucket is what a post no list matches lands in, so its size is a finding about what the generator did not write, what the projection does not cover, and what these lists cannot place.
 
 ### Bills, Invoicing and Collections
 

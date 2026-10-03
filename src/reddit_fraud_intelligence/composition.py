@@ -50,7 +50,7 @@ from reddit_fraud_intelligence.categories import (
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
 from reddit_fraud_intelligence.projection import Placed, place, read_base_rates, total
-from reddit_fraud_intelligence.text import sentences, spans
+from reddit_fraud_intelligence.text import sentences, spans, wrap
 
 _HEADING = "Corpus composition"
 _SUBHEADING = """\
@@ -253,6 +253,14 @@ _PHRASES: Mapping[str, tuple[str, ...]] = {
 # enough to keep the two bars of a row on one line of an eighty-column console.
 _BAR_WIDTH = 30
 
+# Where the placements are published, as the command writes them by default. Named here
+# because the report points at the file a reader should open beside it, and a report that
+# printed the path of this particular run would produce different bytes for the same
+# Corpus depending only on the directory it was written into. `cli.py` holds the default
+# the command actually uses; this is the name the report gives it, which is the same thing
+# `projection.py` does with the mapping beside `docs/scam-categories.md`.
+PLACEMENTS_PATH = "data/corpus/composition.jsonl"
+
 
 @dataclass(frozen=True, slots=True)
 class Placement:
@@ -383,9 +391,24 @@ class Composition:
         """The widest share anywhere in the table, which fixes the scale of every bar."""
         return max(max(row.corpus.per_mille, row.cafc.per_mille) for row in rows)
 
-    def base_rates(self) -> int:
-        """The reports in the extract, which is the whole every CAFC share is of."""
-        return self.facts.reports
+    def uncovered(self, rows: Sequence[Row]) -> tuple[Row, ...]:
+        """The classes this Corpus holds no post of at all.
+
+        Named from one place so the console and the report cannot count them differently:
+        two views of the same run disagreeing about how many classes are empty is the
+        kind of drift the Other bucket exists to prevent.
+        """
+        return tuple(row for row in rows if row.posts == 0)
+
+
+def dropped_reports(placed: Sequence[Placed]) -> int:
+    """The reports landing in no Scam Category because their category was dropped.
+
+    They are in the denominator of every CAFC share rather than folded into a class that
+    does not describe them, so the report has to name the count beside the figures or the
+    CAFC column reads as a share of the placed reports alone.
+    """
+    return sum(item.reports or 0 for item in placed if item.category.dropped)
 
 
 def compose(corpus_path: Path, base_rates_path: Path) -> Composition:
@@ -607,28 +630,8 @@ def _phrases_table() -> str:
             f"  {scam.name.ljust(width)}  {len(phrases)} "
             f"{'phrase' if len(phrases) == 1 else 'phrases'}"
         )
-        lines.extend(_wrap(", ".join(f'"{phrase}"' for phrase in phrases), indent=width + 4))
+        lines.extend(wrap(", ".join(f'"{phrase}"' for phrase in phrases), indent=width + 4))
     return "\n".join(lines)
-
-
-def _wrap(quoted: str, indent: int, width: int = 78) -> list[str]:
-    """One string wrapped to the console's width, with the continuation indented.
-
-    The same rule `signals.py` wraps its phrase lists by, for the same reason: a list
-    longer than a console is wide has to be reflowed by hand before it can be pasted into
-    an issue, and the indentation is what keeps the reader inside the class it belongs to.
-    """
-    lines: list[str] = []
-    current = ""
-    for word in quoted.split():
-        if current and len(current) + 1 + len(word) + indent > width:
-            lines.append(f"{' ' * indent}{current}")
-            current = word
-        else:
-            current = f"{current} {word}".strip()
-    if current:
-        lines.append(f"{' ' * indent}{current}")
-    return lines
 
 
 def _footer(composition: Composition, rows: Sequence[Row]) -> str:
@@ -641,15 +644,14 @@ def _footer(composition: Composition, rows: Sequence[Row]) -> str:
     """
     facts = composition.facts
     widest = _widest(rows)
-    uncovered = [row for row in rows if row.posts == 0 and row is not widest]
+    uncovered = composition.uncovered(rows)
+    dropped = dropped_reports(composition.placed)
     return f"""\
 The two columns are shares of two different wholes. The Corpus column counts the \
 {facts.posts} posts this project wrote, and the CAFC column counts {facts.reports:,} \
 reports Canada filed, over the same window, out of which the projection places \
-{facts.reports - sum(
-    item.reports or 0 for item in composition.placed if item.category.dropped
-):,} and drops the rest. Neither column is normalised to the other and no figure here \
-is a rate of anything: read the difference.
+{facts.reports - dropped:,} and drops the rest. Neither column is normalised to the \
+other and no figure here is a rate of anything: read the difference.
 
 The widest gap is {widest.name}, at {widest.corpus.percent()} of the Corpus against \
 {widest.cafc.percent()} of real reports, a difference of {widest.difference()}. \
@@ -661,8 +663,8 @@ A placement says what a post is talking about, not that it is a scam. The lists 
 small and blunt, they are printed above so they can be argued with, and a post that is \
 satire about a pitch, or complains about having lost money to one, is placed by that \
 pitch - the same class a genuine post of that pitch lands in. The Other bucket is where \
-a post no list matched lands, and its size is what neither the generator nor the \
-projection covered.
+a post no list matched lands, and its size is what the generator did not write, what the \
+projection does not cover, and what these particular lists cannot place.
 
 CAFC's extract has no free-text field: no column of it can hold a sentence. It \
 constrains which Scam Categories exist and what their priors are, and it cannot \
@@ -683,9 +685,12 @@ def render_report(composition: Composition) -> str:
     gap is named with both figures, the classes the Corpus holds nothing of are named
     with the share of real reports that lands in them, and the Other bucket has a
     section of its own rather than being the last row of a table. Every figure in the
-    prose is computed from the Corpus and the base rates - nothing about which posts
+    prose is computed from the Corpus and the base rates — nothing about which posts
     landed where is written by hand, because the page is generated and a sentence that
-    was true of one Corpus would quietly be untrue of the next.
+    was true of one Corpus would quietly be untrue of the next. The Corpus is named by
+    the path this run read it from, and the placements by the path the command writes by
+    default, so two runs over the same Corpus produce the same bytes whichever directory
+    they write to.
     """
     rows = composition.comparison()
     scale = composition.scale(rows)
@@ -693,11 +698,9 @@ def render_report(composition: Composition) -> str:
     name = max(len(row.name) for row in rows)
     widest = _widest(rows)
     other = next(row for row in rows if row.name == OTHER.name)
-    uncovered = [row for row in rows if row.posts == 0]
+    uncovered = composition.uncovered(rows)
     unseen = sum(row.cafc.count for row in uncovered)
-    dropped = sum(
-        item.reports or 0 for item in composition.placed if item.category.dropped
-    )
+    dropped = dropped_reports(composition.placed)
     in_other = tuple(
         sorted(post.post_id for post in composition.posts if post.scam_category == OTHER.name)
     )
@@ -718,7 +721,7 @@ produces, and re-running the command rewrites it byte for byte.
 ## What this is
 
 Two distributions, one table. The Corpus column is the share of the
-{facts.posts} posts in `data/corpus/corpus.jsonl` that lands in each Scam Category, and
+{facts.posts} posts in `{facts.corpus_path}` that lands in each Scam Category, and
 the CAFC column is the base rate of the same class over the {facts.reports:,} reports in
 CAFC's extract. The two are shares of two different wholes — posts this project wrote
 against reports Canada filed — so neither is normalised to the other and the level of
@@ -733,8 +736,8 @@ fraud is actually reported.
 ## The two distributions
 
 The Other bucket is a row beside the ten rather than a remainder below them, because its
-size is what neither the generator nor the projection covered and a remainder is read
-as rounding.
+size is a finding about what neither the generator nor the projection covered, and a
+remainder is read as rounding.
 
 | Scam Category | Posts | Corpus | CAFC | Difference |
 | --- | ---: | ---: | ---: | ---: |
@@ -771,16 +774,18 @@ this Corpus was written to hold.
 
 **Other holds {other.posts} of {facts.posts} posts, {other.corpus.percent()}, against
 CAFC's own residual category at {other.cafc.percent()}.** CAFC filed that one for a report
-its analysts could not describe any other way, which is the same position this
-projection is in when no list matches a post, so the two figures measure the same kind
-of gap and are worth reading against each other.
+its analysts could not describe any other way, which is the position this projection is
+in when no list matches a post. The two are not the same population — one is a share of
+posts this project wrote, the other a share of reports Canada filed — so they are worth
+reading against each other and not equated: a large bucket here says the generator and
+these lists left something out, and a large bucket there says CAFC's analysts did.
 
 A post lands in Other by carrying no phrase from any of the ten lists, which means the
 lists say nothing about it rather than that it is not fraud. The {other.posts} posts are
-{", ".join(in_other)}, and every one of them is in `data/corpus/composition.jsonl` with
-an empty `evidence` list, which is the file's way of saying a list placed them nowhere.
-The bucket is measured rather than tuned away: a Corpus whose every post is a pitch is a
-Corpus that cannot be measured against anything.
+{", ".join(in_other)}, and every one of them is in `{PLACEMENTS_PATH}` with an empty
+`evidence` list, which is the file's way of saying a list placed them nowhere. The bucket
+is measured rather than tuned away: a Corpus whose every post is a pitch is a Corpus that
+cannot be measured against anything.
 
 ## How a post is placed
 
@@ -788,7 +793,7 @@ A post is placed by reading its own title and body against a published phrase li
 Scam Category, the same way a Content Signal fires (ADR-0015). Nothing outside those
 strings places a post, the lists are tried in the order below and the first to match
 takes the post, and every other class that matched the same post is recorded in
-`data/corpus/composition.jsonl` beside it. The evidence is the sentence the phrase was
+`{PLACEMENTS_PATH}` beside it. The evidence is the sentence the phrase was
 found in, quoted whole, so a reader can find it in the post rather than take the row's
 word for it.
 
@@ -804,7 +809,7 @@ list you cannot see is a figure you cannot check.
 **CAFC's extract has no free-text field.** No column of it can hold a sentence, so it
 constrains which Scam Categories exist and what their priors are, and it cannot validate
 a text classifier — there is nothing in it that says what category a piece of text
-belongs to. Every placement in `data/corpus/composition.jsonl` is therefore unvalidated:
+belongs to. Every placement in `{PLACEMENTS_PATH}` is therefore unvalidated:
 it is checked against a phrase list and against nothing else.
 
 Three further limits, all of them consequences of reading a post literally:
@@ -864,30 +869,32 @@ def _section(row: Row) -> str:
     heading = (
         f"{row.posts} of the Corpus's posts, {row.corpus.percent()} against a base rate of "
         f"{row.cafc.percent()}, a difference of {row.difference()}. The posts are listed in "
-        "`data/corpus/composition.jsonl`, each with the sentences that placed it."
+        f"`{PLACEMENTS_PATH}`, each with the sentences that placed it."
     )
     if row.name == OTHER.name:
         listed = (
             "No list places a post here. The bucket is what a post no list matches lands "
-            "in, which is why its size is a finding about the lists rather than about the "
-            "Corpus alone."
+            "in, so its size is a finding about what the generator did not write, what the "
+            "projection does not cover, and what these lists cannot place."
         )
     else:
         phrases = _PHRASES[row.name]
-        listed = "\n".join(
-            _wrap(", ".join(f'"{phrase}"' for phrase in phrases), indent=0, width=90)
-        )
-        heading = (
-            f"{heading}\n\n{len(phrases)} "
+        listed = (
+            f"{len(phrases)} "
             f"{'phrase' if len(phrases) == 1 else 'phrases'}, tried in this order, and "
             "printed in full because a rule a reader cannot see is a figure they cannot "
-            f"check:\n\n{listed}"
+            "check:\n\n"
+            + "\n".join(
+                wrap(", ".join(f'"{phrase}"' for phrase in phrases), indent=0, width=90)
+            )
         )
     return f"""### {row.name}
 
 {row.scam_category.covers}
 
-{heading}"""
+{heading}
+
+{listed}"""
 
 
 def _percent(count: int, of: int) -> str:
