@@ -7,13 +7,16 @@
 
 # The same argument for the CAFC report, which a test holds to what the cache
 # produces; the registrable-domain report, which a test holds to what the Corpus
-# and the published Public Suffix List produce; and the Scam Category report,
+# and the published Public Suffix List produce; the Scam Category report,
 # which a test holds to what the committed base rates and the projection
-# produce. Scoped to those three files rather than every markdown file, so that
-# adding them does not re-check-out the whole tree.
+# produce; and the composition report, which a test holds to what the Corpus
+# and those same base rates produce. Scoped to those files rather than every
+# markdown file, so that adding them does not re-check-out the whole tree.
 docs/cafc-base-rates.md text eol=lf
 docs/post-domains.md text eol=lf
 docs/scam-categories.md text eol=lf
+docs/contact-points.md text eol=lf
+docs/corpus-composition.md text eol=lf
 
 # The Public Suffix List is published text, and it is committed rather than
 # generated, so that `rg '^co\.uk$' data/public-suffix/` answers what a reviewer

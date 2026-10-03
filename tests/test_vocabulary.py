@@ -4,7 +4,8 @@ Every `_Avoid_` line in `GLOSSARY.md` is a rule, so a repo-wide test checks the
 ones that can be checked mechanically. Scanned: the source, this README, the
 committed Corpus, the resolved links, the generated CAFC report, the generated
 registrable-domain report, the generated Contact Points and their report, the
-generated Scam Category projection, the generated
+generated Scam Category projection, the generated Corpus composition and its
+report, the generated
 Campaign Candidates, and the generated Policy Scores — the project's own prose
 wherever it lands. Not scanned: this
 directory, which is where the phrases live; `data/cafc/base_rates.jsonl`, which holds
@@ -69,6 +70,7 @@ def scanned() -> list[Path]:
         *sorted((REPO_ROOT / "src").rglob("*.py")),
         REPO_ROOT / "data" / "corpus" / "corpus.jsonl",
         REPO_ROOT / "data" / "corpus" / "nuisance.jsonl",
+        REPO_ROOT / "data" / "corpus" / "composition.jsonl",
         REPO_ROOT / "data" / "campaigns" / "campaign-candidates.jsonl",
         REPO_ROOT / "data" / "contacts" / "post-contacts.jsonl",
         REPO_ROOT / "data" / "domains" / "post-domains.jsonl",
@@ -76,6 +78,7 @@ def scanned() -> list[Path]:
         REPO_ROOT / "data" / "signals" / "policy-scores.jsonl",
         REPO_ROOT / "docs" / "cafc-base-rates.md",
         REPO_ROOT / "docs" / "contact-points.md",
+        REPO_ROOT / "docs" / "corpus-composition.md",
         REPO_ROOT / "docs" / "post-domains.md",
         REPO_ROOT / "docs" / "scam-categories.md",
     ]

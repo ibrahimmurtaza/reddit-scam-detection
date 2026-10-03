@@ -20,6 +20,12 @@ from reddit_fraud_intelligence.campaigns import (
     write_campaign_candidates,
 )
 from reddit_fraud_intelligence.categories import OTHER, SCAM_CATEGORIES, TOP_LEVEL_COUNT
+from reddit_fraud_intelligence.composition import (
+    compose,
+    render_report as render_composition_report,
+    render_table as render_composition_table,
+    write_composition,
+)
 from reddit_fraud_intelligence.contacts import (
     contact_points,
     render_report as render_contacts_report,
@@ -80,6 +86,8 @@ DEFAULT_CONTACTS_REPORT_PATH = Path("docs/contact-points.md")
 DEFAULT_CATEGORY_MAPPING_PATH = Path("data/cafc/scam-categories.jsonl")
 DEFAULT_CATEGORY_REPORT_PATH = Path("docs/scam-categories.md")
 DEFAULT_CANDIDATES_PATH = Path("data/campaigns/campaign-candidates.jsonl")
+DEFAULT_COMPOSITION_PATH = Path("data/corpus/composition.jsonl")
+DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
 DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
 
@@ -140,6 +148,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 list_path=Path(str(args.list)),
                 shared_path=Path(str(args.shared_infrastructure)),
                 candidates_path=Path(str(args.candidates)),
+            )
+        case "corpus-composition":
+            return _corpus_composition(
+                corpus_path=Path(str(args.corpus)),
+                base_rates_path=Path(str(args.base_rates)),
+                composition_path=Path(str(args.composition)),
+                report_path=Path(str(args.report)),
             )
         case "policy-score":
             return _policy_score(
@@ -519,6 +534,49 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_SCORES_PATH,
         help=f"where to write the scores (default: {DEFAULT_SCORES_PATH})",
     )
+
+    composition = commands.add_parser(
+        "corpus-composition",
+        help="report the Corpus's Scam Category distribution beside CAFC's base rates",
+        description=(
+            "The comparison ADR-0006 asked for, and the one that turns a generated Corpus "
+            "into evidence rather than a demonstration. A post is placed by reading its own "
+            "title and body against a published phrase list per Scam Category, the same "
+            "way a Content Signal fires, and the share of the Corpus in each class is set "
+            "beside the base rate CAFC publishes for that class. The two columns are shares "
+            "of two different wholes, so the difference is the figure and the output prints "
+            "it for every row. The Other bucket is a row rather than a remainder, because a "
+            "bucket read as rounding says nothing about what the generator did not write. "
+            "CAFC's extract has no free-text field, so it constrains the Scam Categories "
+            "and their priors and cannot validate the reading; the output says so rather "
+            "than leaving the reader to work out why a base rate is being used this way. "
+            "Reads no network."
+        ),
+    )
+    composition.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    composition.add_argument(
+        "--base-rates",
+        type=Path,
+        default=DEFAULT_BASE_RATES_PATH,
+        help=f"the committed base rates to read (default: {DEFAULT_BASE_RATES_PATH})",
+    )
+    composition.add_argument(
+        "--composition",
+        type=Path,
+        default=DEFAULT_COMPOSITION_PATH,
+        help=f"where to write the placements (default: {DEFAULT_COMPOSITION_PATH})",
+    )
+    composition.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_COMPOSITION_REPORT_PATH,
+        help=f"where to write the report (default: {DEFAULT_COMPOSITION_REPORT_PATH})",
+    )
     return parser
 
 
@@ -807,6 +865,43 @@ def _campaign_candidates(
 
     print(render_candidates(grouping))
     print(f"candidates     {candidates_path}")
+    return 0
+
+
+def _corpus_composition(
+    *,
+    corpus_path: Path,
+    base_rates_path: Path,
+    composition_path: Path,
+    report_path: Path,
+) -> int:
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the placements": composition_path,
+            "the report": report_path,
+        }
+    )
+    _require_present(
+        {"the Corpus": corpus_path},
+        "Run `rfi generate-corpus` first; this command reads no published list.",
+    )
+    if not base_rates_path.exists():
+        raise SystemExit(
+            f"the base rates are not there: {base_rates_path}. Run `rfi cafc-report` "
+            "over the cached extract first."
+        )
+
+    try:
+        composition = compose(corpus_path, base_rates_path)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+    write_composition(composition_path, composition.posts)
+    _write_text(report_path, render_composition_report(composition))
+
+    print(render_composition_table(composition))
+    print(f"composition    {composition_path}")
+    print(f"report         {report_path}")
     return 0
 
 
