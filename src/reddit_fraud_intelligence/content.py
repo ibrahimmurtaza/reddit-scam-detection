@@ -10,13 +10,24 @@ able to judge whether the planted content is realistic without running
 anything, and they should be able to see for themselves that two accounts in each
 Planted Campaign link to the same registrable domain while nothing in the
 file says they belong together.
+
+Every post also declares the Contact Points it publishes, in `published`, which the
+generator writes to a labelled set of its own. That is what makes the reading measurable:
+`rfi contact-points` can be held to what the Corpus actually publishes rather than to
+what a test expected of it, and a post that publishes a handle disguised is labelled as
+publishing that handle. It sits here rather than in the file because a label and the
+text it describes are one piece of writing; it reaches no pipeline, because `CorpusItem`
+has no field for it and the Corpus file is a projection that takes items and nothing
+else (ADR-0008).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
+
+from reddit_fraud_intelligence.contacts import ContactKind, PublishedContact, Writing
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +37,54 @@ class SyntheticPost:
     title: str
     body: str
     links: tuple[str, ...]
+    published: tuple[PublishedContact, ...] = field(default_factory=tuple)
+
+
+def telegram(
+    value: str, written_as: str, *, writing: Writing = Writing.PLAIN
+) -> PublishedContact:
+    """A Telegram handle a post publishes, in the spelling it published it in.
+
+    Two named constructors rather than a classmethod each, so a label in the text below
+    reads as what it is — a handle, or an address, published plainly or written out — and
+    a reader can see at a glance that the Corpus publishes Contact Points in three
+    shapes, which is the range the reading is measured over. The three ways of writing
+    are the same enum the labelled set carries, so a fixture and the row it becomes
+    cannot drift apart.
+    """
+    return PublishedContact(
+        kind=ContactKind.TELEGRAM,
+        value=value,
+        written_as=written_as,
+        written=writing,
+    )
+
+
+def address(
+    value: str, written_as: str, *, writing: Writing = Writing.PLAIN
+) -> PublishedContact:
+    """An email address a post publishes, in the spelling it published it in."""
+    return PublishedContact(
+        kind=ContactKind.EMAIL,
+        value=value,
+        written_as=written_as,
+        written=writing,
+    )
+
+
+def picture(
+    value: str, written_as: str, *, kind: ContactKind = ContactKind.TELEGRAM
+) -> PublishedContact:
+    """A Contact Point a post publishes only as a picture of one.
+
+    Nothing in this project reads an image, so this label exists to be counted as a
+    miss: the value is named, the link carrying the picture of it is named, and the
+    report prints the pair so a reader can see which Contact Points this build is
+    structurally blind to rather than inferring it from a count that might be a bug.
+    """
+    return PublishedContact(
+        kind=kind, value=value, written_as=written_as, written=Writing.IMAGE
+    )
 
 
 def link_hosts(links: Iterable[str]) -> tuple[str, ...]:
@@ -115,6 +174,7 @@ _ALPHA = PlantedScript(
                 "is @syn_vantageledger."
             ),
             links=("https://mirror.vantage-ledger.example/month-log",),
+            published=(telegram("syn_vantageledger", "@syn_vantageledger"),),
         ),
         SyntheticPost(
             account="syn_pinecrest_9032",
@@ -133,6 +193,7 @@ _ALPHA = PlantedScript(
                 "pay first."
             ),
             links=("https://vantage-ledger.example/entry",),
+            published=(telegram("syn_vantageledger", "@Syn_VantageLedger"),),
         ),
         SyntheticPost(
             account="syn_quantproof_2841",
@@ -148,6 +209,10 @@ _ALPHA = PlantedScript(
                 "address they answer, or @syn_vantageledger if Telegram is easier."
             ),
             links=("https://vantage-ledger.example/month-log",),
+            published=(
+                address("intake@vantage-ledger.example", "intake@vantage-ledger.example"),
+                telegram("syn_vantageledger", "@syn_vantageledger"),
+            ),
         ),
     ),
 )
@@ -180,6 +245,9 @@ _BETA = PlantedScript(
                 "channel is @syn_northwindhire if you would rather not wait for me."
             ),
             links=("https://signal-harbor.example/roles/annotation",),
+            published=(
+                telegram("syn_northwindhire", "@syn_northwindhire"),
+            ),
         ),
         SyntheticPost(
             account="syn_clearpathwork_3184",
@@ -195,6 +263,9 @@ _BETA = PlantedScript(
                 "place it is."
             ),
             links=("https://signal-harbor.example/intake",),
+            published=(
+                telegram("syn_northwindhire", "@syn_northwindhire"),
+            ),
         ),
         SyntheticPost(
             account="syn_northwindhire_7736",

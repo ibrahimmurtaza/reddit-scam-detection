@@ -1,11 +1,12 @@
 """Deterministic Corpus generation.
 
 A fixed seed fixes the Corpus: two runs with the same seed write byte-identical
-files. The Corpus, the truth file, and the Nuisance Structure manifest are projections
-of one plan, and the Corpus projection carries nothing the others carry — a
-`CorpusItem` has no membership field and no nuisance field, and the writer that
-serialises it takes nothing but items, so there is no field for either to leak
-through. A reader does not have to trust that: they can grep the file (ADR-0008).
+files. The Corpus, the truth file, the labelled set, and the Nuisance Structure
+manifest are projections of one plan, and the Corpus projection carries nothing
+the others carry — a `CorpusItem` has no membership field, no published Contact
+Point, and no nuisance field, and the writer that serialises it takes nothing but
+items, so there is no field for either to leak through. A reader does not have to trust
+that: they can grep the file (ADR-0008).
 The known-shared infrastructure list is written alongside them rather than projected
 from the plan, because it is an input to the grouping step and does not vary with the
 seed.
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import count
 
+from reddit_fraud_intelligence.contacts import PublishedPost
 from reddit_fraud_intelligence.content import (
     PLANTED,
     UNGROUPED,
@@ -52,6 +54,7 @@ class _Plan:
     posts: tuple[CorpusItem, ...]
     campaigns: tuple[PlantedCampaign, ...]
     nuisance: tuple[NuisanceRecord, ...]
+    published: tuple[PublishedPost, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,12 +80,25 @@ def nuisance_records(seed: int) -> list[NuisanceRecord]:
     return list(_plan(seed).nuisance)
 
 
+def published_posts(seed: int) -> list[PublishedPost]:
+    """The labelled set: what every post publishes, and the posts that publish nothing.
+
+    One row per post, built from what the post declared rather than from reading its
+    text back for an `@`, so a label is something somebody wrote down and a disagreement
+    between the two is something the measurement reports rather than something the
+    projection smooths over. A post that publishes nothing is labelled as publishing
+    nothing, which is the row the false-positive rate is counted against.
+    """
+    return list(_plan(seed).published)
+
+
 def _plan(seed: int) -> _Plan:
     window_start = _ANCHOR + timedelta(days=seed % _CORPUS_WINDOW_DAYS)
     post_ids = count(1)
     posts: list[CorpusItem] = []
     campaigns: list[PlantedCampaign] = []
     paraphrases: list[NuisanceRecord] = []
+    published: list[PublishedPost] = []
 
     for script in PLANTED:
         member_posts = []
@@ -97,6 +113,7 @@ def _plan(seed: int) -> _Plan:
                 )
             )
             member_posts.append(member_post_id)
+            published.append(PublishedPost(post_id=member_post_id, published=post.published))
         campaigns.append(
             PlantedCampaign(
                 campaign_id=script.campaign_id,
@@ -116,6 +133,7 @@ def _plan(seed: int) -> _Plan:
                 _scattered_at(seed, post_id, window_start, _UNGROUPED_SPREAD_MINUTES),
             )
         )
+        published.append(PublishedPost(post_id=post_id, published=post.published))
 
     structures: list[_Planted] = []
     for structure in _structures(seed):
@@ -127,11 +145,13 @@ def _plan(seed: int) -> _Plan:
                 _item(post, post_id, _scattered_at(seed, post_id, window_start, spread))
             )
             planted_posts.append((post_id, post))
+            published.append(PublishedPost(post_id=post_id, published=post.published))
         structures.append(_Planted(structure, tuple(planted_posts)))
 
     return _Plan(
         posts=tuple(posts),
         campaigns=tuple(campaigns),
+        published=tuple(published),
         nuisance=(
             *paraphrases,
             *(

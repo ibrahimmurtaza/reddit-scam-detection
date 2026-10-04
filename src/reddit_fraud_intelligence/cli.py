@@ -31,6 +31,7 @@ from reddit_fraud_intelligence.contacts import (
     render_report as render_contacts_report,
     render_table as render_contacts_table,
     write_post_contacts,
+    write_published,
 )
 from reddit_fraud_intelligence.corpus import read_corpus, write_corpus
 from reddit_fraud_intelligence.domains import (
@@ -50,6 +51,7 @@ from reddit_fraud_intelligence.generator import (
     corpus_items,
     nuisance_records,
     planted_campaigns,
+    published_posts,
 )
 from reddit_fraud_intelligence.infrastructure import SHARED_HOSTS, write_shared_infrastructure
 from reddit_fraud_intelligence.nuisance import NuisanceKind, write_nuisance
@@ -78,6 +80,7 @@ from reddit_fraud_intelligence.truth import write_truth
 DEFAULT_SEED = 20260930
 DEFAULT_CORPUS_PATH = Path("data/corpus/corpus.jsonl")
 DEFAULT_TRUTH_PATH = Path("data/corpus/truth.jsonl")
+DEFAULT_LABELLED_PATH = Path("data/corpus/labelled-contacts.jsonl")
 DEFAULT_NUISANCE_PATH = Path("data/corpus/nuisance.jsonl")
 DEFAULT_SHARED_INFRASTRUCTURE_PATH = Path("data/infrastructure/shared-hosts.jsonl")
 DEFAULT_EXTRACT_PATH = Path("data/cafc/cafc-extract.csv.gz")
@@ -111,6 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 seed=int(args.seed),
                 corpus_path=Path(str(args.corpus)),
                 truth_path=Path(str(args.truth)),
+                labelled_path=_labelled_beside(args.labelled, args.corpus),
                 nuisance_path=Path(str(args.nuisance)),
                 shared_path=Path(str(args.shared_infrastructure)),
             )
@@ -142,6 +146,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         case "contact-points":
             return _contact_points(
                 corpus_path=Path(str(args.corpus)),
+                labelled_path=Path(str(args.labelled)),
                 contacts_path=Path(str(args.contacts)),
                 report_path=Path(str(args.report)),
             )
@@ -201,12 +206,13 @@ def _parser() -> argparse.ArgumentParser:
         help="write a synthetic Corpus, its Planted Campaign membership, and its "
         "Nuisance Structure",
         description=(
-            "Write four files: a Corpus holding content, accounts, and links; a truth "
-            "file holding Planted Campaign membership; the Nuisance Structure manifest, "
-            "naming what else was planted or recorded and what each piece is for; and the "
-            "known-shared infrastructure list. Each of the last three is at a path of its "
-            "own, so the boundary between what the pipeline sees and what is measured "
-            "stays visible. Same seed, same bytes."
+            "Write five files: a Corpus holding content, accounts, and links; a truth "
+            "file holding Planted Campaign membership; the labelled set, one row per post "
+            "naming every Contact Point that post publishes; the Nuisance Structure "
+            "manifest, naming what else was planted or recorded and what each piece is "
+            "for; and the known-shared infrastructure list. Each of the last four is at a "
+            "path of its own, so the boundary between what the pipeline sees and what is "
+            "measured stays visible. Same seed, same bytes."
         ),
     )
     generate.add_argument(
@@ -226,6 +232,15 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_TRUTH_PATH,
         help=f"where to write Planted Campaign membership (default: {DEFAULT_TRUTH_PATH})",
+    )
+    generate.add_argument(
+        "--labelled",
+        type=Path,
+        default=None,
+        help=(
+            "where to write the labelled set: what every post publishes as a Contact "
+            "Point (default: labelled-contacts.jsonl beside the Corpus)"
+        ),
     )
     generate.add_argument(
         "--nuisance",
@@ -387,16 +402,20 @@ def _parser() -> argparse.ArgumentParser:
             "The off-platform half of ADR-0005: two accounts may reach one Campaign "
             "Candidate on a Contact Point as well as on a Registrable Domain, and this "
             "is the step that finds them. Two kinds are read — an email address and a "
-            "Telegram handle — from a post's own title, its own body, and its links, and "
-            "they are read literally. Nothing is repaired and nothing is dropped: a "
-            "candidate that names no Contact Point is reported with which of seven "
-            "faults applied, because a false positive here is not a wrong severity "
-            "figure as a Signal can be, it is a shared identifier between two accounts "
-            "that share nothing. Sharing is counted over accounts rather than over "
-            "posts, every spelling of every value is printed beside it, and nothing is "
-            "grouped on any of it yet — the shared list is the evidence ticket #20 "
-            "needs, and an unmeasured grouping edge would put an unmeasured input into "
-            "the recovery figure. Reads no network."
+            "Telegram handle — from a post's own title, its own body, and its links, "
+            "with the obfuscation tolerance a post actually uses: an identifier written "
+            "out character by character, and a digit standing in for a letter, are read "
+            "as the identifier underneath them. The reading is then measured against "
+            "the labelled set the generator wrote beside the Corpus, and the recall and "
+            "the false-positive rate are printed beside the figures they bound, with "
+            "every miss named. Nothing is dropped: a candidate that names no Contact "
+            "Point is reported with which of nine faults applied, because a false "
+            "positive here is not a wrong severity figure as a Signal can be, it is a "
+            "shared identifier between two accounts that share nothing. Sharing is "
+            "counted over accounts rather than over posts, every spelling of every value "
+            "is printed beside it, and nothing is grouped on any of it yet — the shared "
+            "list is the evidence ticket #20 needs, and an unmeasured grouping edge "
+            "would put an unmeasured input into the recovery figure. Reads no network."
         ),
     )
     contacts.add_argument(
@@ -404,6 +423,15 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_CORPUS_PATH,
         help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    contacts.add_argument(
+        "--labelled",
+        type=Path,
+        default=DEFAULT_LABELLED_PATH,
+        help=(
+            "the labelled set to measure the reading against: one row per post naming "
+            f"what it publishes (default: {DEFAULT_LABELLED_PATH})"
+        ),
     )
     contacts.add_argument(
         "--contacts",
@@ -666,11 +694,26 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _labelled_beside(labelled: Path | str | None, corpus: Path | str) -> Path:
+    """Where the labelled set goes: where it was asked for, or beside the Corpus.
+
+    Beside the Corpus rather than at a path of its own, because a run that writes a
+    Corpus somewhere else on purpose — every test, and any reader who does not want the
+    committed one — would otherwise reach over and overwrite the committed labelled set
+    beside it. The set is a projection of the Corpus (ADR-0008), so it belongs in the
+    Corpus's own directory rather than at a fixed one of the project's.
+    """
+    if labelled is not None:
+        return Path(str(labelled))
+    return Path(str(corpus)).parent / DEFAULT_LABELLED_PATH.name
+
+
 def _generate_corpus(
     *,
     seed: int,
     corpus_path: Path,
     truth_path: Path,
+    labelled_path: Path,
     nuisance_path: Path,
     shared_path: Path,
 ) -> int:
@@ -678,6 +721,7 @@ def _generate_corpus(
         {
             "the Corpus": corpus_path,
             "the membership": truth_path,
+            "the labelled set": labelled_path,
             "the Nuisance Structure": nuisance_path,
             "the known-shared infrastructure list": shared_path,
         }
@@ -686,8 +730,10 @@ def _generate_corpus(
     items = corpus_items(seed)
     campaigns = planted_campaigns(seed)
     nuisance = nuisance_records(seed)
+    published = published_posts(seed)
     write_corpus(corpus_path, items)
     write_truth(truth_path, campaigns)
+    write_published(labelled_path, published)
     write_nuisance(nuisance_path, nuisance)
     write_shared_infrastructure(shared_path, SHARED_HOSTS)
 
@@ -703,6 +749,12 @@ def _generate_corpus(
     print(
         f"truth          {truth_path} "
         f"({len(campaigns)} Planted Campaigns, {sum(len(c.posts) for c in campaigns)} posts)"
+    )
+    print(
+        f"labelled       {labelled_path} "
+        f"({sum(len(post.published) for post in published)} Contact Points published by "
+        f"{len(published)} posts, {sum(1 for post in published if not post.published)} of "
+        "them publishing none)"
     )
     print(f"nuisance       {nuisance_path} ({len(nuisance)} records)")
     print(f"Hard Negatives {len(hard_negatives)}: {_character_summary(characters)}")
@@ -855,21 +907,25 @@ def _post_domains(
 
 
 def _contact_points(
-    *, corpus_path: Path, contacts_path: Path, report_path: Path
+    *, corpus_path: Path, labelled_path: Path, contacts_path: Path, report_path: Path
 ) -> int:
     _refuse_shared_paths(
         {
             "the Corpus": corpus_path,
             "the report": report_path,
+            "the labelled set": labelled_path,
             "the Contact Points": contacts_path,
         }
     )
     _require_present(
-        {"the Corpus": corpus_path},
+        {"the Corpus": corpus_path, "the labelled set": labelled_path},
         "Run `rfi generate-corpus` first; this command reads no published list.",
     )
 
-    found = contact_points(corpus_path)
+    try:
+        found = contact_points(corpus_path, labelled_path)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
     write_post_contacts(contacts_path, found.rows)
     _write_text(report_path, render_contacts_report(found))
 

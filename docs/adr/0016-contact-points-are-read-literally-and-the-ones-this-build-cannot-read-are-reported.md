@@ -27,3 +27,9 @@ The Corpus's own copy of the interesting case is a share that crosses the bounda
 Two limits are stated at the point of use. A handle is read as a Telegram handle whatever service it belongs to, because every service writes one as `@name` and this build cannot tell them apart. And the two kinds have different namespaces, which is why the Synthetic Entity figure is two figures rather than one.
 
 The next thing this extraction can be asked is how often it misses, which is ticket #15, and until that lands no figure here is a recall estimate for fraud or for Contact Points generally.
+
+## Amendment
+
+ADR-0019 amends the headline of this record, and only the headline: a Contact Point is no longer read strictly literally. Inserted separators, spacing, and character substitution in a **username** are now undone, and the eight faults become nine with `prose`. Everything else here stands as written — where the `@` decides the kind, that a host is case-folded and a local part is not, that the host is never repaired and never folded for substitution, that the trailing full stop is trimmed, and that nothing groups on a Contact Point in this command.
+
+The narrow reading was the right decision for the ticket this record covers, and it was the wrong one to leave in place once the labelled set the record says was missing existed. What the amendment costs is stated in the record that makes it: a username fold can merge two usernames that both exist, and spelling out an identifier beside an `@` invents one Contact Point out of an English word. Both are measured and printed rather than argued here, which is what the "am I wrong in the direction of losing a share, and does the reader see it" test above asks for.

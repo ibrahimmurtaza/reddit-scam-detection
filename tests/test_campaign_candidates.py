@@ -744,13 +744,13 @@ def test_adding_a_host_to_the_published_list_changes_the_grouping_and_nothing_el
 
     alpha = ("syn_harborlight_5517", "syn_pinecrest_9032", "syn_quantproof_2841")
     assert alpha in by_accounts(kept_path)
-    assert "3 of 15 registrations withheld, removing 2 of 5 components" in kept_printed
+    assert "3 of 16 registrations withheld, removing 2 of 5 components" in kept_printed
 
     assert alpha not in by_accounts(withheld_path)
-    assert "4 of 15 registrations withheld, removing 3 of 5 components" in withheld_printed
+    assert "4 of 16 registrations withheld, removing 3 of 5 components" in withheld_printed
 
     assert len(rows(empty_path)) == 5
-    assert "0 of 15 registrations withheld, removing 0 of 5 components" in empty_printed
+    assert "0 of 16 registrations withheld, removing 0 of 5 components" in empty_printed
     assert "hopcut.example" in domains(empty_path)
 
 
@@ -767,7 +767,7 @@ def test_the_output_reports_what_the_filter_removed(
     """
     _, printed = run(tmp_path, capsys=capsys)
 
-    assert "filtered      3 of 15 registrations withheld, removing 2 of 5 components" in printed
+    assert "filtered      3 of 16 registrations withheld, removing 2 of 5 components" in printed
 
     withheld = printed.split("withheld  ")[1].split("\n\n")[0]
     heading, *lines = withheld.splitlines()

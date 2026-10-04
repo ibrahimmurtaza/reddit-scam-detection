@@ -70,6 +70,7 @@ def scanned() -> list[Path]:
         REPO_ROOT / "README.md",
         *sorted((REPO_ROOT / "src").rglob("*.py")),
         REPO_ROOT / "data" / "corpus" / "corpus.jsonl",
+        REPO_ROOT / "data" / "corpus" / "labelled-contacts.jsonl",
         REPO_ROOT / "data" / "corpus" / "nuisance.jsonl",
         REPO_ROOT / "data" / "corpus" / "composition.jsonl",
         REPO_ROOT / "data" / "campaigns" / "campaign-candidates.jsonl",

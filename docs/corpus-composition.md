@@ -7,7 +7,7 @@ produces, and re-running the command rewrites it byte for byte.
 ## What this is
 
 Two distributions, one table. The Corpus column is the share of the
-27 posts in `data/corpus/corpus.jsonl` that lands in each Scam Category, and
+34 posts in `data/corpus/corpus.jsonl` that lands in each Scam Category, and
 the CAFC column is the base rate of the same class over the 350,361 reports in
 CAFC's extract. The two are shares of two different wholes — posts this project wrote
 against reports Canada filed — so neither is normalised to the other and the level of
@@ -27,9 +27,9 @@ remainder is read as rounding.
 
 | Scam Category | Posts | Corpus | CAFC | Difference |
 | --- | ---: | ---: | ---: | ---: |
-| Work and Payroll                  |    12 |    44.4% |     4.1% |   +40.3pp |
-| Investment and Money Offers       |     9 |    33.3% |     7.5% |   +25.8pp |
-| Other                             |     6 |    22.2% |     3.0% |   +19.2pp |
+| Investment and Money Offers       |    13 |    38.2% |     7.5% |   +30.7pp |
+| Work and Payroll                  |    12 |    35.3% |     4.1% |   +31.2pp |
+| Other                             |     9 |    26.5% |     3.0% |   +23.5pp |
 | Bills, Invoicing and Collections  |     0 |     0.0% |     1.1% |    -1.1pp |
 | Extortion                         |     0 |     0.0% |     9.4% |    -9.4pp |
 | Identity and Account Takeover     |     0 |     0.0% |    31.0% |   -31.0pp |
@@ -45,23 +45,23 @@ One scale for every bar in the page, so the two bars in a row are comparable wit
 other and a bar in one row is comparable with a bar in another:
 
 ```
-Work and Payroll                   ##############################   44.4%  ###                               4.1%
-Investment and Money Offers        #######################          33.3%  #####                             7.5%
-Other                              ###############                  22.2%  ##                                3.0%
+Investment and Money Offers        ##############################   38.2%  ######                            7.5%
+Work and Payroll                   ############################     35.3%  ###                               4.1%
+Other                              #####################            26.5%  ##                                3.0%
 Bills, Invoicing and Collections                                     0.0%  #                                 1.1%
-Extortion                                                            0.0%  ######                            9.4%
-Identity and Account Takeover                                        0.0%  #####################            31.0%
-Impersonating an Institution                                         0.0%  ########                         12.0%
-Merchandise and Goods                                                0.0%  ########                         12.0%
-Phishing                                                             0.0%  #######                          10.5%
+Extortion                                                            0.0%  #######                           9.4%
+Identity and Account Takeover                                        0.0%  ########################         31.0%
+Impersonating an Institution                                         0.0%  #########                        12.0%
+Merchandise and Goods                                                0.0%  #########                        12.0%
+Phishing                                                             0.0%  ########                         10.5%
 Prizes, Appeals and Psychics                                         0.0%  #                                 1.6%
-Relationships and Second Contacts                                    0.0%  ###                               4.8%
+Relationships and Second Contacts                                    0.0%  ####                              4.8%
 ```
 
 ## The widest gap
 
-**Work and Payroll holds 12 of 27 posts, 44.4%,
-against 4.1% of real reports — a difference of +40.3pp.**
+**Work and Payroll holds 12 of 34 posts, 35.3%,
+against 4.1% of real reports — a difference of +31.2pp.**
 A Corpus that is heavy in a class the world is not heavy in tells you about the Corpus
 and nothing about fraud. The direction matters as much as the size: a class the Corpus
 holds more of than the world sees is the generator's habit, and a class it holds less of
@@ -78,7 +78,7 @@ this Corpus was written to hold.
 
 ## The Other bucket
 
-**Other holds 6 of 27 posts, 22.2%, against
+**Other holds 9 of 34 posts, 26.5%, against
 CAFC's own residual category at 3.0%.** CAFC filed that one for a report
 its analysts could not describe any other way, which is the position this projection is
 in when no list matches a post. The two are not the same population — one is a share of
@@ -87,8 +87,8 @@ reading against each other and not equated: a large bucket here says the generat
 these lists left something out, and a large bucket there says CAFC's analysts did.
 
 A post lands in Other by carrying no phrase from any of the ten lists, which means the
-lists say nothing about it rather than that it is not fraud. The 6 posts are
-syn_p_0008, syn_p_0009, syn_p_0010, syn_p_0011, syn_p_0015, syn_p_0016, and every one of them is in `data/corpus/composition.jsonl` with an empty
+lists say nothing about it rather than that it is not fraud. The 9 posts are
+syn_p_0008, syn_p_0009, syn_p_0010, syn_p_0011, syn_p_0015, syn_p_0016, syn_p_0029, syn_p_0031, syn_p_0032, and every one of them is in `data/corpus/composition.jsonl` with an empty
 `evidence` list, which is the file's way of saying a list placed them nowhere. The bucket
 is measured rather than tuned away: a Corpus whose every post is a pitch is a Corpus that
 cannot be measured against anything.
@@ -103,24 +103,11 @@ takes the post, and every other class that matched the same post is recorded in
 found in, quoted whole, so a reader can find it in the post rather than take the row's
 word for it.
 
-### Work and Payroll
-
-A job that does not exist, and the cheque that arrives with it.
-
-12 of the Corpus's posts, 44.4% against a base rate of 4.1%, a difference of +40.3pp. The posts are listed in `data/corpus/composition.jsonl`, each with the sentences that placed it.
-
-23 phrases, tried in this order, and printed in full because a rule a reader cannot see is a figure they cannot check:
-
-"an hour", "apply now", "equipment is provided", "equipment provided", "full-time",
-"hiring", "job opening", "kit provided", "no experience", "paid on the friday", "paid
-weekly", "part-time", "per day", "per hour", "payout", "remote work", "role", "roles",
-"shift", "shifts", "they train you", "training provided", "work from home"
-
 ### Investment and Money Offers
 
 Money against a promised return, an official-looking fund, or a sum waiting in another country.
 
-9 of the Corpus's posts, 33.3% against a base rate of 7.5%, a difference of +25.8pp. The posts are listed in `data/corpus/composition.jsonl`, each with the sentences that placed it.
+13 of the Corpus's posts, 38.2% against a base rate of 7.5%, a difference of +30.7pp. The posts are listed in `data/corpus/composition.jsonl`, each with the sentences that placed it.
 
 20 phrases, tried in this order, and printed in full because a rule a reader cannot see is a figure they cannot check:
 
@@ -129,11 +116,24 @@ Money against a promised return, an official-looking fund, or a sum waiting in a
 signals", "signal desk", "signal group", "signals desk", "starting capital", "trading
 course", "trading desk", "trading signals", "usdt", "withdrawal fee", "withdrawal rules"
 
+### Work and Payroll
+
+A job that does not exist, and the cheque that arrives with it.
+
+12 of the Corpus's posts, 35.3% against a base rate of 4.1%, a difference of +31.2pp. The posts are listed in `data/corpus/composition.jsonl`, each with the sentences that placed it.
+
+23 phrases, tried in this order, and printed in full because a rule a reader cannot see is a figure they cannot check:
+
+"an hour", "apply now", "equipment is provided", "equipment provided", "full-time",
+"hiring", "job opening", "kit provided", "no experience", "paid on the friday", "paid
+weekly", "part-time", "per day", "per hour", "payout", "remote work", "role", "roles",
+"shift", "shifts", "they train you", "training provided", "work from home"
+
 ### Other
 
 Content that fits none of the ten. Its size is the finding: the share of real reports it would hold is how much the projection does not represent.
 
-6 of the Corpus's posts, 22.2% against a base rate of 3.0%, a difference of +19.2pp. The posts are listed in `data/corpus/composition.jsonl`, each with the sentences that placed it.
+9 of the Corpus's posts, 26.5% against a base rate of 3.0%, a difference of +23.5pp. The posts are listed in `data/corpus/composition.jsonl`, each with the sentences that placed it.
 
 No list places a post here. The bucket is what a post no list matches lands in, so its size is a finding about what the generator did not write, what the projection does not cover, and what these lists cannot place.
 
@@ -268,7 +268,7 @@ Three further limits, all of them consequences of reading a post literally:
 
 ## Where the figures come from
 
-- Corpus: `data/corpus/corpus.jsonl`, 27 posts by 25 accounts, SHA-256 `75cdc153bf3935715ab1fbbd74f4447e9b85278e6cf7658f6e17b911d8a0b70b`.
+- Corpus: `data/corpus/corpus.jsonl`, 34 posts by 28 accounts, SHA-256 `3dbda898eb9a262ffdc9fa817c8bbadfd394315e45ca8211218da6615c20703f`.
 - Base rates: `data/cafc/base_rates.jsonl`, 39 thematic categories over 350,361 reports, computed from the cached extract (ADR-0010).
 - The projection both columns are read through: `docs/scam-categories.md`, generated by `rfi scam-categories` from those figures. 10,415 reports (3.0%) land in no Scam Category because their category was dropped, and they are in the denominator of the CAFC column.
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable, Iterator, Mapping
+from enum import StrEnum
 from pathlib import Path
 
 JsonObject = Mapping[str, object]
@@ -92,6 +93,28 @@ def read_text(where: str, record: JsonObject, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{where} has no {field}")
     return value
+
+
+def read_vocabulary[Name: StrEnum](
+    where: str, field: str, value: object, vocabulary: type[Name]
+) -> Name:
+    """One value of a closed vocabulary, refused by name rather than by a `ValueError`.
+
+    A kind a build does not read, or a way of writing a measurement it does not know, is
+    a row the figure beside it cannot count, so the refusal names every name that would
+    have worked. That is the difference between a file somebody can fix and a file
+    somebody has to guess about, and it is why the vocabulary is a parameter rather than
+    written here: the members are each file's own, the shape of the check is this one's.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"{where} has {field}={value!r}, which is not a name")
+    try:
+        return vocabulary(value)
+    except ValueError as unknown:
+        names = ", ".join(member.value for member in vocabulary)
+        raise ValueError(
+            f"{where} has {field}={value!r}, and the names are {names}"
+        ) from unknown
 
 
 def refuse_repeated(where: str, values: Iterable[str], consequence: str) -> None:

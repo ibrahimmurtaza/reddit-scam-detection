@@ -8,14 +8,14 @@ produce, and re-running the command rewrites it byte for byte.
 
 | | |
 |---|---|
-| Posts | 27 |
-| Accounts | 25 |
-| Links | 30 |
-| Resolved to a registrable domain | 30 |
+| Posts | 34 |
+| Accounts | 28 |
+| Links | 31 |
+| Resolved to a registrable domain | 31 |
 | Unresolvable | 0 |
-| Distinct registrable domains | 15 |
+| Distinct registrable domains | 16 |
 | Corpus | `data/corpus/corpus.jsonl` |
-| SHA-256 of the Corpus | `75cdc153bf3935715ab1fbbd74f4447e9b85278e6cf7658f6e17b911d8a0b70b` |
+| SHA-256 of the Corpus | `3dbda898eb9a262ffdc9fa817c8bbadfd394315e45ca8211218da6615c20703f` |
 | Public Suffix List | `data/public-suffix/public_suffix_list.dat` (334,832 bytes) |
 | SHA-256 of the list | `73c95828f5f62a3fce06d3fa9b2efd3f0a45a8c8dc2a65411545fab898a576f7` |
 | SHA-256 of the rules, whatever the formatting | `c0ce4c5a0bdf05ec6705085823ba26e8f81668d917e4929f7f29fe127a0fb3c7` |
@@ -67,6 +67,7 @@ of links, not a grouping: deciding which accounts belong together is the next st
 | --- | ---: | ---: |
 | `anvil-labels.example` | 1 | 1 |
 | `biopage.example` | 4 | 1 |
+| `copperlantern.example` | 1 | 1 |
 | `hopcut.example` | 4 | 1 |
 | `novemberquill.example` | 1 | 1 |
 | `pastevault.example` | 3 | 1 |
@@ -215,6 +216,18 @@ Registrations: `biopage.example`
 | --- | --- | --- |
 | `https://biopage.example/teasdale` | `biopage.example` | **`biopage.example`** |
 
+### `syn_p_0029` · `syn_wintermarch_4417`
+
+No links. Nothing to resolve, and nothing for a grouping to join it by.
+
+### `syn_p_0031` · `syn_halberdmoor_8823`
+
+Registrations: `copperlantern.example`
+
+| Link | Host | Registrable domain |
+| --- | --- | --- |
+| `https://copperlantern.example/intake-screen` | `copperlantern.example` | **`copperlantern.example`** |
+
 ### `syn_p_0011` · `syn_marrowgate_6205`
 
 Registrations: `single-run.example`
@@ -260,6 +273,18 @@ Registrations: `pastevault.example`
 
 No links. Nothing to resolve, and nothing for a grouping to join it by.
 
+### `syn_p_0028` · `syn_halberdmoor_8823`
+
+No links. Nothing to resolve, and nothing for a grouping to join it by.
+
+### `syn_p_0034` · `syn_mossgavel_2218`
+
+No links. Nothing to resolve, and nothing for a grouping to join it by.
+
+### `syn_p_0030` · `syn_thrushmoot_5524`
+
+No links. Nothing to resolve, and nothing for a grouping to join it by.
+
 ### `syn_p_0023` · `syn_wrenfield_3308`
 
 Registrations: `hopcut.example`, `pastevault.example`
@@ -285,6 +310,10 @@ Registrations: `biopage.example`
 | --- | --- | --- |
 | `https://biopage.example/pennyfarthing` | `biopage.example` | **`biopage.example`** |
 
+### `syn_p_0033` · `syn_thrushmoot_5524`
+
+No links. Nothing to resolve, and nothing for a grouping to join it by.
+
 ### `syn_p_0024` · `syn_marlowe_9960`
 
 Registrations: `pastevault.example`
@@ -293,7 +322,11 @@ Registrations: `pastevault.example`
 | --- | --- | --- |
 | `https://pastevault.example/broker-check` | `pastevault.example` | **`pastevault.example`** |
 
-### `syn_p_0027` · `syn_mossgavel_2218`
+### `syn_p_0027` · `syn_wintermarch_4417`
+
+No links. Nothing to resolve, and nothing for a grouping to join it by.
+
+### `syn_p_0032` · `syn_thrushmoot_5524`
 
 No links. Nothing to resolve, and nothing for a grouping to join it by.
 
