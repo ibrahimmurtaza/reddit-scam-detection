@@ -171,8 +171,17 @@ def entries(printed: str) -> list[str]:
     ]
 
 
-def opening(printed: str) -> list[str]:
-    """The paragraph under the heading, which is where the depth is stated."""
+def opening(printed: str) -> str:
+    """The paragraph under the heading, which is where the depth is stated.
+
+    Joined back into one string rather than returned line by line, because the depth
+    sentence is wrapped to the console's width and the width depends on how long the path
+    the caller chose is. `text.wrap` breaks only at spaces, so the sentence is the same
+    sentence either way, and a claim about what it says must not depend on where a path
+    of this machine's length happens to fall. That is not a hypothetical: the assertion
+    held over a 110-character temporary path and failed over a 79-character one, where
+    "3 of them sit below the cut" landed either side of a line break.
+    """
     lines = printed.splitlines()
     start = next(
         number for number, line in enumerate(lines) if line.startswith("Review depth")
@@ -182,7 +191,7 @@ def opening(printed: str) -> list[str]:
         if not line.strip() or line.startswith("  "):
             break
         paragraph.append(line)
-    return paragraph
+    return " ".join(paragraph)
 
 
 def depth_figure(printed: str) -> str:
@@ -462,9 +471,7 @@ def test_the_depth_truncates_the_queue_and_the_header_says_where_it_was_cut(
 
     assert len(index(printed)) == 2
     assert "2 of the 5" in depth_figure(printed), depth_figure(printed)
-    assert any(
-        "3 of them sit below the cut" in line for line in opening(printed)
-    ), opening(printed)
+    assert "3 of them sit below the cut" in opening(printed), opening(printed)
 
 
 def test_a_depth_deeper_than_the_file_is_the_whole_file(
@@ -487,9 +494,7 @@ def test_a_depth_deeper_than_the_file_is_the_whole_file(
 
     assert ranked(printed) == ["syn_p_0001", "syn_p_0002"]
     assert "50 of the 2" in depth_figure(printed), depth_figure(printed)
-    assert any(
-        "nothing was cut" in line for line in opening(printed)
-    ), opening(printed)
+    assert "nothing was cut" in opening(printed), opening(printed)
 
 
 def test_the_default_depth_is_used_when_the_caller_states_none(
@@ -1071,9 +1076,9 @@ def test_the_queue_reports_no_figure_about_itself(capsys: pytest.CaptureFixture[
     """
     printed = run(COMMITTED_SCORES, COMMITTED_CANDIDATES, capsys)
 
-    prose = opening(printed) + closing(printed)
+    prose = "\n".join([opening(printed), *closing(printed)])
     for word in ("precision", "accuracy", "recall", "recovered"):
-        assert word not in "\n".join(prose).lower(), f"the queue prints {word!r}"
+        assert word not in prose.lower(), f"the queue prints {word!r}"
 
 
 def test_a_queue_of_no_posts_says_so_rather_than_printing_an_empty_table(
