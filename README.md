@@ -453,14 +453,14 @@ uv run rfi policy-score   # reads the Corpus and the three published lists, writ
 | `data/signals/weights.jsonl` | Every Signal, its weight, and the one-line reason it is that number. Read as data; the scoring rules hold no weight of their own. |
 | `data/signals/policy-scores.jsonl` | One line per post: the score, the points earned, the published total, and each Signal with its weight and the evidence it fired on. |
 
-Five Signals reach the score. Two are read from links and three from the post's own text.
-Nothing in this path needs anything about an account, and that is the whole of the
-difference between a Signal and a thing that is not one: no account's age, karma, posting
-rate, or activity change is read, and the Corpus file holds no such field to read — a
-Corpus row carrying one is refused rather than ignored, which is what makes the constraint
-structural. `tests/test_policy_score.py` checks it two ways: renaming every account in the
-Corpus leaves every score identical, and the run is watched to open four published files
-and never the truth file.
+Six Signals reach the score. Two are read from links, three from the post's own text, and
+one reads both at once. Nothing in this path needs anything about an account, and that is
+the whole of the difference between a Signal and a thing that is not one: no account's
+age, karma, posting rate, or activity change is read, and the Corpus file holds no such
+field to read — a Corpus row carrying one is refused rather than ignored, which is what
+makes the constraint structural. `tests/test_policy_score.py` checks it two ways: renaming
+every account in the Corpus leaves every score identical, and the run is watched to open
+four published files and never the truth file.
 
 The two Link Signals are `domain_frequency`, which fires when a post links a
 Registrable Domain two or more accounts in the Corpus reach and prints those two figures
@@ -477,6 +477,46 @@ money asked for before any work is done, and `urgency_language` is a deadline or
 that waiting costs the reader the place. The whole of every phrase list is printed with
 the weights, because a reviewer holding the post can only check a match if they can see
 what the rule was looking for.
+
+The sixth, `category_conflict`, is the only one that reasons across two entity types, and
+it is the Signal this project has no other way to produce. A post classified as a job scam
+that links a registration the Corpus otherwise uses for investment pitches is evidence in
+its own right: neither the post nor the registration says anything on its own. It fires
+where the post is placed in one of the ten Scam Categories, the registration is associated
+with a different one, and the association is a **strict majority of the postings reaching
+that registration** — out of the two at least that have to be placed before any of them
+counts. Both halves are printed with the Signal (`this post is Work and Payroll, and 2 of
+3 placed posts reaching it are Investment and Money Offers`) and both are checkable by hand:
+the post against the phrase lists printed with the output, the registration against the
+tally in the registrations table. `tests/test_policy_score.py` recomputes the tally a
+second time from `data/domains/post-domains.jsonl` and `data/corpus/composition.jsonl` —
+two other commands' files, over the same Corpus — and requires the two to agree for every
+registration in the Corpus.
+
+The association is where most of this Corpus's registrations come out as nothing, and the
+output says which and why rather than leaving them unexplained. A registration reached by
+one placed post is one account's own site as far as this Corpus shows, and a registration
+whose placed postings split evenly has nothing to prefer: `too few placed` and `no
+majority` are printed in its row, and neither is a conflict. `Other` is not a class that
+can be associated or contradicted, because it is where a post lands when no list matched it
+and a post that says nothing disagrees with nothing — so the bucket's posts are counted in
+the tally, printed last, and never decide anything. The known-shared registrations are out
+of it for the same reason they are out of the frequency Signal: a majority drawn from
+everybody's adverts is a majority about the shortener. Their class is still computed and
+printed with `withheld yes` beside it, and counted in the figure only where it can be used.
+
+**On this Corpus the Signal fires on no post, and that is a fact about the Corpus rather
+than about the Signal.** Four of the sixteen registrations carry an associated Scam
+Category — `vantage-ledger.example` with Investment and Money Offers from four postings,
+`signal-harbor.example` with Work and Payroll from three, and two withheld ones beside them
+— and every posting reaching any of the four agrees with it. The other twelve are one placed
+posting wide or split evenly. There is no cross-pitch post here to find: an operator running
+two pitches on one registration is material this Corpus does not plant, so the Signal's case
+is exercised by `tests/test_policy_score.py` on Corpora written to contain it rather than by
+the file this project ships. A Signal that fires nowhere on the data a reviewer can open
+would be a claim; this one states which corpus it needs and what the shipped one lacks. The
+smallest Corpus it can fire on is three postings: the floor needs two, and two placed
+postings can only agree or split.
 
 Each Content Signal carries the sentence it fired on rather than the phrase alone,
 because the sentence is the judgement a reviewer wants to make — it either names the
@@ -504,7 +544,9 @@ can promise is that the counts are printed and checkable, and
 `tests/test_policy_score.py` counts them a second time off `post-domains.jsonl` —
 published by a different command over the same Corpus — and requires the two counts to
 agree. Read the post, read the registration table printed beside the Signal, and the
-posts and accounts that put it there are there to be found.
+posts and accounts that put it there are there to be found. The conflict Signal is the
+same claim one step further on: it counts how much of the Corpus reaching a registration
+says something else, and its counts are recomputed the same way.
 
 The three things a reader should be suspicious of are stated rather than buried.
 A Signal is present or absent, so a post linking three shared registrations carries
@@ -519,9 +561,9 @@ handing that to a Signal would reward every post that used a service everybody u
 Planted Campaign leaning on a shared host is lost with it, the same lower bound the
 grouping reports.
 
-One more thing the score cannot do by itself: it cannot say what to read first. Five
-Signals give thirty-two subsets and this Corpus takes eight of them, so five posts tie at
-45 and three at 14. That ordering is the Review Queue's job and not this command's, which
+One more thing the score cannot do by itself: it cannot say what to read first. Six
+Signals give sixty-four subsets and this Corpus takes eight of them, so five posts tie at
+38 and three at 12. That ordering is the Review Queue's job and not this command's, which
 is why this index is ordered by score and then by post id - enough to be a stable table,
 which is all it claims to be. `rfi review-queue` is where the ties are broken.
 
@@ -539,7 +581,10 @@ gap: the two Planted Campaigns go out of their way to publish their losing month
 is the whole of their craft. `guaranteed_return` is published anyway, because it is the
 strongest claim a post can make in its own words and it is a rule a reader can apply to a
 real Corpus. `syn_p_0021`, a post about money already lost, carries no Content Signal at
-all: the Signals score the pitch rather than the aftermath.
+all: the Signals score the pitch rather than the aftermath. Two Signals are published and
+silent on this Corpus — `guaranteed_return` and `category_conflict` — and both say so here
+rather than in the tickets, because a rule that never fires on the file a reviewer can
+open is a claim until somebody says what it would take.
 
 Adding a Signal is a two-part change and the run refuses to skip either half: the
 rule goes in `src/reddit_fraud_intelligence/signals.py` and the weight goes in
@@ -547,7 +592,10 @@ rule goes in `src/reddit_fraud_intelligence/signals.py` and the weight goes in
 unpriced, prices one that does not exist, carries a weight of zero, or leaves a
 rationale blank stops the run and names the file and the row — otherwise a Signal
 could appear in a breakdown that no arithmetic adds up to, which is the failure
-ADR-0007 rules out.
+ADR-0007 rules out. The sixth Signal needed a third file: the Scam Category lists it
+places posts with, which `rfi corpus-composition` already published from the same
+function, so they moved to `src/reddit_fraud_intelligence/placement.py` and both
+commands print them from there rather than each holding a copy.
 
 ## The Review Queue
 
@@ -577,7 +625,7 @@ publish and a third copy is a third thing to keep in step.
 
 **Ties are broken on the points earned, and the depth is in the header.** The score is
 points rounded to a whole number, so two posts can display the same one: 50 points and 49
-both come out as 45 of 110 published. The queue orders those by the points, which is that
+both come out as 38 of 130 published. The queue orders those by the points, which is that
 same arithmetic one step finer, and then by post id, which is stability rather than
 judgement. Nothing else could be used, because anything else could put a lower-scoring post
 above a higher-scoring one. The post id is last because a queue with nothing else in its
@@ -706,7 +754,10 @@ distribution over the ten Scam Categories, with CAFC's published base rate for t
 same class beside it and the difference between them on the line. A post is placed
 by reading its own title and body against a published phrase list per Scam Category,
 the same way a Content Signal fires, so a reader holding the post can put the lists
-beside it and arrive at the same placement.
+beside it and arrive at the same placement. The lists and the placing live in
+`src/reddit_fraud_intelligence/placement.py`, because `rfi policy-score` places every
+post too: two commands that placed one post two ways would leave two published
+figures a reader could not compare.
 
 ```
 uv run rfi corpus-composition   # reads the Corpus and the base rates, writes two files
@@ -827,4 +878,7 @@ patch `urllib.request.urlopen` to refuse.
   generator writes beside the Corpus, which is the one place a measurement shares a
   command with the step it measures), and 0020 (the Review Queue is the Policy Score at a
   stated depth, its ties are broken on the points earned, it reads the published scores and
-  candidates rather than re-running either step, and it computes no figure).
+  candidates rather than re-running either step, and it computes no figure), and 0021 (a
+  post's Scam Category is compared with the category its Registrable Domain is associated
+  with, the association is a majority of the postings reaching it, and a registration with
+  too few of them is reported as unassociated rather than decided by a tie-break).

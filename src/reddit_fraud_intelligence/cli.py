@@ -610,14 +610,15 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "The Policy Score, and the Signal-by-Signal arithmetic behind it. The score "
             "is a rules engine: an additive sum over Signals computed from a post's own "
-            "text and links and from the registrations those links resolve to, with no "
-            "model output anywhere in it and no account history read on the way (ADR-0007). "
-            "A reader can recompute every number from what is printed beside it. The "
-            "weights are published as data rather than written into the rules, so "
-            "changing one is an edit to a file and not to a line of Python, and each one "
-            "carries a one-line reason. Every Signal the code computes must be published "
-            "in that file, so a Signal cannot be added without publishing what it is "
-            "worth. Reads no network."
+            "text and links, from the registrations those links resolve to, and from "
+            "what the posts reaching those registrations say, with no model output "
+            "anywhere in it and no account history read on the way (ADR-0007). A reader "
+            "can recompute every number from what is printed beside it. The weights are "
+            "published as data rather than written into the rules, so changing one is an "
+            "edit to a file and not to a line of Python, and each one carries a one-line "
+            "reason. Every Signal the code computes must be published in that file, so a "
+            "Signal cannot be added without publishing what it is worth. Reads no "
+            "network."
         ),
     )
     scores.add_argument(

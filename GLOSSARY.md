@@ -103,6 +103,29 @@ scores, and the sentence each match was found in is the evidence, so the decisio
 one a reviewer can redo and overturn.
 _Avoid_: Text Signal, keyword, keyword list
 
+**Conflict Signal**:
+The `category_conflict` Signal, and the only one that reads two entity types at once — a
+post and the Registrable Domain it links. It fires where a post's Scam Category
+disagrees with the Scam Category that registration is associated with. Both halves are
+printed with it and both are checkable by hand: the post against the Scam Category phrase
+lists, the registration against the tally of what the postings reaching it were placed
+in. Named this rather than "category-conflict Signal" so the prose in the code and the
+output can say "the conflict Signal" without drifting from one name.
+_Avoid_: Mismatch, anomaly, contradiction, category error (say which two things
+disagree, and never treat Other as one of them: a post no list matched makes no
+claim, so it disagrees with nothing)
+
+**Associated Scam Category**:
+The Scam Category a Registrable Domain is associated with, taken from the Corpus's
+own postings: a strict majority of the posts reaching that registration that a list
+placed, out of the two at least that have to be placed before any of them counts. A
+registration with fewer placed postings than that, or whose placed postings split
+evenly, has none and is reported as unassociated rather than decided by a tie-break.
+It is a property of the Corpus rather than of the registration, and a withheld
+registration keeps it while staying out of the scoring path.
+_Avoid_: Domain category, site category, vertical (the projection is onto Scam
+Categories, and the figure is about what this Corpus's postings say)
+
 **Review Queue**:
 The ranked list of content items a reviewer works through, ordered by Triage
 Priority. The headline metric will be the fraction of true findings within its

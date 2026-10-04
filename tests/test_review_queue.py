@@ -95,11 +95,19 @@ TOTAL_PUBLISHED = sum(PUBLISHED.values())
 PUBLISHED_SIGNALS = len(PUBLISHED)
 
 # The evidence each Signal kind fires on, in the shape the scoring command writes it.
-# Three kinds, and none of them names itself: `domain` with `posts` and `accounts` is the
-# reach, `domain` with `other` is the lookalike pair, and the row naming a Signal is the
-# sentence a Content Signal matched.
+# Four kinds, and none of them names itself: `domain` with `posts` and `accounts` is the
+# reach, `domain` with `other` is the lookalike pair, `domain` with the two classes and
+# their counts is the disagreement, and the row naming a Signal is the sentence a Content
+# Signal matched.
 REACH = {"domain": "signal-harbor.example", "posts": 3, "accounts": 2}
 LOOKALIKE = {"domain": "signal-harbor.example", "other": "signal-harbour.example"}
+CONFLICT = {
+    "domain": "signal-harbor.example",
+    "post_category": "Investment and Money Offers",
+    "domain_category": "Work and Payroll",
+    "majority": 3,
+    "placed": 4,
+}
 SENTENCE = (
     "There is a refundable deposit for the materials, and you have to finish the intake "
     "within 48 hours or the slot goes to someone else."
@@ -116,6 +124,8 @@ def evidence_of(signal: str) -> Row:
         return dict(REACH)
     if signal == "domain_lookalike":
         return dict(LOOKALIKE)
+    if signal == "category_conflict":
+        return dict(CONFLICT)
     return {
         "signal": signal,
         "field": "body",
@@ -372,7 +382,7 @@ def test_a_tie_is_broken_on_the_points_earned_and_not_on_the_post_id(
 ) -> None:
     """The Policy Score is points rounded, so two posts can display the same one.
 
-    Fifty points and forty-nine both display as 45 of 110 published, so the queue has to
+    Fifty points and forty-nine both display as 38 of 130 published, so the queue has to
     order them by something, and the post ids are chosen so that the post id would put
     them the other way round: a stable table is worth having, and a stable table that
     ranks the lower of two equal scores first is not a queue. Points are that same
@@ -387,7 +397,7 @@ def test_a_tie_is_broken_on_the_points_earned_and_not_on_the_post_id(
 
     printed = run(scores_path, candidates_path, capsys, depth=50)
 
-    assert scores(printed) == [45, 45, 44]
+    assert scores(printed) == [38, 38, 37]
     assert ranked(printed) == ["syn_p_0009", "syn_p_0002", "syn_p_0007"]
 
 
@@ -442,7 +452,7 @@ def test_a_queue_holds_every_post_the_scores_file_holds(
     printed = run(scores_path, candidates_path, capsys, depth=50)
 
     assert ranked(printed) == ["syn_p_0002", "syn_p_0001", "syn_p_0003"]
-    assert scores(printed) == [18, 0, 0]
+    assert scores(printed) == [15, 0, 0]
     assert "no Signal" in "".join(block(printed, "syn_p_0001"))
 
 
@@ -850,7 +860,7 @@ def test_rows_publishing_different_totals_are_refused(
 
     refusal = refusing_run(scores_path, candidates_path, capsys)
 
-    assert "110" in refusal and "80" in refusal, refusal
+    assert "130" in refusal and "80" in refusal, refusal
 
 
 def test_a_signal_priced_twice_in_one_row_is_refused(
@@ -894,10 +904,10 @@ def test_a_signal_priced_at_nothing_is_refused(
 def test_evidence_the_project_does_not_write_is_refused(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Evidence is one of three shapes, and an unknown one is not printed as though it
+    """Evidence is one of four shapes, and an unknown one is not printed as though it
     were one of them.
 
-    The three kinds share a field name and only one of them names a Signal, so a row
+    The four kinds share a field name and only one of them names a Signal, so a row
     cannot say what it is: the field set is what identifies it, and a row holding
     something else would have to be either dropped or guessed at.
     """
@@ -919,6 +929,70 @@ def test_evidence_the_project_does_not_write_is_refused(
     refusal = refusing_run(scores_path, candidates_path, capsys)
 
     assert "evidence" in refusal, refusal
+
+
+def test_a_disagreement_the_queue_prints_is_read_out_of_the_scores_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The conflict Signal's evidence survives the trip through the file.
+
+    The queue reads published scores rather than re-running the scoring step, so every
+    Signal it prints has to come back out of a file — and the conflict Signal is the only
+    one whose evidence names two classes rather than a sentence or a reach. Its row is
+    hand-written because no run over the committed Corpus produces one, and an entry
+    cannot be worked from this output alone if the two halves of its evidence are dropped
+    on the way in.
+
+    The line it prints has to carry both halves, because a reader who cannot see what the
+    post said and what the registration's other postings said has a severity with nothing
+    behind it — which is the one thing the breakdown exists to prevent.
+    """
+    scores_path, candidates_path = published(
+        tmp_path,
+        score_row(
+            "syn_p_0001",
+            "syn_c_0001",
+            ("category_conflict", PUBLISHED["category_conflict"]),
+            ("payment_request", PUBLISHED["payment_request"]),
+        ),
+    )
+
+    printed = run(scores_path, candidates_path, capsys, depth=50)
+    entry = " ".join(" ".join(block(printed, "syn_p_0001")).split())
+
+    assert (
+        "category_conflict 20 signal-harbor.example: this post is Investment and Money "
+        "Offers, and 3 of 4 placed posts reaching it are Work and Payroll" in entry
+    ), entry
+    assert f"of {TOTAL_PUBLISHED} published points, 2 of {PUBLISHED_SIGNALS} Signals" in entry
+
+
+def test_a_row_claiming_the_two_sides_agree_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A conflict Signal whose two halves name the same class describes nothing.
+
+    The row would print as a disagreement between a class and itself, which is the failure
+    a reader would have to notice while reading a severity rather than while reading the
+    file it came from. The weight would be real and the breakdown beside it would be
+    nonsense, so the row stops the run instead.
+    """
+    row = score_row("syn_p_0001", "syn_c_0001", ("category_conflict", 20))
+    agreeing = {**CONFLICT, "domain_category": CONFLICT["post_category"]}
+    scores_path, candidates_path = published(
+        tmp_path,
+        {
+            **row,
+            "signals": [
+                {"signal": "category_conflict", "weight": 20, "evidence": [agreeing]}
+            ],
+        },
+    )
+
+    refusal = refusing_run(scores_path, candidates_path, capsys)
+
+    assert "both sides of the disagreement" in refusal, refusal
+    assert "Work and Payroll" in refusal or "Investment and Money Offers" in refusal, refusal
 
 
 # --- what the run is allowed to read ----------------------------------------------------------

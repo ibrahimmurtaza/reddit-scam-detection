@@ -8,11 +8,10 @@ the Corpus landing in it, CAFC's share of the same class, and the difference bet
 the two — and every view here prints all four on one line.
 
 A post is placed by reading its own title and body against a published phrase list per
-Scam Category, exactly as a Content Signal fires (ADR-0015). Nothing outside those
-strings places a post, the sentence a phrase was found in is the evidence rather than
-the phrase, and the whole of every list is printed. That is what makes the figure
-checkable by hand: a reader holding the post can put the lists beside it and arrive at
-the same placement.
+Scam Category, exactly as a Content Signal fires (ADR-0015). That rule is ADR-0017's and
+it lives in `placement.py`, because `rfi policy-score` places every post too, and two
+commands placing the same post two ways would leave two published figures that could not
+be compared with each other. What this module adds is the comparison.
 
 The placement is a claim about what a post is talking about and nothing else. The lists
 are small and blunt, they are written to be argued with, and the classifier that will
@@ -49,204 +48,40 @@ from reddit_fraud_intelligence.categories import (
 )
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
-from reddit_fraud_intelligence.projection import Placed, place, read_base_rates, total
-from reddit_fraud_intelligence.text import sentences, spans, wrap
+from reddit_fraud_intelligence.placement import (
+    CATEGORY_PHRASES,
+    Placement,
+    Placed,
+    check_placements,
+    phrase_count,
+    place,
+    render_phrases,
+)
+from reddit_fraud_intelligence.projection import Placed as CafcPlaced
+from reddit_fraud_intelligence.projection import place as land_cafc_categories
+from reddit_fraud_intelligence.projection import read_base_rates, total
+from reddit_fraud_intelligence.text import wrap
 
 _HEADING = "Corpus composition"
 _SUBHEADING = """\
 Two distributions, one table: the share of the Corpus landing in each Scam Category, \
 and CAFC's published base rate for the same class. The gap is the finding."""
 
-# Every phrase that places a post in a Scam Category, and the whole of each list:
-# nothing outside these strings places one. Published by being printed rather than held
-# in a file, for the reason ADR-0015 gives for the Content Signals' lists - a phrase list
-# is a rule and not a number, and a reader who disagrees with one has to be able to see
-# it and quote it.
-#
-# Each list is what its own `covers` line in `categories.py` says, written out as the
-# words a post would use to make that pitch. They are deliberately short: eleven lists of
-# a dozen phrases each are enough to place the Corpus this project writes and blunt
-# enough to be wrong often on a real one, which is the limit the report names.
-_PHRASES: Mapping[str, tuple[str, ...]] = {
-    "Identity and Account Takeover": (
-        "account takeover",
-        "account in my name",
-        "cloned sim",
-        "compromised account",
-        "hijacked account",
-        "hijacked my account",
-        "identity stolen",
-        "logged into my account",
-        "my identity was stolen",
-        "opened an account in my name",
-        "sim swap",
-        "sim-swap",
-        "stolen identity",
-        "took over my account",
-        "unauthorised access",
-        "unauthorized access",
-    ),
-    "Merchandise and Goods": (
-        "counterfeit",
-        "has not arrived",
-        "item never",
-        "knock-off",
-        "knockoff",
-        "never arrived",
-        "never came",
-        "never turned up",
-        "not what i ordered",
-        "order never",
-        "refund never",
-        "still not arrived",
-        "stopped shipping",
-        "tracking has not",
-        "tracking hasn't",
-    ),
-    "Phishing": (
-        "click here to",
-        "click the link below",
-        "confirm your card",
-        "confirm your details",
-        "give us the code",
-        "one time code",
-        "one-time code",
-        "reset your password",
-        "security code we",
-        "sign in here",
-        "sign in to restore",
-        "six digit code",
-        "suspended within",
-        "unusual activity on your account",
-        "update your billing",
-        "verify your account",
-        "verify your identity",
-        "your account will be closed",
-    ),
-    "Impersonating an Institution": (
-        "as your bank",
-        "claiming to be from",
-        "claiming to be your",
-        "customer service for",
-        "impersonating",
-        "official helpline",
-        "official hotline",
-        "posing as",
-        "pretending to be from",
-        "speaking for your bank",
-        "support agent for",
-        "the bank has asked",
-        "your bank has asked",
-        "on behalf of your bank",
-    ),
-    "Investment and Money Offers": (
-        "brokerage",
-        "cannot withdraw",
-        "can't withdraw",
-        "copy trading",
-        "forex broker",
-        "investment opportunity",
-        "managed account",
-        "minimum ticket",
-        "paid desk",
-        "paid signals",
-        "signal desk",
-        "signal group",
-        "signals desk",
-        "starting capital",
-        "trading course",
-        "trading desk",
-        "trading signals",
-        "usdt",
-        "withdrawal fee",
-        "withdrawal rules",
-    ),
-    "Relationships and Second Contacts": (
-        "asset recovery",
-        "fund recovery",
-        "get my money back",
-        "get your money back",
-        "met online",
-        "money recovery",
-        "recover my money",
-        "recover the funds",
-        "recover the money",
-        "recover your money",
-        "recovery agent",
-        "recovery firm",
-    ),
-    "Bills, Invoicing and Collections": (
-        "amount owed",
-        "cancel your service",
-        "collection agency",
-        "debt collection",
-        "disconnection notice",
-        "final notice",
-        "outstanding balance",
-        "past due",
-        "pay the outstanding",
-        "service fee of",
-        "settle your debt",
-        "shut off",
-        "you owe",
-    ),
-    "Work and Payroll": (
-        "an hour",
-        "apply now",
-        "equipment is provided",
-        "equipment provided",
-        "full-time",
-        "hiring",
-        "job opening",
-        "kit provided",
-        "no experience",
-        "paid on the friday",
-        "paid weekly",
-        "part-time",
-        "per day",
-        "per hour",
-        "payout",
-        "remote work",
-        "role",
-        "roles",
-        "shift",
-        "shifts",
-        "they train you",
-        "training provided",
-        "work from home",
-    ),
-    "Prizes, Appeals and Psychics": (
-        "a small donation",
-        "claim your prize",
-        "claim your winnings",
-        "donate to",
-        "lottery",
-        "medical expenses",
-        "please help",
-        "processing fee",
-        "psychic reading",
-        "send a fee to claim",
-        "sick child",
-        "tarot reading",
-        "winning ticket",
-        "you have been selected",
-        "you have won",
-        "you've won",
-    ),
-    "Extortion": (
-        "blackmail",
-        "doxx",
-        "doxxed",
-        "i will publish",
-        "intimate photos",
-        "leak your",
-        "nude photos",
-        "or i publish",
-        "pay or",
-        "ransom",
-        "sextortion",
-    ),
-}
+# The heading above the phrase lists, in four lines because the rule has three parts a
+# reader has to be told apart: what places a post, that the lists are tried in the order
+# printed and the first one to match wins, and that a post none of them matches lands in
+# Other rather than in no class at all. `placement.py` prints the lists under it, because
+# two commands now publish this rule and a second copy of the lists would be a second
+# thing to keep in step with the first.
+_PHRASES_HEADING = (
+    f"phrases  what places a post in each of the {TOP_LEVEL_COUNT} Scam Categories, "
+    "and nothing outside",
+    "these strings places one. They are tried in the order below and the first to "
+    "match takes the post;",
+    f"a post no list matches lands in {OTHER.name}. Every match is recorded beside "
+    "the class it would have",
+    "placed, and the sentence is quoted whole",
+)
 
 # One cell of a bar is this share of the widest bar in the table, so one scale covers
 # every bar printed. Wide enough to see a 4% base rate against a 44% one and narrow
@@ -260,39 +95,6 @@ _BAR_WIDTH = 30
 # the command actually uses; this is the name the report gives it, which is the same thing
 # `projection.py` does with the mapping beside `docs/scam-categories.md`.
 PLACEMENTS_PATH = "data/corpus/composition.jsonl"
-
-
-@dataclass(frozen=True, slots=True)
-class Placement:
-    """One sentence of a post's own text, and what in it placed the post.
-
-    The sentence rather than the phrase, for the reason ADR-0015 gives: the phrase says
-    what the rule matched and the sentence says whether the post really makes the claim.
-    """
-
-    field: str
-    phrases: tuple[str, ...]
-    sentence: str
-
-
-@dataclass(frozen=True, slots=True)
-class Composed:
-    """One post, the Scam Category it lands in, and what put it there.
-
-    `evidence` is empty exactly when the post landed in Other, because a post no list
-    matched has nothing to point at. `also_matched` names the other classes whose lists
-    matched the same post: the tie is broken by the order the projection declares the
-    ten in, and a tie the run resolved on its own is a tie the reader has to be able to
-    see.
-    """
-
-    post_id: str
-    account: str
-    scam_category: str
-    evidence: tuple[Placement, ...]
-    also_matched: tuple[str, ...]
-
-
 @dataclass(frozen=True, slots=True)
 class Share:
     """One figure as a share of a whole, held as the two integers it is.
@@ -363,8 +165,8 @@ class Composition:
     """Every post's Scam Category, and CAFC's figures to hold them against."""
 
     facts: CompositionFacts
-    posts: tuple[Composed, ...]
-    placed: tuple[Placed, ...]
+    posts: tuple[Placed, ...]
+    placed: tuple[CafcPlaced, ...]
 
     def posts_in(self, name: str) -> int:
         return sum(1 for post in self.posts if post.scam_category == name)
@@ -401,7 +203,7 @@ class Composition:
         return tuple(row for row in rows if row.posts == 0)
 
 
-def dropped_reports(placed: Sequence[Placed]) -> int:
+def dropped_reports(placed: Sequence[CafcPlaced]) -> int:
     """The reports landing in no Scam Category because their category was dropped.
 
     They are in the denominator of every CAFC share rather than folded into a class that
@@ -420,11 +222,11 @@ def compose(corpus_path: Path, base_rates_path: Path) -> Composition:
     because a class that no post can be placed in would print a row of zeroes beside a
     base rate and read as coverage rather than as an absent rule.
     """
-    _check()
+    check_placements()
     items = read_corpus(corpus_path)
-    posts = tuple(_composed(item) for item in items)
+    posts = tuple(place(item) for item in items)
     base_rates = read_base_rates(base_rates_path)
-    placed = place(base_rates)
+    landed = land_cafc_categories(base_rates)
 
     return Composition(
         facts=CompositionFacts(
@@ -437,79 +239,11 @@ def compose(corpus_path: Path, base_rates_path: Path) -> Composition:
             reports=sum(rate.reports for rate in base_rates.values()),
         ),
         posts=posts,
-        placed=placed,
+        placed=landed,
     )
 
 
-def _check() -> None:
-    """Refuse a Scam Category with no phrase list, or a list belonging to no category.
-
-    The lists live in this module and the ten live in `categories.py`, so the two can
-    drift apart the way a weight file and a Signal enum can. A class nothing can place a
-    post in is the case worth catching: its row would hold a base rate, no posts, and a
-    difference of the full base rate, which reads as a finding rather than as a gap.
-    """
-    known = {scam.name for scam in SCAM_CATEGORIES}
-    missing = sorted(known - set(_PHRASES))
-    unknown = sorted(set(_PHRASES) - known)
-    if missing or unknown:
-        raise ValueError(
-            f"the phrase lists hold {len(_PHRASES)} classes and the projection has "
-            f"{len(known)}; no list for {missing or 'none'}; a list for a category the "
-            f"projection does not have: {unknown or 'none'}. Every one of the ten needs "
-            "a list, and no list may name a category the projection does not have."
-        )
-
-
-def _composed(item: CorpusItem) -> Composed:
-    """One post's Scam Category, and the sentence in it that says so.
-
-    The first list to match takes the post, in the order the projection declares the ten,
-    and every other list that matched is recorded rather than dropped. The tie-break is
-    arbitrary in the sense that no rule prefers one pitch to another, and the cost of an
-    arbitrary tie-break is a post placed on the declaration order rather than on what it
-    says - which is why the other classes that matched go in the file beside it.
-    """
-    found: dict[str, list[Placement]] = {}
-    for scam_category in SCAM_CATEGORIES:
-        evidence = _evidence(item, scam_category)
-        if evidence:
-            found[scam_category.name] = evidence
-
-    placed = next(iter(found), OTHER.name)
-    return Composed(
-        post_id=item.post_id,
-        account=item.account,
-        scam_category=placed,
-        evidence=tuple(found.get(placed, ())),
-        also_matched=tuple(name for name in found if name != placed),
-    )
-
-
-def _evidence(item: CorpusItem, scam_category: ScamCategory) -> list[Placement]:
-    """Every sentence of this post one of this class's phrases appears in.
-
-    Title before body, for the reason `_content` in `signals.py` gives: the title is
-    what a reviewer sees first. A post matching nothing here is a post that class's list
-    says nothing about, which is not the same as a post that is not of that class.
-    """
-    phrases = _PHRASES[scam_category.name]
-    found: list[Placement] = []
-    for field, text in (("title", item.title), ("body", item.body)):
-        for sentence in sentences(text):
-            fired = tuple(
-                sorted(
-                    phrase
-                    for phrase in phrases
-                    if spans(sentence, phrase)
-                )
-            )
-            if fired:
-                found.append(Placement(field=field, phrases=fired, sentence=sentence))
-    return found
-
-
-def write_composition(path: Path, posts: Sequence[Composed]) -> None:
+def write_composition(path: Path, posts: Sequence[Placed]) -> None:
     """Every post's Scam Category, with the evidence that placed it.
 
     In the Corpus's own order rather than the table's, so a row here is a post and the
@@ -556,7 +290,7 @@ def render_table(composition: Composition) -> str:
         f"{_HEADING}\n\n{_SUBHEADING}",
         _figures(composition),
         _table(rows, scale),
-        _phrases_table(),
+        render_phrases(_PHRASES_HEADING),
         _footer(composition, rows),
     )
     return "\n\n".join(section for section in sections if section) + "\n"
@@ -603,34 +337,6 @@ def _table(rows: Sequence[Row], scale: int) -> str:
         )
         lines.append(f"    corpus  {row.corpus.bar(scale).ljust(_BAR_WIDTH)}  {row.corpus.percent()}")
         lines.append(f"    CAFC    {row.cafc.bar(scale).ljust(_BAR_WIDTH)}  {row.cafc.percent()}")
-    return "\n".join(lines)
-
-
-def _phrases_table() -> str:
-    """Every phrase that places a post, printed in full, in the order they are tried.
-
-    Published because a phrase list is a rule and lives in the code: without this the
-    table says a post landed in Work and Payroll and leaves the strings that decide it
-    unsaid, which is the whole of the auditability claim missing. The order is the
-    projection's, and it is the tie-break, so it is printed rather than left implicit.
-    """
-    lines = [
-        f"phrases  what places a post in each of the {TOP_LEVEL_COUNT} Scam Categories, "
-        "and nothing outside",
-        "these strings places one. They are tried in the order below and the first to "
-        "match takes the post;",
-        f"a post no list matches lands in {OTHER.name}. Every match is recorded beside "
-        "the class it would have",
-        "placed, and the sentence is quoted whole",
-    ]
-    width = max(len(scam.name) for scam in SCAM_CATEGORIES)
-    for scam in SCAM_CATEGORIES:
-        phrases = _PHRASES[scam.name]
-        lines.append(
-            f"  {scam.name.ljust(width)}  {len(phrases)} "
-            f"{'phrase' if len(phrases) == 1 else 'phrases'}"
-        )
-        lines.extend(wrap(", ".join(f'"{phrase}"' for phrase in phrases), indent=width + 4))
     return "\n".join(lines)
 
 
@@ -819,7 +525,7 @@ Three further limits, all of them consequences of reading a post literally:
   and the pitch itself all land in the same class, and so do a genuine advert for work
   and a planted one. The lists have no second signal to tell those apart and are not
   trying to.
-- **The lists are short, and shortness is a cost.** {_phrase_count()} phrases across the
+- **The lists are short, and shortness is a cost.** {phrase_count()} phrases across the
   ten classes is enough to place the Corpus this project wrote and blunt enough to be
   wrong often on real content, where a pitch in a language this build does not read
   places in Other.
@@ -878,7 +584,7 @@ def _section(row: Row) -> str:
             "projection does not cover, and what these lists cannot place."
         )
     else:
-        phrases = _PHRASES[row.name]
+        phrases = CATEGORY_PHRASES[row.name]
         listed = (
             f"{len(phrases)} "
             f"{'phrase' if len(phrases) == 1 else 'phrases'}, tried in this order, and "
@@ -902,6 +608,3 @@ def _percent(count: int, of: int) -> str:
     return Share(count=count, of=of).percent()
 
 
-def _phrase_count() -> int:
-    """Every phrase in every list, so the cost of shortness is stated as a number."""
-    return sum(len(_PHRASES[scam.name]) for scam in SCAM_CATEGORIES)

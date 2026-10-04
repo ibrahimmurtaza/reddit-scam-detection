@@ -21,6 +21,14 @@ posting rate, or activity change is read anywhere in this path, and none exists 
 Corpus file to read (ADR-0008). What is read is which registrations other posts' links
 resolve to, which is structure the reviewer can go and look at.
 
+A third Signal reads the Corpus's links and its posts' text together, and is the only
+one here that reasons across two entity types. Each Registrable Domain carries the Scam
+Category a majority of the posts reaching it were placed in, and a post placed in a
+different one disagrees with it (ADR-0021). Both halves are printed with the Signal and
+both are countable by hand: what the post says it is about against the phrase lists
+below, and what the other postings reaching that registration say against the tally in
+the registrations table.
+
 Three Signals read the post's own title and body against a list of phrases, and are
 Content Signals because a single post is all they need. The list is printed beside the
 weights, because a reviewer holding the post can only check a match if they can see
@@ -43,6 +51,7 @@ from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from pathlib import Path
 
+from reddit_fraud_intelligence.categories import OTHER
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedInfrastructure
@@ -56,6 +65,7 @@ from reddit_fraud_intelligence.jsonl import (
     refuse_repeated,
     write_lines,
 )
+from reddit_fraud_intelligence.placement import Placed, check_placements, place, render_phrases
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 from reddit_fraud_intelligence.text import matcher, sentences, spans, wrap
 
@@ -73,6 +83,25 @@ are the published ones. No model output feeds this number and none ever will \
 # site and started being infrastructure somebody else can reach.
 _MIN_ACCOUNTS = 2
 
+# The floor on the postings that decide what a Registrable Domain is associated
+# with, which is the floor `domain_frequency` uses and for a sharper reason. One
+# posting would make a registration's own class its association, so a post could
+# only ever agree with itself, and the disagreement the Signal exists for would
+# need two postings to be visible at all. Below it the registration is reported
+# as unassociated, which is a statement about the evidence rather than a quiet
+# zero: a link in a post usually reaches a site nobody else in the Corpus reaches.
+_MIN_PLACED = 2
+
+# Why this command prints the Scam Category lists rather than leaving a reader to take a
+# placement on trust: `category_conflict` rests on one, and the lists are the whole of what
+# places a post. `placement.py` prints them, and prints the rule they are read under, so
+# these lines are only the part that differs from the composition command's.
+_PLACEMENT_HEADING = (
+    "categories  the Scam Category lists `rfi corpus-composition` publishes, printed here",
+    "because a reader checking the conflict Signal needs them: they are what places this",
+    "post, and the tally beside each registration above is what placed the others",
+)
+
 
 class SignalName(StrEnum):
     """Every Signal this module can produce, and every name the weight set may hold.
@@ -86,6 +115,7 @@ class SignalName(StrEnum):
     than derived from a set so a run over the same Corpus writes the same file.
     """
 
+    CATEGORY_CONFLICT = "category_conflict"
     DOMAIN_FREQUENCY = "domain_frequency"
     DOMAIN_LOOKALIKE = "domain_lookalike"
     GUARANTEED_RETURN = "guaranteed_return"
@@ -317,7 +347,40 @@ class PhraseMatch:
         return f'{self.field}: "{self.sentence}"'
 
 
-Evidence = DomainFrequency | ConfusablePair | PhraseMatch
+@dataclass(frozen=True, slots=True)
+class CategoryConflict:
+    """One registration whose associated Scam Category disagrees with this post's.
+
+    Both halves of the disagreement are named, because either one alone is not evidence
+    of anything: a reviewer looking at this has to be able to see what the post says it
+    is about and what the other postings reaching that registration say, and disagree with
+    either. `majority` is how many postings the association rests on and `placed` how
+    many of the posts reaching the registration were placed in one of the ten at all, so
+    `2 of 3` can be counted off the Corpus rather than taken on trust.
+    """
+
+    domain: str
+    post_category: str
+    domain_category: str
+    majority: int
+    placed: int
+
+    @property
+    def signal(self) -> SignalName:
+        return SignalName.CATEGORY_CONFLICT
+
+    @property
+    def registrations(self) -> tuple[str, ...]:
+        return (self.domain,)
+
+    def line(self) -> str:
+        return (
+            f"{self.domain}: this post is {self.post_category}, and {self.majority} of "
+            f"{self.placed} placed posts reaching it are {self.domain_category}"
+        )
+
+
+Evidence = DomainFrequency | ConfusablePair | CategoryConflict | PhraseMatch
 
 
 @dataclass(frozen=True, slots=True)
@@ -378,6 +441,65 @@ class Reach:
 
 
 @dataclass(frozen=True, slots=True)
+class Association:
+    """What the posts reaching one registration add up to, and the class they agree on.
+
+    `tally` is every Scam Category those posts were placed in with its count, widest
+    first and then by name, so a reader counting the postings arrives at the same figure.
+    Other is in the tally and out of the association: a post no list matched makes no
+    claim, so it can neither associate a registration with a pitch nor disagree with one,
+    and its number is printed because dropping it would hide why a registration reached
+    by three posts has nothing to say. It also sorts last, so the leading entry of a
+    tally is never a bucket that cannot be associated with anything.
+
+    `scam_category` is `None` where the tally decides nothing - fewer than `_MIN_PLACED`
+    postings were placed at all, or none of the classes holds more than half of the ones
+    that were - and both of those are reported as unassociated rather than settled by a
+    tie-break over the order the projection happens to declare the ten in.
+    """
+
+    domain: str
+    tally: tuple[tuple[str, int], ...]
+
+    @property
+    def placed(self) -> int:
+        """The postings that were placed in one of the ten, which is what decides."""
+        return sum(count for name, count in self.tally if name != OTHER.name)
+
+    @property
+    def scam_category(self) -> str | None:
+        placed = self._placed_tally
+        if self.placed < _MIN_PLACED:
+            return None
+        top, count = placed[0]
+        return top if 2 * count > self.placed else None
+
+    @property
+    def majority(self) -> int:
+        """The postings behind the association, or none where there is no association."""
+        return self._placed_tally[0][1] if self.scam_category is not None else 0
+
+    @property
+    def _placed_tally(self) -> tuple[tuple[str, int], ...]:
+        """The tally without Other, which cannot be associated or disagreed with."""
+        return tuple(entry for entry in self.tally if entry[0] != OTHER.name)
+
+    def cell(self) -> str:
+        """The registrations-table column: the tally, and why it decides or does not.
+
+        The counts come first and the reason comes before them, because a reader who
+        cannot tell a registration with no association from one that has never been read
+        has been handed a decision rather than a figure.
+        """
+        counts = ", ".join(f"{name} {count}" for name, count in self.tally)
+        if self.placed < _MIN_PLACED:
+            return f"too few placed: {counts}"
+        if self.scam_category is None:
+            return f"no majority: {counts}"
+        return counts
+
+
+@dataclass(frozen=True, slots=True)
 class LinkIndex:
     """What the Corpus's links add up to, which is the whole of what a Link Signal
     reads.
@@ -394,16 +516,27 @@ class LinkIndex:
     a link shortener everybody uses is what somebody imitating that shortener looks
     like, which is a case the shortener's presence creates rather than one it excuses,
     so the filter applies to `domain_frequency` alone.
+
+    `associations` is built the same way, over the same registrations and including the
+    withheld ones, because a registration's Scam Category is a fact about the Corpus and
+    the withholding is a decision this run makes about scoring it rather than about what
+    the postings say. The withheld column of the table is what tells the two apart.
     """
 
     reach: Mapping[str, Reach]
     withheld: frozenset[str]
     confusable: Mapping[str, tuple[str, ...]]
+    associations: Mapping[str, Association]
 
     @classmethod
-    def of(cls, rows: Iterable[PostDomains], withheld: frozenset[str]) -> LinkIndex:
-        """What every registration the Corpus's links resolve to is reached by, and what
-        each one is one edit away from.
+    def of(
+        cls,
+        rows: Iterable[PostDomains],
+        categories: Mapping[str, str],
+        withheld: frozenset[str],
+    ) -> LinkIndex:
+        """What every registration the Corpus's links resolve to is reached by, what
+        each one is one edit away from, and what the posts reaching it add up to.
 
         Counted per registration and not per link: a post that links a link-in-bio page
         and the site behind it touches one registration, and counting the links would
@@ -411,10 +544,14 @@ class LinkIndex:
         """
         posts: dict[str, set[str]] = {}
         accounts: dict[str, set[str]] = {}
+        tallies: dict[str, dict[str, int]] = {}
         for row in rows:
             for domain in row.domains:
                 posts.setdefault(domain, set()).add(row.post_id)
                 accounts.setdefault(domain, set()).add(row.account)
+                tally = tallies.setdefault(domain, {})
+                category = categories[row.post_id]
+                tally[category] = tally.get(category, 0) + 1
 
         reach = {
             domain: Reach(posts=len(found), accounts=len(accounts[domain]))
@@ -424,12 +561,20 @@ class LinkIndex:
             reach=reach,
             withheld=withheld,
             confusable=_confusable(sorted(reach)),
+            associations={
+                domain: Association(domain=domain, tally=_in_print_order(tally))
+                for domain, tally in tallies.items()
+            },
         )
 
     def reached_by(self, domain: str) -> Reach:
         """What one registration is reached by. Never zero: a caller only asks about
         registrations its own post links, so the index has already seen them."""
         return self.reach[domain]
+
+    def associated_with(self, domain: str) -> Association:
+        """What the posts reaching one registration add up to."""
+        return self.associations[domain]
 
     def pairs(self) -> tuple[ConfusablePair, ...]:
         """Every confusable pair the Corpus contains, printed once rather than twice.
@@ -448,6 +593,18 @@ class LinkIndex:
                 }
             )
         )
+
+
+def _in_print_order(tally: Mapping[str, int]) -> tuple[tuple[str, int], ...]:
+    """One registration's tally, widest first and then by name, with Other last.
+
+    The order is a printing order rather than an arithmetic one: the leading entry is
+    what a reader takes as the class the registration is associated with, and Other can
+    never be that, so it is put behind every class that can.
+    """
+    return tuple(
+        sorted(tally.items(), key=lambda entry: (entry[0] == OTHER.name, -entry[1], entry[0]))
+    )
 
 
 def _confusable(registrations: Sequence[str]) -> dict[str, tuple[str, ...]]:
@@ -527,14 +684,24 @@ _IMPOSSIBLE = 99
 
 @dataclass(frozen=True, slots=True)
 class ScoreFacts:
-    """What reading the four published files establishes, stated as claims about bytes."""
+    """What reading the four published files establishes, stated as claims about bytes.
+
+    The two association figures are a partition of the registrations rather than two ways
+    of counting the same thing: `registrations_associated` is every registration with an
+    associated Scam Category, and `registrations_associated_withheld` is how many of those
+    the shared list keeps out of the scoring path. Printing one without the other would
+    invite a reader to count the class of a shortener's registrations as evidence.
+    """
 
     accounts: int
     corpus_path: str
     corpus_sha256: str
     posts: int
+    posts_conflicting: int
     posts_with_signals: int
     registrations: int
+    registrations_associated: int
+    registrations_associated_withheld: int
     registrations_withheld: int
     rules_sha256: str
     suffix_list_path: str
@@ -577,13 +744,27 @@ def score_corpus(
     published file is not read: the score is a function of the Corpus alone, and
     re-reading a derived file would make the result depend on whether somebody had
     remembered to run the step before it.
+
+    Every post is placed in a Scam Category here as well, for the conflict Signal, and it
+    is placed by the rule in `placement.py` rather than by reading the placements file:
+    the same function `rfi corpus-composition` uses, so the two commands cannot place one
+    post two ways, and no fifth file is opened to do it. The placement needs only the
+    post's own text and the published lists, so the auditability claim holds - a reader
+    recomputes it from the post and the lists printed below rather than from a file this
+    run happened to find.
     """
     weights = Weights.read(weights_path)
+    check_placements()
     suffixes = PublicSuffixes.read(list_path)
     shared = SharedInfrastructure.read(shared_path, suffixes)
     items = read_corpus(corpus_path)
     rows = post_domains(items, suffixes)
-    index = LinkIndex.of(rows, shared.withheld())
+    placements = tuple(place(item) for item in items)
+    index = LinkIndex.of(
+        rows,
+        {placed.post_id: placed.scam_category for placed in placements},
+        shared.withheld(),
+    )
 
     scores = tuple(
         PostScore(
@@ -595,8 +776,8 @@ def score_corpus(
             published_signals=len(weights.entries),
             signals=hits,
         )
-        for item, row in zip(items, rows, strict=True)
-        for hits in (_hits(item, row, index, weights),)
+        for item, placed, row in zip(items, placements, rows, strict=True)
+        for hits in (_hits(item, placed, row, index, weights),)
         for points in (sum(hit.weight for hit in hits),)
     )
 
@@ -610,7 +791,11 @@ def score_corpus(
 
 
 def _hits(
-    item: CorpusItem, row: PostDomains, index: LinkIndex, weights: Weights
+    item: CorpusItem,
+    placed: Placed,
+    row: PostDomains,
+    index: LinkIndex,
+    weights: Weights,
 ) -> tuple[SignalHit, ...]:
     """The Signals one post carries, each with the evidence a reader checks it with.
 
@@ -619,13 +804,15 @@ def _hits(
     so the order a breakdown is written in is a property of the enum rather than of the
     order the rules happen to be written below.
 
-    Both halves of the post are handed over rather than one of them: the resolved links
-    carry no text, and the text carries no resolved links, and a Signal is allowed to
-    read either. The map below is exhaustive over the enum by construction — two Link
-    Signals written out, and every Signal that has a phrase list — so a Signal added to
+    All three halves of the post are handed over rather than one of them: the resolved
+    links carry no text, the text carries no resolved links, and the placement carries
+    the two of them joined. A Signal is allowed to read any of them. The map below is
+    exhaustive over the enum by construction — the two Link Signals and the conflict
+    Signal written out, and every Signal that has a phrase list — so a Signal added to
     the enum without an evaluator here stops the run rather than scoring nothing.
     """
     by_signal: dict[SignalName, tuple[Evidence, ...]] = {
+        SignalName.CATEGORY_CONFLICT: _category_conflict(placed, row, index),
         SignalName.DOMAIN_FREQUENCY: _domain_frequency(row, index),
         SignalName.DOMAIN_LOOKALIKE: _domain_lookalike(row, index),
         **{signal: _content(item, signal) for signal in _CONTENT_SIGNALS},
@@ -634,6 +821,42 @@ def _hits(
         SignalHit(signal=signal, weight=weights.of(signal), evidence=evidence)
         for signal in SignalName
         if (evidence := by_signal[signal])
+    )
+
+
+def _category_conflict(
+    placed: Placed, row: PostDomains, index: LinkIndex
+) -> tuple[Evidence, ...]:
+    """What one post disagrees with, one row per registration it links.
+
+    Three things have to hold before a post and a registration can be said to disagree,
+    and each is refused rather than scored at zero. The post has to have been placed in
+    one of the ten, because a post in Other makes no claim and so cannot contradict one.
+    The registration has to be out of the withheld list, for the reason
+    `domain_frequency` withholds it: a majority drawn from everybody's adverts is a
+    majority about the shortener. And the registration has to have an associated Scam
+    Category at all, which is the floor and the majority rule in `Association`.
+
+    A post's own posting is one of the postings its registration is associated from, and
+    that is deliberate. Excluding it would make the Signal mean something a reader could
+    not check — a registration two posts reach where the other one disagrees, rather than
+    the plain statement that most of what reaches this registration is about something
+    else — and the figures printed with it are then countable either way.
+    """
+    if placed.scam_category == OTHER.name:
+        return ()
+    return tuple(
+        CategoryConflict(
+            domain=domain,
+            post_category=placed.scam_category,
+            domain_category=found,
+            majority=index.associated_with(domain).majority,
+            placed=index.associated_with(domain).placed,
+        )
+        for domain in row.domains
+        if domain not in index.withheld
+        and (found := index.associated_with(domain).scam_category) is not None
+        and found != placed.scam_category
     )
 
 
@@ -741,8 +964,23 @@ def _facts(
         corpus_path=corpus_path.as_posix(),
         corpus_sha256=hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
         posts=len(scores),
+        posts_conflicting=sum(
+            1
+            for score in scores
+            if any(hit.signal is SignalName.CATEGORY_CONFLICT for hit in score.signals)
+        ),
         posts_with_signals=sum(1 for score in scores if score.signals),
         registrations=len(index.reach),
+        registrations_associated=sum(
+            1
+            for association in index.associations.values()
+            if association.scam_category is not None
+        ),
+        registrations_associated_withheld=sum(
+            1
+            for domain, association in index.associations.items()
+            if association.scam_category is not None and domain in index.withheld
+        ),
         registrations_withheld=sum(1 for domain in index.reach if domain in index.withheld),
         rules_sha256=suffixes.rules_digest(),
         suffix_list_path=list_path.as_posix(),
@@ -952,6 +1190,38 @@ def _pair(where: str, record: JsonObject) -> ConfusablePair:
     )
 
 
+def _conflict(where: str, record: JsonObject) -> CategoryConflict:
+    """One disagreement, read back out of the file.
+
+    The two classes are checked to be different, because a row claiming they agree is a
+    row describing a conflict that did not happen, and the counts are checked against each
+    other: the postings behind the association cannot be more than the postings there
+    were. Neither check is a substitute for reading the Corpus, and both are here because
+    the Review Queue prints these figures beside a severity and orders posts by them.
+    """
+    post_category = read_text(where, record, "post_category")
+    domain_category = read_text(where, record, "domain_category")
+    if post_category == domain_category:
+        raise ValueError(
+            f"{where} names {post_category} on both sides of the disagreement, and a "
+            "Signal that fires on agreement is not this Signal"
+        )
+    majority = _figure(where, record, "majority")
+    placed = _figure(where, record, "placed")
+    if majority > placed:
+        raise ValueError(
+            f"{where} rests on {majority} of {placed} placed posts, and the second cannot "
+            "be smaller than the first"
+        )
+    return CategoryConflict(
+        domain=read_text(where, record, "domain"),
+        post_category=post_category,
+        domain_category=domain_category,
+        majority=majority,
+        placed=placed,
+    )
+
+
 def _sentence(where: str, record: JsonObject) -> PhraseMatch:
     phrases = read_names(where, record, "phrases")
     if not phrases:
@@ -967,6 +1237,7 @@ def _sentence(where: str, record: JsonObject) -> PhraseMatch:
 _EVIDENCE: Mapping[type[Evidence], Callable[[str, JsonObject], Evidence]] = {
     DomainFrequency: _frequency,
     ConfusablePair: _pair,
+    CategoryConflict: _conflict,
     PhraseMatch: _sentence,
 }
 
@@ -1009,6 +1280,7 @@ def render_table(scored: Scored) -> str:
         _confusable_table(scored),
         _weights_table(scored),
         _phrases_table(),
+        render_phrases(_PLACEMENT_HEADING),
         _footer(scored),
     )
     return "\n\n".join(section for section in sections if section) + "\n"
@@ -1033,6 +1305,12 @@ def _figures(scored: Scored) -> str:
             "scored",
             f"{_count(facts.posts_with_signals, 'post')} carrying a Signal, "
             f"{_count(facts.posts - facts.posts_with_signals, 'post')} carrying none",
+        ),
+        (
+            "categories",
+            f"{_count(facts.registrations_associated, 'registration')} associated with a "
+            f"Scam Category, {facts.registrations_associated_withheld} of them withheld, "
+            f"{_count(facts.posts_conflicting, 'post')} disagreeing with one",
         ),
     )
     width = max(len(name) for name, _ in fields_out)
@@ -1108,14 +1386,20 @@ def _block(score: PostScore) -> str:
 
 
 def _registrations(scored: Scored) -> str:
-    """Every registration, what reaches it, and which Signals that decides.
+    """Every registration, what reaches it, which Signals that decides, and what the
+    postings reaching it add up to.
 
     The table the per-Signal breakdown is checked against: a reader who thinks a
     Signal fired wrongly can see here the posts and accounts it was fired from, and a
     registration with one account — the floor — is printed with its Signals column
     empty rather than left out, so the reason it does not fire is visible too.
+
+    The category column is the same table's answer to the question the conflict Signal
+    asks, and it is printed for every registration rather than only for the ones that
+    fired it: a reader who wants to know what a registration *would* have to add up to
+    before it can disagree with a post has to be able to see that it adds up to nothing.
     """
-    headings = ("domain", "posts", "accounts", "withheld", "signals")
+    headings = ("domain", "posts", "accounts", "withheld", "category", "signals")
     rows = []
     for domain in sorted(scored.index.reach):
         reach = scored.index.reach[domain]
@@ -1134,12 +1418,17 @@ def _registrations(scored: Scored) -> str:
                 str(reach.posts),
                 str(reach.accounts),
                 "yes" if domain in scored.index.withheld else "-",
+                scored.index.associated_with(domain).cell(),
                 ", ".join(carried),
             )
         )
     widths = [max(len(cell) for cell in column) for column in zip(headings, *rows, strict=True)]
     table = "\n".join([_row(headings, widths), *(_row(row, widths) for row in rows)])
-    return f"registrations  {len(rows)} of which {scored.facts.registrations_withheld} withheld\n{table}"
+    facts = scored.facts
+    return (
+        f"registrations  {len(rows)} of which {facts.registrations_withheld} withheld, "
+        f"{facts.registrations_associated} associated with a Scam Category\n{table}"
+    )
 
 
 def _confusable_table(scored: Scored) -> str:
@@ -1221,9 +1510,11 @@ def _footer(scored: Scored) -> str:
     The limits are the ones a reader would otherwise have to guess at: the arithmetic is
     a subset-sum and no more, the frequency figures count other posts and not the
     reader's judgement of them, the phrase rules lose the posts that deny a request in
-    the same sentence they make it, and the withheld registrations are out of the scoring
-    path entirely rather than scored at zero.
+    the same sentence they make it, the conflict Signal rests on two blunt readings, and
+    the withheld registrations are out of the scoring path entirely rather than scored at
+    zero.
     """
+    facts = scored.facts
     return f"""\
 A Signal is present or absent, so a post that links three shared registrations, or that
 uses four phrases from one Content Signal's list, carries that Signal once and not four
@@ -1248,6 +1539,23 @@ because that is the judgement a reader may want to overturn, and the cost of the
 is stated rather than hidden: a post that asks for money in one sentence and denies
 asking in the next carries no `payment_request`, and a bare "no" cancels only the phrase
 directly after it, because "no experience needed" is in every job post ever written.
+
+The conflict Signal is the one that reads two entity types, and the limits are the ones a
+reader would otherwise have to guess at. It fires where a post placed in one of the ten
+links a registration associated with a different one. The association is not a property
+of the registration: it is a strict majority of the postings reaching it that a list
+placed, of the {_count(_MIN_PLACED, 'post')} at least that are needed before any of them
+counts, and a post's own posting counts towards the registration it links. The tally is
+printed for every registration in the table above, the ones with no association included,
+so both halves are checkable by hand - what this post says against the lists printed below
+it, and what the other postings say against that tally. A registration whose postings
+split evenly has no associated Scam Category and is reported as unassociated rather than
+decided by the order the projection happens to declare the ten in. A post placed in
+{OTHER.name} fires nothing, because that is where a post lands when no list matched it and
+a post that says nothing disagrees with nothing. Both halves of the Signal are blunt - a
+phrase list places a post, and a handful of postings decides a registration - which is why
+its weight is a middle one, and why the two printed lists are worth reading before the
+figure. {facts.posts_conflicting} of the {facts.posts} posts here carry it.
 
 The registrations on the known-shared list are out of the scoring path rather than
 scored at zero, and the list is named above so a reader who wants a different one can
