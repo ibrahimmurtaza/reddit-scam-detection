@@ -44,6 +44,7 @@ steps, which are named against each row. Every file has one reader:
 | --- | --- | --- |
 | `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. | the pipeline |
 | `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
+| `data/corpus/labelled-contacts.jsonl` | The labelled set: one row per post, naming every Contact Point that post publishes and whether it published it plainly, written out, or only as a picture of one. | `rfi contact-points`, to measure its own reading |
 | `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
 | `data/corpus/composition.jsonl` | Every post's Scam Category, with the sentences of its own text that placed it. | a reader, then the category-conflict ticket #18 |
 | `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. Each row carries where the host came from and when it was added. | `rfi campaign-candidates` |
@@ -90,6 +91,7 @@ carries the material that makes a grouping decision hard, and
 | `staggered_paraphrase` | One planted offer, reworded across a Planted Campaign's accounts. |
 | `known_shared_infrastructure` | Each shared host, with the posts and accounts that touch it. |
 | `single_account_domain` | A domain one account uses, which must not group. |
+| `obfuscated_contact` | One desk publishing the same Contact Point five ways: written out character by character, with a digit in it, as a screenshot, and as words. Two are found and three are not, which is what makes the extraction's recall a measurement. |
 | `hard_negative` | Legitimate content near the boundary, recorded with its character: a genuine job post, satire, a complaint from someone who lost money, scam-adjacent discussion. |
 
 Every record carries a note in prose saying what it is there to test, so the file
@@ -168,44 +170,73 @@ read — an email address and a Telegram handle — from a post's own title, its
 and its links.
 
 ```
-uv run rfi contact-points   # reads the Corpus, writes two files
+uv run rfi contact-points   # reads the Corpus and the labelled set, writes two files
 ```
 
 | File | Holds |
 | --- | --- |
 | `data/contacts/post-contacts.jsonl` | One line per post: its Contact Points, every occurrence with the spelling and the field it was found in, and every candidate that named none. |
+| `data/corpus/labelled-contacts.jsonl` | The labelled set the reading is measured against, named here because it is an input rather than an output of this command. |
 | `docs/contact-points.md` | The report, generated from those rows. |
 
-**They are read literally, and that is the decision ADR-0016 records.** Nothing is
-repaired. `nobody@localhost` is nearly an address and `@someone.co.uk` is nearly a
-username, and both come back reported with which of eight faults applied rather than
-turned into something that looks right. The reason is specific to this step: a wrong
-Signal gives a reviewer a wrong severity figure they can discount against the post in
-front of them, whereas a wrong Contact Point gives a shared identifier between two
-accounts that share nothing, and ADR-0005 would then have grounds to group them on the
-strength of a string this project invented. A link the parser refuses is the case this
-command cannot classify at all, so it is the one that carries a reason of its own —
-`malformed`, the same reason `rfi post-domains` gives it.
+**An obfuscated username is read as the identifier underneath it, an address's host is read
+exactly as written, and the reading is measured (ADR-0019).** A handle written out character by
+character — `@s.y.n._.v.a.n.t.a.g.e.l.e.d.g.e.r`, `@s y n _ v a n t a g e l e d g e r` — and one
+with a digit standing in for a letter (`@syn_v4ntag3ledger`) are the same Contact Point as the
+plain spelling, and every spelling is printed beside the value it was read as. A **username** is
+folded for substitution and, where it was written out, for its separators. An **address** is
+folded for spacing and for nothing else: no full stop is dropped from either half of one,
+because a full stop is a label boundary in both and `vantage.ledger.example` is not
+`vantage-ledger.example`, and no digit is folded in either half either — `desk@gr4vy.io` and
+`desk@gravy.io` are two domains that both exist, and nothing in the post says which one it meant.
+The Corpus carries both cases so the difference is measured rather than argued.
 
-Two spellings are normalised, and both are printed. Telegram usernames do not
-distinguish case, so `@Syn_VantageLedger` and `@syn_vantageledger` are one Contact
-Point; a full stop at the end of a sentence belongs to the sentence, so a handle written
-`@syn_vantageledger.` is the same handle rather than a different one — and the Corpus
-plants both spellings in both shapes, because `syn_p_0002` ends its sentence with one.
-Normalisation that is not visible is indistinguishable from case folding, so every
-spelling is printed beside the value it was read as. An address is normalised more
-carefully still: the host is case-folded, because RFC 5321 says it is, and the part
-before the `@` is not, because RFC 5321 does not — folding both would merge `Desk@` and
-`desk@` into one mailbox nobody published as one.
+Two things are stated rather than left to be discovered, because both are places where
+this project could invent a Contact Point rather than miss one. **Dropping a separator
+cannot merge two usernames that both exist** — a full stop or a hyphen cannot occur in a
+Telegram username at all — **while folding a digit into its letter can**, so the
+substitution table is published and every figure that fold can move is measured and printed.
+And **a post that spaces out the letters of a word beside an `@` produces the same shape as
+one writing out a handle**: `email me @ t o n i g h t at 8` is read as the handle
+`tonight`, which is the one false positive the tolerance has that reading literally did
+not. Nothing in the text tells the two apart; a miss is a floor the output already
+declares, an invented value is a shared identifier ADR-0005 would group two accounts on,
+so the fold is kept, the invented value is named in the report, and the false-positive
+rate is printed beside the recall.
 
-A link is read for a Contact Point on the same rule as for a registration: a `mailto:`
-names an address — which is why `rfi post-domains` reports one as naming no
-registration and hands the case here — and a link on Telegram's own host names the
-username in its first path segment. Anything else names a page, so an address inside a
-page is not read; a shortener's query string is the shortener's business. A link to a
-Telegram channel or an invite names no username and is reported as `invite_link`.
+```
+  labelled   data/corpus/labelled-contacts.jsonl: 34 posts, 13 Contact Points published between them
+  recall     11 of 13 Contact Points the Corpus publishes were found: 8 of 8 published plainly, 3 of 4 written out
+  picture    1 of the 13 is published only as a picture of one and cannot be read by anything in this project
+  invented   1 of the 22 posts that publish none had a Contact Point invented in them
+  folded     every Contact Point found is the one its own post publishes; no fold joined two of the values the Corpus publishes
+```
 
-**Sharing is counted over accounts, not over posts.** Two accounts naming one Contact
+That figure is of *this* reading over *this* Corpus, and the report says so. It is measured
+against `data/corpus/labelled-contacts.jsonl`, which `rfi generate-corpus` writes beside the
+Corpus from the same plan the posts come from: one row per post, naming every Contact Point
+that post publishes and whether it published it plainly, written out, or only as a picture of
+one. A Corpus from a provider has no labelled set beside it, and measuring this reading over
+other content means labelling that content. The labels are read after the reading has
+finished and reach nothing that decides what was read — `measure()` is handed the finished
+reading rather than the Corpus, and a test reads the same Corpus twice, once with labels that
+agree and once with labels that do not, and asserts the rows are identical.
+
+The Corpus is planted so that the measurement cannot flatter itself. One desk publishes the
+same handle three ways from three accounts — written out with separators, written out with
+spaces, and one letter standing in as the digit it looks like — which is the case the
+reading exists for: three accounts publishing one reach three different ways is one shared
+Contact Point and three that nobody can join. Beside them are a handle published only as a
+screenshot, which nothing here can read, and an address written as words, with no `@` in the
+post for any reader to find: both misses are named row by row in the report, so a reader can
+see that the shortfall is the material rather than a defect. The other half of the figure is
+planted too, and it is the uncomfortable half: a post that publishes nothing at all and
+spells a word out beside an `@`, which the reading invents the handle `tonight` from. Clean
+posts whose shapes the literal reader also refused would have reported a false-positive rate
+of nothing, so the shaped case is in the material and the figure has to name it. The two
+near-misses (`@ 4200`, `@ 9`) sit beside it.
+
+Sharing is counted over accounts, not over posts. Two accounts naming one Contact
 Point is the claim this command exists to make. One account naming it in four posts is
 not, because it has not acquired a second reach. The Corpus is planted so both planted
 campaigns publish a channel from more than one of their own accounts, and so that not
@@ -220,13 +251,12 @@ Contact Point as a grouping edge and this command builds none — the shared blo
 the evidence ticket #20 needs, and an unmeasured grouping edge would put an unmeasured
 input into the recovery figure ADR-0004 measures against.
 
-Every figure the command prints is a lower bound, and it says so beside them rather
-than in the ticket. A handle written with separators between its characters, an address
-written as words, and a screenshot of either are all in the wild and none of them is
-found here; deliberately disguised handles are ticket #15's work, and measuring the
-recall is what that ticket is for. One more limit is stated at the point of use: a
-handle is read as a Telegram handle whatever service it belongs to, because every
-service writes one as `@name` and this build cannot tell them apart.
+Every figure the command prints is a lower bound, and the measured recall above is what
+bounds it: the Contact Points this Corpus publishes that were not read are named in the
+report, so the shortfall can be read rather than inferred from a count. One more limit is
+stated at the point of use: a handle is read as a Telegram handle whatever service it
+belongs to, because every service writes one as `@name` and this build cannot tell them
+apart.
 
 The Corpus holds one candidate that names no Contact Point — a Hard Negative describing
 a contact form that asks for an address and then names none — so the reporting is
@@ -234,14 +264,17 @@ visible in the committed report and not only in the tests. It deliberately holds
 Telegram invite link: `t.me` is a real domain, and nothing in the Corpus is anything
 but a Synthetic Entity.
 
-Every Contact Point in this build is a Synthetic Entity because the Corpus is
+Every Contact Point the Corpus publishes is a Synthetic Entity because the Corpus is
 synthetic, and which figures say so is printed rather than asserted — an address is one
 when its host sits under a TLD reserved for examples, and a handle when it carries the
 `syn_` marker every Synthetic Entity in this Corpus carries, since Telegram reserves no
-namespace of its own. A Corpus Provider is a swap, so the same lines over real content
-would read `0 of N`, which is what measuring them buys. Nothing on this path reads the
-truth file, the Nuisance Structure manifest, or any published list: what a post says to
-be reached at does not depend on what anybody registered.
+namespace of its own. The one value the reading holds that no post published is not one, and
+the synthetic figure reads `5 of 6` for that reason rather than the `6 of 6` a reader would
+prefer: it is the invented `tonight` named above, and a figure that could not come out wrong
+would be a promise rather than a measurement. A Corpus Provider is a swap, so the same lines
+over real content would read `0 of N`, which is what measuring them buys. Nothing on this
+path reads the truth file, the Nuisance Structure manifest, or any published list: what a
+post says to be reached at does not depend on what anybody registered.
 
 ## Campaign Candidates
 
@@ -679,9 +712,13 @@ patch `urllib.request.urlopen` to refuse.
   Policy Score is a subset-sum of published weights, and a Signal fires once however many
   registrations fired it), 0015 (Content Signals are phrase lists with a
   sentence-scoped negation guard, and the sentence is the evidence), 0016
-  (Contact Points are read literally, the ones this build cannot read are reported
-  rather than repaired, and nothing groups on one yet), and 0017 (a post's Scam
+  (Contact Points are read literally — which 0019 amends — the ones this build cannot
+  read are reported rather than repaired, and nothing groups on one yet), and 0017 (a post's Scam
   Category is read off its own text with published phrase lists, the first match wins,
   and CAFC cannot validate the reading), and 0018 (the evaluator joins the published
   candidates in a command of its own, so measurement cannot reach inference and the
-  two steps are a file apart rather than a boundary drawn inside one process).
+  two steps are a file apart rather than a boundary drawn inside one process), and 0019
+  (an obfuscated username is read as the identifier underneath it, an address's host is
+  read exactly as written, and the reading is measured against a labelled set the
+  generator writes beside the Corpus, which is the one place a measurement shares a
+  command with the step it measures).

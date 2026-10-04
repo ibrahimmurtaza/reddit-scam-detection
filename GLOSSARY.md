@@ -37,12 +37,20 @@ membership is known by construction. The unit of evaluation, and the thing a
 Campaign Candidate is scored against.
 _Avoid_: Ground truth, test case, fixture
 
+**Labelled Set**:
+A file naming, for every post in the Corpus, the Contact Points that post publishes
+and how each was written. What the Contact Points reading is measured against, so a
+recall or false-positive figure is a measurement rather than a claim. Written by the
+generator beside the Corpus, from what each post declared, never by hand.
+_Avoid_: Ground truth, expected output, test fixture
+
 **Nuisance Structure**:
-Material that makes grouping hard: in the Corpus, accounts and domains that are not
+Material that makes a step hard: in the Corpus, accounts and domains that are not
 a Planted Campaign but are genuinely easy to confuse with one — shared link
 shorteners, decoy account clusters, near-miss domain pairs, single-account domains —
-plus a Planted Campaign's own posts when they are staggered paraphrases of one text.
-Without it, recovery rate is uninformative.
+plus a Planted Campaign's own posts when they are staggered paraphrases of one text,
+and Contact Points published in disguise, which make extraction hard rather than
+grouping. Without it, recovery rate is uninformative and recall is unmeasured.
 _Avoid_: Noise, decoys (the project's own phrase is "decoy account cluster"),
 distractors
 
@@ -126,7 +134,8 @@ _Avoid_: Campaign, ring, operation, network, cluster of scammers
 
 **Contact Point**:
 An off-platform contact identifier extracted from content — a Telegram handle,
-Discord ID, email address, or crypto wallet.
+Discord ID, email address, or crypto wallet. Published in any of several spellings;
+what a reader extracts is the identifier underneath the spelling.
 _Avoid_: PII, contact info, handle, identifier
 
 **Scam Category**:

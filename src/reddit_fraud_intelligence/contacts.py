@@ -9,19 +9,35 @@ invisible through, which is why it is worth extracting even where the domains al
 group a pair of accounts.
 
 Two kinds are read, and nothing else is looked for: an email address and a Telegram
-handle. Both are read **literally**, from the post's own title, its own body, and the
-links it carries. Nothing is repaired. A handle written with separators between its
-characters, an address written as words rather than as an address, and a screenshot
-of either are all in the wild and none of them is found here — that is ticket #15's
-work, and until it lands every count this command produces is a lower bound, which is
-why the limit is printed with the figures rather than left in the ticket that asked
-for them. Reading loosely would be worse than reading narrowly here, because a Contact
-Point is the one string in the Corpus that can join two accounts on nothing else, and
-a value that was guessed is a grouping edge nobody checked.
+handle. Both are read from the post's own title, its own body, and the links it
+carries, and both are read with the obfuscation tolerance below: an identifier written
+out character by character, with a digit standing in for a letter, or with either of
+those in a post's own text rather than in a link, is the Contact Point it is hiding and
+is read as it. Every spelling a value was written in travels beside the value, because a
+fold a reader cannot see is indistinguishable from case folding.
 
-A candidate that names no Contact Point is reported with which of eight reasons
+That tolerance is the one place in this project where a wrong answer invents rather than
+misses, and it is stated rather than argued. Dropping a full stop or a hyphen from a
+username cannot merge two usernames that both exist — neither character can occur in one
+— while folding a digit into the letter it stands in can, and every figure that fold can
+move is measured and printed. A Contact Point is the one string in the Corpus that can
+join two accounts on nothing else, so a value that was guessed is a grouping edge nobody
+checked; reading loosely would be worse than reading narrowly here even where the recall
+would be better.
+
+Which is why the run reads a **labelled set** — one row per post, naming every Contact
+Point that post publishes and whether it published it plainly, written out, or only as a
+picture of one — and prints the recall and the false-positive rate beside the figures
+those numbers bound. A count of Contact Points is a count of the ones this reading found,
+and the shortfall is named row by row rather than left to be inferred from the count. The
+labelled set is read after the reading has finished and is handed to `measure` rather than
+to the rules, so a label has no path to a decision about what was read; the Corpus is
+still the whole input, no published list decides what a post says to be reached at, and
+the truth file is joined by the evaluator after this has finished (ADR-0008, ADR-0019).
+
+A candidate that names no Contact Point is reported with which of nine reasons
 applied, so nothing is dropped: a candidate quietly dropped is indistinguishable from
-a post that named none, and the difference is the whole claim. The eight are each a
+a post that named none, and the difference is the whole claim. The nine are each a
 different fault with a different fix, which is what lets the next step decide what to
 do about each kind rather than discovering the kinds as it goes.
 
@@ -42,14 +58,17 @@ ADR-0005 counts as grounds for a proposal. The count is over accounts rather tha
 posts, because the claim is about accounts: an account naming one handle in four posts
 has not acquired a second reach.
 
-Normalisation is minimal, and every spelling a value was written in is printed beside
-it, so a reader can tell sharing from folding. A Telegram username is case-insensitive
-and a full stop at the end of a sentence belongs to the sentence, so both are folded
-into the value. An address is not treated the same way: the host is folded because
-RFC 5321 says a domain is case-insensitive, and the local part is not, because it says
-nothing of the sort. Folding both would merge `Desk@` and `desk@` into one mailbox
-that may be two — this module inventing a grouping edge in order to be helpful, which
-is the failure it exists to avoid.
+Normalisation is published rather than minimal, and every spelling a value was written
+in is printed beside it, so a reader can tell sharing from folding. A Telegram username
+is case-insensitive, a full stop at the end of a sentence belongs to the sentence, and a
+username cannot hold a full stop or a hyphen at all — so all three are folded into the
+value. An address is not treated the same way: the host is folded because RFC 5321 says
+a domain is case-insensitive, the local part is not because RFC 5321 says nothing of the
+sort, and no full stop is dropped from either half because a full stop is a label boundary
+in both. Folding both halves of an address would merge `Desk@` and `desk@` into one
+mailbox that may be two, and dropping a full stop would merge two hosts that both exist —
+this module inventing a grouping edge in order to be helpful, which is the failure it
+exists to avoid.
 
 Nothing is grouped here. ADR-0005 permits a Contact Point as a grouping edge and this
 command builds none: the shared list is the evidence ticket #20 needs, and a grouping
@@ -57,9 +76,10 @@ edge that had not been measured would put an unmeasured input into the recovery 
 ADR-0004 is measured against. The output says so, because a shared list read as a list
 of groupings is the more damaging of the two misreadings.
 
-Nothing here reads the truth file or the Nuisance Structure manifest. The Corpus is
-the whole input — no published list decides what a post says to be reached at — and
-the truth file is joined by the evaluator after this has finished (ADR-0008).
+Nothing here reads the truth file or the Nuisance Structure manifest. The Corpus and the
+labelled set beside it are the whole input — no published list decides what a post says
+to be reached at — and the truth file is joined by the evaluator after this has finished
+(ADR-0008).
 
 Every Contact Point in this build is a Synthetic Entity, because the Corpus is
 synthetic, and the output says which figures make that true rather than asserting it:
@@ -80,13 +100,21 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
-from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
+from reddit_fraud_intelligence.jsonl import (
+    JsonObject,
+    read_object,
+    read_rows,
+    read_text,
+    read_vocabulary,
+    refuse_repeated,
+    write_lines,
+)
 
 _HEADING = "Contact Points"
 _SUBHEADING = """\
-Every Contact Point a post's own title, its own body, and its links name, read literally \
-and without repairing anything. Two kinds are looked for and nothing else. No grouping \
-is built on any of it here."""
+Every Contact Point a post's own title, its own body, and its links name, read with the
+obfuscation tolerance this build does and with nothing beyond it. Two kinds are looked for
+and nothing else. No grouping is built on any of it here."""
 
 # The marker every Synthetic Entity in this Corpus carries, per the README. There is no
 # reserved namespace for a Telegram username, so a handle is recognisable as synthetic
@@ -117,15 +145,54 @@ _MIN_HANDLE_CHARS = 5
 _MAX_HANDLE_CHARS = 32
 
 # The run a candidate is read from: a maximal stretch of the characters an address or a
-# username can be made of, containing at least one `@`. The part before the `@` allows
-# the punctuation an address's local part allows, the part after it does not, because a
-# username cannot hold one. Scanning starts at every position, so a candidate in the
-# middle of a sentence is found without the rule knowing anything about sentences.
+# username can be made of, holding at least one `@`. The part before the `@` allows the
+# punctuation an address's local part allows, the part after it does not, because a
+# username cannot hold one. Scanning starts at every `@`, so a candidate in the middle
+# of a sentence is found without the rule knowing anything about sentences.
 #
-# Both halves stop at a space, which is what makes `write to me at @ or ring` two
-# candidates rather than one: the run after the `@` is empty, and a candidate whose
-# name is empty is reported rather than skipped.
-_CANDIDATE = re.compile(r"[A-Za-z0-9_%+.\-]*@[A-Za-z0-9_.\-]*")
+# Both halves stop at a character neither half can hold, which is what makes
+# `write to me at @ or ring` two candidates rather than one: the run after the `@` is
+# empty, and a candidate whose name is empty is reported rather than skipped.
+_LEFT_RUN = re.compile(r"[A-Za-z0-9_%+.\- ]")
+_RIGHT_RUN = re.compile(r"[A-Za-z0-9_.\- ]")
+
+# The same run with the space left out, which is the plain candidate an obfuscated run
+# falls back to. Two walks rather than one because the space is the only difference
+# between "a post wrote one handle" and "a post wrote one handle out": without it, a
+# run written out character by character is three or four unread candidates instead of
+# one Contact Point.
+_LEFT_PLAIN = re.compile(r"[A-Za-z0-9_%+.\-]")
+_RIGHT_PLAIN = re.compile(r"[A-Za-z0-9_.\-]")
+
+# The characters a username is made of, which is Telegram's own rule read in
+# `contacts.py` rather than a second opinion: letters, digits, and underscores. A fold
+# keeps exactly these, so a handle written with anything else between its characters is
+# read as the handle without them.
+_HANDLE_CHARS = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+)
+
+# The characters a run is cut into before it is judged written out: each maximal stretch
+# of characters an identifier is made of, which is one piece whether a separator sits
+# between two of them or not. A piece of one character is a character a post has written
+# out; a piece of more is a word or a whole identifier, and `_written_out` stops there.
+_TOKEN = re.compile(r"[A-Za-z0-9_]+")
+
+# The characters a post stands in for the letter it is hiding, and the letters it stands
+# for. Published here rather than kept in prose because this is the part of the reading
+# that can invent a Contact Point: a digit is legal in a username, so `syn_vantag3ledger`
+# and `syn_vantageledger` are two usernames as far as Telegram is concerned and one
+# Contact Point as far as this reader is concerned. Every figure that fold can move is
+# measured and printed; see `Recall` and `_points`.
+#
+# **A username and never a host.** `gr4vy.io` and `gravy.io` are two domains that both
+# exist and a post that writes one of them does not say which it meant, so folding a host
+# would merge two sites on a guess about the author's keyboard — and `intake@vantage.ex4mple`
+# would stop being a real registration and start counting as a Synthetic Entity. The
+# handle fold is a guess made visible in the `stray` figure; a host fold would be a guess
+# about somebody else's domain, which is the one merge this project must not make on its
+# own. `_address` reads a host exactly as it was written.
+_SUBSTITUTION = str.maketrans("0134578", "oieastb")
 
 # A Telegram username, once the candidate has been classified as one.
 _USERNAME = re.compile(r"[A-Za-z][A-Za-z0-9_]*\Z")
@@ -142,7 +209,7 @@ _LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\Z")
 # stands would make it a different username from the same one in the next post — a
 # silent wrong answer that splits a shared Contact Point in two. What was written is
 # reported beside what it was read as, so the trim is a decision a reader can see.
-_TRAILING_SEPARATORS = ".-"
+_TRAILING_SEPARATORS = ".- "
 
 _FIELDS = ("title", "body")
 
@@ -178,6 +245,259 @@ class Unread(StrEnum):
     MALFORMED = "malformed"
     NO_DOMAIN = "no_domain"
     NO_NAME = "no_name"
+    PROSE = "prose"
+
+
+class Writing(StrEnum):
+    """How a post published a Contact Point, which is what the reading is measured on.
+
+    Three ways and no fourth, because they are the three the measurement has to be able
+    to take apart: published plainly, published disguised, and published only as a
+    picture of one. The third is not readable by anything in this project, which is why
+    it is a value rather than a limitation in prose — it is counted as a miss against
+    the reading and printed in the report, where a reader can see that this build is
+    blind to it rather than being told so.
+    """
+
+    PLAIN = "plain"
+    OBFUSCATED = "obfuscated"
+    IMAGE = "image"
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedContact:
+    """One Contact Point a post publishes, and the spelling it published it in.
+
+    Declared by the generator beside the post it belongs to, so a label cannot drift
+    away from the text it describes: the file this is written to holds one row per post
+    and this is what is in that post.
+    """
+
+    kind: ContactKind
+    value: str
+    written_as: str
+    written: Writing
+
+
+@dataclass(frozen=True, slots=True)
+class PublishedPost:
+    """One post and every Contact Point it publishes.
+
+    An empty `published` is the case that makes the false-positive rate a rate: without
+    posts labelled as publishing nothing, the question "how often does this invent a
+    Contact Point" has no denominator and answers itself.
+    """
+
+    post_id: str
+    published: tuple[PublishedContact, ...]
+
+
+def write_published(path: Path, posts: Iterable[PublishedPost]) -> None:
+    """The labelled set, one row per post, sorted so a fixed seed writes fixed bytes.
+
+    Sorted by post rather than written in the plan's order because the Corpus file is
+    sorted by time and the two are different projections of the same plan; a reader
+    holding both files wants to line them up by identifier.
+    """
+
+    def objects() -> Iterator[JsonObject]:
+        for post in sorted(posts, key=lambda post: post.post_id):
+            yield {
+                "post_id": post.post_id,
+                "published": [
+                    {
+                        "kind": contact.kind.value,
+                        "value": contact.value,
+                        "written_as": contact.written_as,
+                        "written": contact.written.value,
+                    }
+                    for contact in post.published
+                ],
+            }
+
+    write_lines(path, objects())
+
+
+def read_published(path: Path) -> tuple[PublishedPost, ...]:
+    """The labelled set, read back and checked row by row.
+
+    Every field is parsed rather than passed through, for the reason `read_nuisance`
+    gives and because this file decides what the recall figure means: a kind or a way of
+    writing the reader cannot account for would be silently dropped from the
+    measurement, and a post named on two rows would be counted twice in both directions
+    of it. A Contact Point published with no value is refused for the same reason an
+    unread candidate is reported — it names nothing that could be found.
+    """
+    posts = tuple(
+        _published_post(path, number, text) for number, text in read_rows(path)
+    )
+    refuse_repeated(
+        path.as_posix(),
+        (post.post_id for post in posts),
+        "the recall figure would count one post's Contact Points twice",
+    )
+    return posts
+
+
+def _published_post(path: Path, number: int, text: str) -> PublishedPost:
+    where = f"{path.as_posix()}:{number}"
+    record = read_object(where, text)
+    if set(record) != {"post_id", "published"}:
+        raise ValueError(
+            f"{where} holds {sorted(record)}, which is not the labelled vocabulary "
+            "['post_id', 'published']"
+        )
+    value = record["published"]
+    if not isinstance(value, list):
+        raise ValueError(f"{where} has published={value!r}, which is not a list")
+    return PublishedPost(
+        post_id=read_text(where, record, "post_id"),
+        published=tuple(_published_contact(where, index, entry) for index, entry in enumerate(value)),
+    )
+
+
+def _published_contact(where: str, index: int, entry: object) -> PublishedContact:
+    if not isinstance(entry, dict):
+        raise ValueError(f"{where} published[{index}] is {entry!r}, which is not a row")
+    at = f"{where} published[{index}]"
+    vocabulary = {"kind", "value", "written_as", "written"}
+    if set(entry) != vocabulary:
+        raise ValueError(f"{at} holds {sorted(entry)}, which is not {sorted(vocabulary)}")
+    return PublishedContact(
+        kind=read_vocabulary(at, "kind", entry["kind"], ContactKind),
+        value=read_text(at, entry, "value"),
+        written_as=read_text(at, entry, "written_as"),
+        written=read_vocabulary(at, "written", entry["written"], Writing),
+    )
+
+
+def _walk_back(text: str, at: int, run: re.Pattern[str]) -> int:
+    """Where the run reaching left from `at` begins."""
+    start = at
+    while start > 0 and run.match(text, start - 1):
+        start -= 1
+    return start
+
+
+def _walk_forward(text: str, at: int, run: re.Pattern[str]) -> int:
+    """Where the run reaching right from `at` ends."""
+    end = at
+    while end < len(text) and run.match(text, end):
+        end += 1
+    return end
+
+
+def _candidates(text: str) -> Iterator[Candidate]:
+    """Every `@` in a post's own text, with the run around it and how to read it.
+
+    One pass, from left to right, and the run is walked twice per `@`: once over the
+    characters an identifier is written with, and once over those plus the space. The
+    wider run is what a post writing an identifier out one character at a time produces,
+    and the narrower one is the candidate that would have been read without any
+    obfuscation tolerance. Which of the two is read is `_read_run`'s decision and not
+    this one's, so that the rule is stated in one place.
+
+    Scanning resumes past the run rather than past the `@`, because a run holds exactly
+    one `@` — the walk stops at the next one — so nothing inside it is a candidate the
+    next pass would miss.
+    """
+    index = 0
+    while (at := text.find("@", index)) >= 0:
+        start = _walk_back(text, at, _LEFT_RUN)
+        end = _walk_forward(text, at + 1, _RIGHT_RUN)
+        index = end
+        yield _read_run(
+            left=text[start:at],
+            right=text[at + 1 : end],
+            plain_left=text[_walk_back(text, at, _LEFT_PLAIN) : at],
+            plain_right=text[at + 1 : _walk_forward(text, at + 1, _RIGHT_PLAIN)],
+        )
+
+
+def _leading_singles(side: str) -> int:
+    """How far from the start of a side the pieces of one character run."""
+    taken = 0
+    for token in _TOKEN.finditer(side):
+        if len(token.group()) != 1:
+            break
+        taken = token.end()
+    return taken
+
+
+def _written_out(side: str, at_the_end: bool) -> str:
+    """The identifier one side of a run is written as, or the empty string for none.
+
+    **The identifier is the run of pieces that each hold exactly one character, read
+    from the end of the side nearest the `@`** — the leading pieces of a right-hand side
+    and the trailing pieces of a left-hand one, because the words a post puts on the far
+    side of the `@` are not part of what it names. That is the fingerprint of a post
+    writing an identifier out one character at a time, and stopping at the first
+    ordinary word is what lets `@ s y n _ v a n t a g e l e d g e r, or ask in here` be
+    read as the handle it is rather than as a sentence.
+
+    The cost is stated rather than hidden: a post that spaces out the letters of a word
+    beside an `@` produces an identifier nobody published, `email me @ t o n i g h t at
+    8` reads as the handle `tonight`, and that is the one false positive this reading
+    has that the literal reader did not. It is measured against the labelled set and
+    printed beside the figures rather than argued here.
+
+    An empty result means the side holds no written-out identifier and is read plainly,
+    which is the right answer for `@someone`, for `Write to me at @`, and for the words
+    a post puts on the far side of an `@`.
+    """
+    if not at_the_end:
+        return side[: _leading_singles(side)]
+    end = len(side)
+    for token in reversed(list(_TOKEN.finditer(side))):
+        if len(token.group()) != 1:
+            break
+        end = token.start()
+    return side[end:]
+
+
+def _read_run(*, left: str, right: str, plain_left: str, plain_right: str) -> Candidate:
+    """One run around an `@`, read as far as the writing-out of each side allows.
+
+    **The `@` decides the kind before either side is read.** A run with an identifier
+    touching its `@` on the left is an address, and both of its sides can be written
+    out; a run with nothing there is somebody's handle, and a handle is written after
+    its `@` and never before it. Reading the left side of a handle would turn `on @
+    s y n` into the address `on@syn`, which names no host and reports the wrong fault
+    for a post that did nothing wrong — and it is the left side being written out that
+    says a run is an address at all, since a local part written out has a space before
+    the `@` where a plain one has a word.
+
+    `prose` is the run that is neither an identifier nor nothing at all: nothing
+    identifier-shaped touches the `@` and words follow it, which is what `email me @
+    home about the invoice` is. It is a fault of its own because a reader looking at
+    that run needs to know the `@` was never a handle rather than that a handle lost
+    its name.
+    """
+    written_left = _written_out(left, at_the_end=True)
+    written_right = _written_out(right, at_the_end=False)
+    found_as = f"{written_left or plain_left}@{written_right or plain_right}"
+
+    if written_left or written_right:
+        return Candidate(found_as, Writing.OBFUSCATED, prose=False)
+    if plain_left or plain_right or not right:
+        return Candidate(found_as, Writing.PLAIN, prose=False)
+    return Candidate(found_as, Writing.PLAIN, prose=True)
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """The text around one `@`, and how that run was written.
+
+    `writing` says how much of the run was read as the identifier: plainly, or written
+    out one character at a time, which is what lets `_handle` drop the separators a
+    username cannot hold. `prose` says the run is ordinary wording around the `@` and
+    holds no identifier at all — `email me @ home about the invoice` — which is a
+    different fault from a bare `@` and has a different fix.
+    """
+
+    found_as: str
+    writing: Writing
+    prose: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +590,8 @@ class ContactFacts:
     corpus_sha256: str
     handles: int
     handles_marked: int
+    labelled_path: str
+    labelled_sha256: str
     matches: int
     points: int
     posts: int
@@ -290,6 +612,7 @@ class ContactPoints:
 
     facts: ContactFacts
     points: Mapping[tuple[ContactKind, str], SharedContact]
+    recall: Recall
     rows: tuple[PostContacts, ...]
 
     @property
@@ -298,7 +621,7 @@ class ContactPoints:
         return tuple(kind for kind in ContactKind if any(k == kind for k, _ in self.points))
 
 
-def _read_point(candidate: str, field: str) -> Match | UnreadCandidate:
+def _read_point(candidate: Candidate, field: str) -> Match | UnreadCandidate:
     """One candidate, read by the rules of whichever kind it is, or the reason it is
     neither.
 
@@ -312,10 +635,12 @@ def _read_point(candidate: str, field: str) -> Match | UnreadCandidate:
     forgetting to check: text is either a Contact Point or a fault, and a reader that
     has to remember that is a reader that will forget.
     """
-    found_as = candidate
-    trimmed = candidate.rstrip(_TRAILING_SEPARATORS)
+    found_as = candidate.found_as
+    if candidate.prose:
+        return UnreadCandidate(found_as, field, Unread.PROSE)
+    trimmed = found_as.rstrip(_TRAILING_SEPARATORS)
     if trimmed.startswith("@"):
-        return _handle(trimmed[1:], found_as, field)
+        return _handle(trimmed[1:], found_as, field, candidate.writing)
     return _address(trimmed, found_as, field)
 
 
@@ -328,6 +653,14 @@ def _address(candidate: str, found_as: str, field: str) -> Match | UnreadCandida
     produce an address that looks right, which is the one thing a Contact Point must
     never be, since it can join two accounts on nothing else.
 
+    **An address is folded for spacing and for nothing else.** A space cannot occur in an
+    address at all, so removing it cannot merge two addresses that both exist; a full stop
+    cannot be removed from either half of one, because a full stop is a label boundary in
+    both and `vantage.ledger.example` is not `vantage-ledger.example`. It is not folded
+    for substitution, which a username is: nothing in a post says whether `desk@gr4vy.io`
+    means `gravy.io`, and a guess that joins two accounts over two different domains is
+    the failure this module exists to avoid. See `_SUBSTITUTION`.
+
     **The host is case-folded and the local part is not.** RFC 5321 makes the domain
     case-insensitive and says nothing of the sort about the local part, so
     `desk@vantage-ledger.example` and `DESK@VANTAGE-LEDGER.EXAMPLE` are one mailbox
@@ -336,21 +669,24 @@ def _address(candidate: str, found_as: str, field: str) -> Match | UnreadCandida
     shared identifier between two accounts that share nothing — the one failure this
     module exists to avoid, arrived at by being helpful.
     """
-    _, _, host = candidate.partition("@")
+    spaced = "".join(character for character in candidate if not character.isspace())
+    _, _, host = spaced.partition("@")
     labels = host.split(".")
     if len(labels) < 2 or any(not _LABEL.match(label) for label in labels):
         return UnreadCandidate(found_as, field, Unread.NO_DOMAIN)
-    if len(candidate) > _MAX_ADDRESS_CHARS:
+    if len(spaced) > _MAX_ADDRESS_CHARS:
         return UnreadCandidate(found_as, field, Unread.ADDRESS_TOO_LONG)
     return Match(
         kind=ContactKind.EMAIL,
-        value=f"{candidate.partition('@')[0]}@{host.lower()}",
+        value=f"{spaced.partition('@')[0]}@{host.lower()}",
         found_as=found_as,
         field=field,
     )
 
 
-def _handle(name: str, found_as: str, field: str) -> Match | UnreadCandidate:
+def _handle(
+    name: str, found_as: str, field: str, writing: Writing = Writing.PLAIN
+) -> Match | UnreadCandidate:
     """One candidate read as a Telegram username, or the reason it is not one.
 
     Telegram's own limits, read from the service: five to thirty-two characters,
@@ -364,17 +700,39 @@ def _handle(name: str, found_as: str, field: str) -> Match | UnreadCandidate:
     distinguish it: `@Syn_VantageLedger` and `@syn_vantageledger` are one username. The
     spelling each was written in travels with the value, so a reader can tell that from
     two accounts writing it identically.
+
+    **Two folds, kept apart because they rest on different evidence.** A substitution
+    needs none: a digit is a letter standing in for one whether or not anything else
+    about the run says so, which is why `@syn_vantag3ledger` and `@syn_vantageledger`
+    are one Contact Point here — and why substitution can merge two usernames that both
+    exist, which is why `Recall` counts the folds and names the posts they moved.
+    Dropping a separator needs the run to have been written out, because a full stop or
+    a hyphen in a username is illegal whatever the intent was: `@someone.co.uk` is a
+    mask on an address far more often than it is a disguised handle, so read plainly it
+    is refused and named `handle_character` where a written-out run has its separators
+    taken out and reaches the username they were hiding.
+
+    A link on Telegram's own host names a username in one path segment with nothing to
+    write out, so it arrives here with the plain default.
     """
-    if not name:
+    canonical = name.translate(_SUBSTITUTION)
+    if writing is Writing.OBFUSCATED:
+        canonical = "".join(
+            character for character in canonical if character in _HANDLE_CHARS
+        )
+    if not canonical:
         return UnreadCandidate(found_as, field, Unread.NO_NAME)
-    if len(name) < _MIN_HANDLE_CHARS:
+    if len(canonical) < _MIN_HANDLE_CHARS:
         return UnreadCandidate(found_as, field, Unread.HANDLE_TOO_SHORT)
-    if len(name) > _MAX_HANDLE_CHARS:
+    if len(canonical) > _MAX_HANDLE_CHARS:
         return UnreadCandidate(found_as, field, Unread.HANDLE_TOO_LONG)
-    if not _USERNAME.match(name):
+    if not _USERNAME.match(canonical):
         return UnreadCandidate(found_as, field, Unread.HANDLE_CHARACTER)
     return Match(
-        kind=ContactKind.TELEGRAM, value=name.lower(), found_as=found_as, field=field
+        kind=ContactKind.TELEGRAM,
+        value=canonical.lower(),
+        found_as=found_as,
+        field=field,
     )
 
 
@@ -443,8 +801,8 @@ def _post(item: CorpusItem) -> PostContacts:
     unread: list[UnreadCandidate] = []
 
     for field_name, text_value in ((name, getattr(item, name)) for name in _FIELDS):
-        for found in _CANDIDATE.finditer(text_value):
-            _record(_read_point(found.group(0), field_name), matches, unread)
+        for candidate in _candidates(text_value):
+            _record(_read_point(candidate, field_name), matches, unread)
 
     for link in item.links:
         _record(_from_link(link), matches, unread)
@@ -498,6 +856,7 @@ def survey(
     rows: Sequence[PostContacts],
     points: Mapping[tuple[ContactKind, str], SharedContact],
     corpus_path: Path,
+    labelled_path: Path,
 ) -> ContactFacts:
     """Derive every figure the report prints, from the rows and the bytes behind them."""
     return ContactFacts(
@@ -508,6 +867,8 @@ def survey(
         corpus_sha256=hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
         handles=sum(1 for point in points if point[0] is ContactKind.TELEGRAM),
         handles_marked=sum(1 for point in points.values() if _is_marked(point)),
+        labelled_path=labelled_path.as_posix(),
+        labelled_sha256=hashlib.sha256(labelled_path.read_bytes()).hexdigest(),
         matches=sum(len(row.matches) for row in rows),
         points=len(points),
         posts=len(rows),
@@ -543,22 +904,195 @@ def _is_synthetic(point: SharedContact) -> bool:
     return _is_reserved(point) or _is_marked(point)
 
 
-def contact_points(corpus_path: Path) -> ContactPoints:
-    """Read the Corpus, and return every post's Contact Points and what they reach.
+@dataclass(frozen=True, slots=True)
+class Finding:
+    """Where a measurement found something, and what it found.
 
-    One call, for the same reason the grouping is one call: the per-post rows, the
-    shared list, and the figures are three views of one pass over the Corpus, and a
-    caller that extracted and then asked for the sharing separately could end up
+    The two facts every finding carries, and the reason they are a type rather than four
+    fields copied into three dataclasses: the measurement is read by a reader checking one
+    post at a time, and every finding in it is a post and a value in that post.
+    """
+
+    post_id: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
+class Missed(Finding):
+    """A Contact Point the Corpus publishes that this run did not read."""
+
+    written_as: str
+    written: Writing
+
+
+@dataclass(frozen=True, slots=True)
+class Invented(Finding):
+    """A Contact Point read out of a post the labelled set says publishes none."""
+
+    written_as: str
+
+
+@dataclass(frozen=True, slots=True)
+class Stray(Finding):
+    """A Contact Point read out of a post that publishes one, and it is not that one.
+
+    The case a fold has when it is wrong: two Contact Points the Corpus publishes
+    separately have been read as one value, so one of them is missing from the output and
+    the other has been reported in a post that did not publish it. It is the only way the
+    reading can join two accounts that share nothing, which is why each one is printed
+    with both values rather than counted.
+    """
+
+    published: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Recall:
+    """What the reading found against what the Corpus publishes.
+
+    Three numbers and three lists, and the three lists are what make the numbers
+    checkable: how much of what was published was found, how much was invented where
+    nothing was published, and how many published Contact Points came out under another
+    one's name. Each is counted over the labelled set rather than over the run, so none of
+    them can be moved by a change to the Corpus that the labels do not move with.
+
+    The figure is a measurement of *this* reading over *this* Corpus, and the report says
+    so: a Corpus from a provider has no labelled set beside it, and a reader wanting the
+    figure over other content has to label that content themselves.
+    """
+
+    posts: int
+    clean_posts: int
+    published: int
+    found: int
+    plain: int
+    plain_found: int
+    obfuscated: int
+    obfuscated_found: int
+    image: int
+    image_found: int
+    invented: tuple[Invented, ...]
+    missed: tuple[Missed, ...]
+    stray: tuple[Stray, ...]
+
+    @property
+    def invented_posts(self) -> int:
+        """The posts a Contact Point was invented in, which is the rate's numerator.
+
+        Counted over posts rather than over values: one post reading two invented values
+        is one post this reading was wrong about, and a rate over posts is the question
+        a reader of the Corpus is asking.
+        """
+        return len({entry.post_id for entry in self.invented})
+
+
+def measure(
+    rows: Sequence[PostContacts], published: Sequence[PublishedPost]
+) -> Recall:
+    """What this reading found, against what the Corpus says each post publishes.
+
+    Takes the finished reading rather than the Corpus, which is the whole reason this can
+    sit in the same command as the reading: the labels reach nothing that decides what is
+    read, because the only thing they reach is this function and this function is handed
+    the result. `tests/test_contact_points.py` holds that by running the reading over the
+    Corpus twice, once with the labelled set beside it and once without, and asserting
+    the rows are identical.
+
+    A labelled post the Corpus does not hold, or a Corpus post the labelled set does not
+    cover, is refused rather than measured: a recall figure over a subset of the posts
+    would read as a figure over the Corpus, and a false-positive rate with the posts that
+    publish nothing left out of it has no denominator.
+    """
+    read = {
+        row.post_id: {(match.kind, match.value): match for match in row.matches}
+        for row in rows
+    }
+    labelled = {post.post_id: post for post in published}
+    missing = sorted(set(read) - set(labelled))
+    if missing:
+        raise ValueError(
+            f"the labelled set says nothing about {missing}, and a recall figure over "
+            "some of the posts is a figure over none of the Corpus"
+        )
+    extra = sorted(set(labelled) - set(read))
+    if extra:
+        raise ValueError(
+            f"the labelled set names {extra}, which the Corpus does not hold"
+        )
+
+    missed: list[Missed] = []
+    invented: list[Invented] = []
+    stray: list[Stray] = []
+    published_count = {writing: 0 for writing in Writing}
+    found_count = {writing: 0 for writing in Writing}
+
+    for post_id in sorted(labelled):
+        found = read[post_id]
+        claims = {contact.value: contact for contact in labelled[post_id].published}
+        for key, match in found.items():
+            if key[1] in claims:
+                continue
+            if claims:
+                stray.append(
+                    Stray(post_id=post_id, value=key[1], published=tuple(sorted(claims)))
+                )
+            else:
+                invented.append(
+                    Invented(post_id=post_id, value=key[1], written_as=match.found_as)
+                )
+        for contact in labelled[post_id].published:
+            published_count[contact.written] += 1
+            if (contact.kind, contact.value) in found:
+                found_count[contact.written] += 1
+            else:
+                missed.append(
+                    Missed(
+                        post_id=post_id,
+                        value=contact.value,
+                        written_as=contact.written_as,
+                        written=contact.written,
+                    )
+                )
+
+    return Recall(
+        posts=len(labelled),
+        clean_posts=sum(1 for post in published if not post.published),
+        published=sum(published_count.values()),
+        found=sum(found_count.values()),
+        plain=published_count[Writing.PLAIN],
+        plain_found=found_count[Writing.PLAIN],
+        obfuscated=published_count[Writing.OBFUSCATED],
+        obfuscated_found=found_count[Writing.OBFUSCATED],
+        image=published_count[Writing.IMAGE],
+        image_found=found_count[Writing.IMAGE],
+        invented=tuple(invented),
+        missed=tuple(missed),
+        stray=tuple(stray),
+    )
+
+
+def contact_points(corpus_path: Path, labelled_path: Path) -> ContactPoints:
+    """Read the Corpus, measure the reading against the labelled set, and return both.
+
+    One call, for the same reason the grouping is one call: the per-post rows, the shared
+    list, the figures, and the measurement are four views of one pass over the Corpus, and
+    a caller that extracted and then asked for the sharing separately could end up
     printing one run's figures over another's results.
 
     The Corpus is read rather than generated, because the file is the boundary
-    (ADR-0001, ADR-0008). No published list is read: nothing about what a post says to
-    be reached at depends on what anybody registered.
+    (ADR-0001, ADR-0008). The labelled set is read afterwards and only to be measured
+    against, and no published list is read at all: nothing about what a post says to be
+    reached at depends on what anybody registered.
     """
     corpus = read_corpus(corpus_path)
     rows = extract(corpus)
     points = _reach(rows)
-    return ContactPoints(facts=survey(rows, points, corpus_path), points=points, rows=rows)
+    return ContactPoints(
+        facts=survey(rows, points, corpus_path, labelled_path),
+        points=points,
+        recall=measure(rows, read_published(labelled_path)),
+        rows=rows,
+    )
 
 
 def write_post_contacts(path: Path, rows: Sequence[PostContacts]) -> None:
@@ -620,6 +1154,7 @@ def _figures(found: ContactPoints) -> str:
     """What was read, and what came of it. One figure per line, labelled."""
     facts = found.facts
     kinds = ", ".join(kind.value for kind in found.kinds) or "none"
+    recall = found.recall
     entries = (
         ("corpus", f"{facts.corpus_path} ({_count(facts.posts, 'post')} across "
                    f"{_count(facts.accounts, 'account')})"),
@@ -629,13 +1164,18 @@ def _figures(found: ContactPoints) -> str:
             "read",
             f"{_count(facts.points, 'Contact Point')} from {facts.posts_with_points} of "
             f"{facts.posts} posts, {facts.matches} occurrences: "
-            f"{_count(facts.addresses, 'email address')}, "
+            f"{facts.addresses} {_plural(facts.addresses, 'email address', 'email addresses')}, "
             f"{facts.handles} telegram {_plural(facts.handles, 'handle', 'handles')}",
         ),
         (
             "unread",
             f"{_count(facts.unread, 'unread candidate')}, naming no Contact Point",
         ),
+        ("labelled", _labelled(facts, recall)),
+        ("recall", _recall(recall)),
+        ("picture", _pictures(recall)),
+        ("invented", _invented(recall)),
+        ("folded", _folded(recall)),
         ("synthetic", f"{facts.synthetic} of {facts.points} are Synthetic Entities"),
         (
             "reserved",
@@ -650,6 +1190,86 @@ def _figures(found: ContactPoints) -> str:
     )
     width = max(len(name) for name, _ in entries)
     return "\n".join(f"  {name.ljust(width)}  {value}" for name, value in entries)
+
+
+def _labelled(facts: ContactFacts, recall: Recall) -> str:
+    """Where the figure underneath comes from, so it can be taken apart by a reader.
+
+    The path the run actually read, from the facts, rather than the one the command
+    defaults to: a report naming a file this run did not measure against would send a
+    reader to check the wrong rows, and the same bytes would be a different report over a
+    different labelled set.
+    """
+    return (
+        f"{facts.labelled_path}: {recall.posts} posts, "
+        f"{_count(recall.published, 'Contact Point')} published between them"
+    )
+
+
+def _recall(recall: Recall) -> str:
+    """What was found of what was published, split by how it was published.
+
+    The split is the figure rather than a footnote on it: 10 of 12 tells a reader
+    nothing, while 9 of 9 written plainly and 3 of 4 written out tells them that the
+    tolerance works and something else does not.
+    """
+    return (
+        f"{recall.found} of {recall.published} Contact Points the Corpus publishes were "
+        f"found: {recall.plain_found} of {recall.plain} published plainly, "
+        f"{recall.obfuscated_found} of {recall.obfuscated} written out"
+    )
+
+
+def _pictures(recall: Recall) -> str:
+    """The Contact Points published only as a picture of one.
+
+    Counted rather than left to the reader to infer from a recall figure, because this
+    build cannot read an image at all: a reader who was told only that two Contact Points
+    were missed would have to guess whether the reading was wrong or whether the
+    information was never in the text.
+    """
+    if not recall.image:
+        return "no Contact Point in this Corpus is published only as a picture"
+    return (
+        f"{recall.image} of the {recall.published} is published only as a picture of one "
+        "and cannot be read by anything in this project"
+    )
+
+
+def _invented(recall: Recall) -> str:
+    """What was read where the Corpus publishes nothing at all.
+
+    The only figure here that can join two accounts that share nothing, so it is counted
+    over the posts that publish nothing — the denominator a false-positive rate needs —
+    and every invented value is named in the report beside it.
+    """
+    if recall.invented_posts:
+        return (
+            f"{recall.invented_posts} of the {recall.clean_posts} posts that publish none "
+            f"had {_plural(recall.invented_posts, 'a Contact Point', 'Contact Points')} "
+            "invented in them"
+        )
+    return (
+        f"no Contact Point read in the {_count(recall.clean_posts, 'post')} that "
+        f"{_plural(recall.clean_posts, 'publishes', 'publish')} none"
+    )
+
+
+def _folded(recall: Recall) -> str:
+    """Where a published Contact Point came out under another one's name.
+
+    The failure the fold can cause, which is not a missed Contact Point but a joined
+    pair of them, so it is counted separately from the misses and named in the report.
+    """
+    if recall.stray:
+        return (
+            f"{recall.found} of {recall.published} found, but {len(recall.stray)} of them "
+            "is a value the post publishing it does not publish"
+        )
+    return (
+        f"every Contact Point found is the one its own post publishes; no fold joined two "
+        "of the values the Corpus publishes"
+    )
 
 
 def _plural(number: int, one: str, many: str) -> str:
@@ -705,17 +1325,18 @@ def _points(found: ContactPoints) -> str:
 
 def _footer(found: ContactPoints) -> str:
     """What the run can and cannot claim, stated at the point of use rather than in a
-    ticket: the recall limit, the two kinds of handle this build cannot tell apart,
-    what it does not group on, and why every figure above is a Synthetic Entity."""
+    ticket: what the measured recall does and does not cover, the two kinds of handle this
+    build cannot tell apart, what it does not group on, and why every figure above is a
+    Synthetic Entity."""
+    recall = found.recall
     return f"""\
-Every figure above is a lower bound. What is read is every Contact Point a post names
-plainly, and the recall of that is unknown and probably poor: a handle written with
-separators between its characters, an address written as words rather than as an
-address, and a screenshot of either are all in the wild and none of them is found
-here. This build does no obfuscation tolerance at all, which is ticket #15's work, and
-until it lands nothing above should be read as how many Contact Points the Corpus
-holds. Deliberately disguised handles are a case the output cannot yet see, so the
-count is a floor and the sharing is a floor.
+Every figure above is a lower bound, and the recall figure above is what bounds it: the
+Contact Points in this Corpus that were not read are named in the report, one per row,
+rather than left to the reader to infer from a count. What the tolerance does not reach is
+stated rather than argued: a handle published only as a picture of one cannot be read by
+anything in this project, an address written as words has no `@` in it for any reader to
+find, and both are planted in this Corpus so that the recall figure is a measurement
+rather than a claim.
 
 A handle is read as a Telegram handle whatever service it belongs to. Every service
 writes one as `@name` and this build cannot tell which it came from, so a Contact Point
@@ -736,7 +1357,9 @@ content would read `0 of {found.facts.points}`, which is what measuring them buy
 
 Nothing on this path reads the truth file or the Nuisance Structure manifest, and no
 published list is read either: what a post says to be reached at does not depend on
-what anybody registered (ADR-0008)."""
+what anybody registered (ADR-0008). The labelled set is read, and only after the reading
+has finished, to be measured against: it names what each post publishes and cannot reach
+a decision about what was read."""
 
 
 def render_report(found: ContactPoints) -> str:
@@ -749,9 +1372,9 @@ def render_report(found: ContactPoints) -> str:
     facts = found.facts
     return f"""# Contact Points in the Corpus
 
-Generated by `rfi contact-points` from the Corpus file. Do not edit it by hand — a
-test holds this file to what that produces, and re-running the command rewrites it
-byte for byte.
+Generated by `rfi contact-points` from the Corpus file and the labelled set beside it.
+Do not edit it by hand — a test holds this file to what that produces, and re-running
+the command rewrites it byte for byte.
 
 ## What was read
 
@@ -767,13 +1390,18 @@ byte for byte.
 | Synthetic Entities | {facts.synthetic} of {facts.points} |
 | Corpus | `{facts.corpus_path}` |
 | SHA-256 of the Corpus | `{facts.corpus_sha256}` |
+| Labelled set | `{facts.labelled_path}` |
+| SHA-256 of the labelled set | `{facts.labelled_sha256}` |
+
+{_recall_section(found)}
 
 ## How a Contact Point is read
 
 A Contact Point is an off-platform identifier somebody can be reached at, and this
 build looks for two kinds and nothing else: an email address and a Telegram handle.
-Both are read **literally**. Nothing is repaired, and nothing that looks like one of
-these and is not one is dropped — it is reported with which of eight faults applied:
+Both are read from a post's own title, its own body, and its links, with the obfuscation
+tolerance stated below. Nothing that looks like one of these and is not one is dropped —
+it is reported with which of nine faults applied:
 
 {", ".join(f"`{reason.value}`" for reason in Unread)}
 
@@ -782,6 +1410,26 @@ to this step: a Contact Point is the one string in the Corpus that can join two
 accounts on nothing else, so a value that was guessed becomes a grouping edge nobody
 checked. A false positive here is not a wrong severity figure, which is what a Signal
 can produce; it is a shared identifier between two accounts that share nothing.
+
+**An identifier written out is read as the identifier underneath it.** A post that writes
+`@s.y.n._.v.a.n.t.a.g.e.l.e.d.g.e.r` or `@s y n _ v a n t a g e l e d g e r` publishes the
+same Contact Point as one that writes `@syn_vantageledger`, and a run of pieces that each
+hold one character is what a post writing an identifier out looks like. The words beside
+the identifier are not part of it: the run is read up to the first piece holding more than
+one character, so `@ s y n _ v a n t a g e l e d g e r, or ask in here` is the handle and
+not the sentence. **A full stop and a hyphen are dropped from a username and never from an
+address**, because neither can occur in a Telegram username at all while a full stop is a
+label boundary in both halves of an address, and `vantage.ledger.example` is not
+`vantage-ledger.example`.
+
+**A digit standing in for a letter is folded, and this is the one fold that can merge two
+Contact Points that are both real.** `0` is read as `o`, `1` as `i`, `3` as `e`, `4` as
+`a`, `5` as `s`, `7` as `t`, and `8` as `b`, so `@syn_v4ntag3ledger` and
+`@syn_vantageledger` are one Contact Point here. Dropping a separator cannot do that: a
+run holding a full stop was never a username, so the fold can only reach the one it was
+hiding, whereas `syn_vantag3ledger` is a username somebody may have registered and is
+counted as one. Every figure the fold can move is measured and printed — the recall
+figure above, the `folded` line beside it, and the spellings under every value.
 
 **Case and trailing punctuation are normalised, and the spelling is kept.** A handle is
 `@someone`, and Telegram usernames do not distinguish case, so `@Syn_VantageLedger` and
@@ -797,7 +1445,10 @@ The host is case-folded, because RFC 5321 says a domain is case-insensitive. The
 before the `@` is not, because RFC 5321 says nothing of the sort about it: folding both
 would merge `Desk@` and `desk@` into one mailbox that may be two, which is a shared
 identifier between two accounts that share nothing — this module inventing a grouping
-edge in order to be helpful, which is the failure it exists to avoid.
+edge in order to be helpful, which is the failure it exists to avoid. An address is
+folded for spacing and for substitution and for nothing else, so a local part written out
+(`i n t a k e @vantage-ledger.example`) is read as `intake@vantage-ledger.example` while
+`intake @ vantage-ledger.example` is not read at all.
 
 **A link is read for a Contact Point, on the same rule as any other link.** A
 `mailto:` names an address rather than a page — `rfi post-domains` reports it as naming
@@ -815,14 +1466,25 @@ not, because it has not acquired a second reach.
 
 ## What this cannot claim
 
-Every figure above is a lower bound, and the output says so at the point of use rather
-than only here. Nothing is done about a handle written with separators between its
-characters, an address written as words rather than as an address, or a screenshot of
-either: this build does no obfuscation tolerance at all. The recall is unmeasured, and
-measuring it is ticket #15's work.
+Every figure above is a lower bound, and the measured recall above is what bounds it: the
+Contact Points this Corpus publishes that were not read are named one per row in the
+section above, so the shortfall can be read rather than inferred from a count. What the
+tolerance does not reach is planted in the Corpus so that it is measured rather than
+asserted: a handle published only as a picture of one is unreadable by anything in this
+project, and an address written as words has no `@` in the post for any reader to find.
+
+The one false positive the tolerance has that reading literally did not is stated rather
+than hidden: a post that spaces out the letters of a *word* beside an `@` produces the
+same shape as one writing out a handle, and `email me @ t o n i g h t at 8` is read as
+the handle `tonight`. Nothing in the text tells the two apart. A Contact Point invented
+is worse here than one missed — a miss is the floor the output already declares, an
+invented value is a shared identifier ADR-0005 would group two accounts on — so the
+reading is kept for the shapes that are common, this case is measured against the
+labelled set, and the `invented` figure beside the recall is the number that would show
+it happening in a Corpus of other content.
 
 A handle is read as a Telegram handle whatever service it belongs to. Every service
-writes one as `@name` and this build cannot tell which it came from, so a Contact Point
+writes one as `@name` and this build cannot tell them apart, so a Contact Point
 belonging to another service is reported as though it were this one.
 
 Nothing here groups on a Contact Point. ADR-0005 permits one as a grouping edge and
@@ -845,6 +1507,106 @@ since Telegram reserves no namespace of its own.
 
 {_post_sections(found)}
 """
+
+
+def _recall_section(found: ContactPoints) -> str:
+    """What the reading found against what the Corpus publishes, and every miss named.
+
+    A recall figure with no list beside it is a number to take on trust, and this one
+    bounds every other figure in the page: the Contact Points below are the ones a count
+    of Contact Points is not counting. So each miss is a row carrying the post, the value,
+    and how that post published it, and the false positives are named the same way rather
+    than counted, because a reader has to be able to see which post to go and look at.
+    """
+    recall = found.recall
+    lines = [
+        "## What the reading found, and what it missed",
+        "",
+        f"Measured against `{found.facts.labelled_path}`, which `rfi generate-corpus` writes",
+        "beside the Corpus: one row per post, naming every Contact Point that post",
+        "publishes and whether it published it plainly, written out, or only as a",
+        "picture of one. The figure is of *this* reading over *this* Corpus — a Corpus",
+        "from a provider has no labelled set beside it, and measuring this reading",
+        "over other content means labelling that content.",
+        "",
+        "| How it was published | Published | Found |",
+        "| --- | ---: | ---: |",
+        f"| Plainly | {recall.plain} | {recall.plain_found} |",
+        f"| Written out | {recall.obfuscated} | {recall.obfuscated_found} |",
+        f"| As a picture of one | {recall.image} | {recall.image_found} |",
+        f"| All | {recall.published} | {recall.found} |",
+        "",
+        _misses(recall),
+        "",
+        _invented_rows(recall),
+        "",
+        _stray_rows(recall),
+    ]
+    return "\n".join(lines)
+
+
+def _misses(recall: Recall) -> str:
+    """Every Contact Point the Corpus publishes that this run did not read."""
+    if not recall.missed:
+        return f"""Every one of the {recall.published} Contact Points this Corpus publishes was read.
+That is a figure about this Corpus's own contact details and not about contact
+details in general: a Corpus that published none would read exactly the same way."""
+    rows = "\n".join(
+        f"| `{miss.post_id}` | `{miss.value}` | `{miss.written_as}` | {miss.written.value} |"
+        for miss in recall.missed
+    )
+    return f"""{len(recall.missed)} of the {recall.published} Contact Points this Corpus publishes
+were not read, and these are all of them:
+
+| Post | Contact Point | Published as | Written |
+| --- | --- | --- | --- |
+{rows}"""
+
+
+def _invented_rows(recall: Recall) -> str:
+    """Every Contact Point read out of a post that publishes none.
+
+    The figure that can produce a grouping edge nobody checked, so it is named per post
+    rather than counted: the rate is the count and the rows are what a reviewer needs to
+    decide whether the reading is wrong here or the label is.
+    """
+    if not recall.invented:
+        return f"""No Contact Point was read out of any of the {recall.clean_posts} posts that publish
+none, so the false-positive rate of this reading over this Corpus is 0 of
+{recall.clean_posts}."""
+    rows = "\n".join(
+        f"| `{entry.post_id}` | `{entry.value}` | `{entry.written_as}` |"
+        for entry in recall.invented
+    )
+    return f"""A Contact Point was read out of {len(recall.invented)} of the {recall.clean_posts} posts
+that publish none, and each one is named so a reviewer can tell a reading that is
+wrong here from a label that is:
+
+| Post | Read as | Written as |
+| --- | --- | --- |
+{rows}"""
+
+
+def _stray_rows(recall: Recall) -> str:
+    """Where a value was read that the post publishing a Contact Point does not publish.
+
+    A fold that has joined two values shows up here and nowhere else, and it is the only
+    way this reading can put two accounts together that share nothing.
+    """
+    if not recall.stray:
+        return """Every Contact Point read is the one its own post publishes, so no fold joined two of
+the Contact Points this Corpus publishes."""
+    rows = "\n".join(
+        f"| `{entry.post_id}` | "
+        f"{', '.join(f'`{value}`' for value in entry.published)} | `{entry.value}` |"
+        for entry in recall.stray
+    )
+    return f"""{len(recall.stray)} of the values read are not the value the post publishing one
+publishes, which is what a fold that has joined two Contact Points looks like from here:
+
+| Post | Publishes | Read as |
+| --- | --- | --- |
+{rows}"""
 
 
 def _point_table(found: ContactPoints) -> str:

@@ -47,6 +47,7 @@ NUISANCE_KINDS = frozenset(
         "hard_negative",
         "known_shared_infrastructure",
         "near_miss_domain_pair",
+        "obfuscated_contact",
         "single_account_domain",
         "staggered_paraphrase",
     }

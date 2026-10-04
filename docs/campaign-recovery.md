@@ -51,7 +51,7 @@ missing.
 
 ## What it was measured against
 
-`data/corpus/nuisance.jsonl` holds 19 records, and they are the
+`data/corpus/nuisance.jsonl` holds 20 records, and they are the
 baseline this figure sits on: a recovery rate over a Corpus that held nothing else would
 be a figure about a generator that planted two campaigns and said so nowhere. Every kind
 is printed below, including any the manifest has lost, because a baseline that quietly
@@ -65,6 +65,7 @@ two records and is one account.
 | `hard_negative` | 8 | 8 | 8 |
 | `known_shared_infrastructure` | 3 | 10 | 10 |
 | `near_miss_domain_pair` | 2 | 2 | 2 |
+| `obfuscated_contact` | 1 | 3 | 7 |
 | `single_account_domain` | 3 | 3 | 3 |
 | `staggered_paraphrase` | 1 | 3 | 4 |
 
@@ -124,7 +125,7 @@ this page was written:
 
 | File | SHA-256 |
 | --- | --- |
-| `data/corpus/corpus.jsonl` | `75cdc153bf3935715ab1fbbd74f4447e9b85278e6cf7658f6e17b911d8a0b70b` |
+| `data/corpus/corpus.jsonl` | `3dbda898eb9a262ffdc9fa817c8bbadfd394315e45ca8211218da6615c20703f` |
 | `data/campaigns/campaign-candidates.jsonl` | `9de22d696ef985a9aa87996b39ca99d8e5b8f502873b577a92d79ee4ebab438b` |
 | `data/corpus/truth.jsonl` | `fcb21f160c9eb213400716e559cc8d1239c074340997454b1ef3e8be913f8f7c` |
-| `data/corpus/nuisance.jsonl` | `9157ef5fa66ffb3cd98d7d4c55f8c1b0c59bb3b7d1d6d504e68c6bca05395b45` |
+| `data/corpus/nuisance.jsonl` | `702b4824be49aed370d41ceceeb11addf8f9089275d33be73805b9900a9be2ec` |

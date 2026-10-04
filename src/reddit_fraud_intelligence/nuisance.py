@@ -28,7 +28,14 @@ from dataclasses import dataclass, fields
 from enum import StrEnum
 from pathlib import Path
 
-from reddit_fraud_intelligence.content import SyntheticPost, link_hosts
+from reddit_fraud_intelligence.contacts import Writing
+from reddit_fraud_intelligence.content import (
+    SyntheticPost,
+    address,
+    link_hosts,
+    picture,
+    telegram,
+)
 from reddit_fraud_intelligence.infrastructure import BIO_PAGE, HOP_CUT, PASTE_VAULT
 from reddit_fraud_intelligence.jsonl import (
     JsonObject,
@@ -36,6 +43,7 @@ from reddit_fraud_intelligence.jsonl import (
     read_object,
     read_rows,
     read_text,
+    read_vocabulary,
     refuse_repeated,
     write_lines,
 )
@@ -48,6 +56,7 @@ class NuisanceKind(StrEnum):
     HARD_NEGATIVE = "hard_negative"
     KNOWN_SHARED_INFRASTRUCTURE = "known_shared_infrastructure"
     NEAR_MISS_DOMAIN_PAIR = "near_miss_domain_pair"
+    OBFUSCATED_CONTACT = "obfuscated_contact"
     SINGLE_ACCOUNT_DOMAIN = "single_account_domain"
     STAGGERED_PARAPHRASE = "staggered_paraphrase"
 
@@ -452,6 +461,9 @@ _HARD_NEGATIVES = (
                 "first place."
             ),
             links=(f"https://{PASTE_VAULT}/g7k",),
+            published=(
+                telegram("syn_vantageledger", "@Syn_VantageLedger"),
+            ),
         ),
         note=(
             "Someone who lost money, quoting the pitch back. This is the Hard Negative a "
@@ -597,12 +609,196 @@ _NEAR_MISS_PAIRS = (
     ),
 )
 
+# One desk publishing the same reach five ways, which is the material that makes an
+# extraction's recall and its false-positive rate measurable at all. Nothing here shares a
+# registrable domain with anything else, so none of it can form a Campaign Candidate and
+# the whole structure is about the reading rather than about the grouping: an operator
+# whose handle has been reported writes it out, and an operator whose handle is being
+# hunted stops putting it in text at all.
+#
+# The five are planted because each is a different limit of one reading, and a limit that
+# is not planted is a limit that can move without anything failing:
+#
+#   1. the handle written out with a full stop between its characters
+#   2. the same handle written out with a space between them, from a second account —
+#      which is the case the whole reading exists for, since two accounts publishing the
+#      same reach two different ways is one shared Contact Point and two contacts
+#      nobody can join
+#   3. the intake address with digits standing in for letters
+#   4. the handle published only as a screenshot, which nothing in this project can read
+#   5. the address written as words, with no `@` anywhere in the post for a reader to
+#      find
+#
+# Between them they also carry the near-misses that keep the false-positive rate honest:
+# an `@` beside a price and an `@` beside a time, neither of which names a Contact Point.
+_OBFUSCATED_CONTACTS = NuisanceStructure(
+    kind=NuisanceKind.OBFUSCATED_CONTACT,
+    nuisance_id="syn-nuisance-obfuscated-copperlantern",
+    spread_hours=30 * 24,
+    hosts=("copperlantern.example",),
+    posts=(
+        SyntheticPost(
+            account="syn_wintermarch_4417",
+            subreddit="CryptoCurrency",
+            title="Desk still taking entries, handle changed twice this month",
+            body=(
+                "Same desk, new handle, because the old one stopped answering. It is "
+                "@s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n and it is the only one that is current. "
+                "Entries are sized off liquidity sweeps as before, minimum ticket 500 "
+                "USDT, and the onboarding call is still compulsory before anything is "
+                "shown. Nothing about the offer has changed except where to reach it, and "
+                "the desk was @ 4200 a month last spring, which is the only thing I have "
+                "seen change."
+            ),
+            links=(),
+            published=(
+                telegram(
+                    "syn_copperlantern",
+                    "@s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n",
+                    writing=Writing.OBFUSCATED,
+                ),
+            ),
+        ),
+        SyntheticPost(
+            account="syn_halberdmoor_8823",
+            subreddit="CryptoMarkets",
+            title="Second hand on that desk, spacing the handle out because the plain one went",
+            body=(
+                "I had the same one and lost it to a filter, so I write it out: "
+                "@s y n _ c o p p e r l a n t e r n. Same numbers as before, minimum 500 "
+                "USDT, call still compulsory, and it is the same desk rather than a new "
+                "one. If a handle is written out here it is because the plain version was "
+                "reported, not because anything about the offer is different."
+            ),
+            links=(),
+            published=(
+                telegram("syn_copperlantern", "@s y n _ c o p p e r l a n t e r n", writing=Writing.OBFUSCATED),
+            ),
+        ),
+        SyntheticPost(
+            account="syn_wintermarch_4417",
+            subreddit="CryptoCurrency",
+            title="Intake by email as well, and the digit in it stays a digit",
+            body=(
+                "Email works as well as the handle: 1ntake@copper-lantern.example. Same "
+                "desk and same terms, and I have had two addresses taken down this year "
+                "so do not expect a reply straight away. It was busy @ 9 both times I "
+                "tried before nine in the evening."
+            ),
+            links=(),
+            published=(
+                address(
+                    "1ntake@copper-lantern.example",
+                    "1ntake@copper-lantern.example",
+                ),
+            ),
+        ),
+        SyntheticPost(
+            account="syn_thrushmoot_5524",
+            subreddit="CryptoMarkets",
+            title="Same desk once more, with the letter swapped for the digit it looks like",
+            body=(
+                "Third version of the handle and the last one I am typing out. It is "
+                "@syn_c0pperlantern, which is the same handle with the o written as a "
+                "zero, and none of the terms have moved: minimum 500 USDT, call before "
+                "anything is shown, and the figures are the ones already posted here. If "
+                "this one goes as well then the channel is in the profile and that is the "
+                "end of it."
+            ),
+            links=(),
+            published=(
+                telegram(
+                    "syn_copperlantern",
+                    "@syn_c0pperlantern",
+                    writing=Writing.OBFUSCATED,
+                ),
+            ),
+        ),
+        SyntheticPost(
+            account="syn_halberdmoor_8823",
+            subreddit="CryptoCurrency",
+            title="The handle is in the picture, because the text version keeps getting actioned",
+            body=(
+                "Screenshot of the channel rather than the text of it, since the text "
+                "version gets actioned every single time it goes up. Nothing else about "
+                "the offer has changed and the figures are the ones already posted here, "
+                "so this is the same desk and not a new one."
+            ),
+            links=("https://copperlantern.example/intake-screen",),
+            published=(
+                picture(
+                    "syn_copperlantern", "https://copperlantern.example/intake-screen"
+                ),
+            ),
+        ),
+        SyntheticPost(
+            account="syn_thrushmoot_5524",
+            subreddit="personalfinance",
+            title="Writing the address out in words, since the text version keeps going",
+            body=(
+                "Not putting the handle or the address in plain text any more. It is "
+                "intake at copper-lantern dot example and the channel is the one I posted "
+                "last month, written out the same way. Whoever reported it, thanks, it "
+                "cost me a week of replies and the terms have not moved at all."
+            ),
+            links=(),
+            published=(
+                address(
+                    "intake@copper-lantern.example",
+                    "intake at copper-lantern dot example",
+                    writing=Writing.OBFUSCATED,
+                ),
+            ),
+        ),
+        SyntheticPost(
+            account="syn_thrushmoot_5524",
+            subreddit="CryptoCurrency",
+            title="Nothing to reach me at in this one, the last version was taken down",
+            body=(
+                "No handle and no address in this one, because the last version of both "
+                "went and I am tired of retyping it. Terms are the same as every other "
+                "post from this desk: minimum 500 USDT, call before anything is shown. "
+                "Email me @ t o n i g h t at 8 if the channel is dead, which is the joke "
+                "and also the point: I have spelled a word out one letter at a time and "
+                "any filter reading that as a handle will be right about the shape and "
+                "wrong about the meaning."
+            ),
+            links=(),
+            published=(),
+        ),
+    ),
+    note=(
+        "One desk publishing the same Contact Point several ways, none of which a reader "
+        "reading literally would find. Three of them are found and are the case the "
+        "reading exists for: two accounts publishing one handle written out two "
+        "different ways, which is one shared Contact Point rather than two contacts "
+        "nobody can join, and a third publishing it with the letter written as the digit "
+        "it looks like. The address beside them is planted for the opposite reason: it "
+        "carries the same digit in its local part and is read exactly as it was written, "
+        "because a username is a name this reading will fold and an address is two names "
+        "somebody else registered. The next two are planted so that the recall figure "
+        "printed beside the Contact Points is a measurement rather than a promise: one is "
+        "a screenshot, which nothing in this project reads at all, and one is written as "
+        "words, with no `@` in the post for any reader to find. An extractor that found "
+        "everything the Corpus holds would be an extractor that had been measured on "
+        "nothing. The near-misses are there for the other half of the figure. The `@` "
+        "beside a price in two of the posts above is the easy one, and the last post here "
+        "is the expensive one: it publishes nothing at all and spells a word out beside an "
+        "`@`, which this reading invents the handle `tonight` from. That is the one false "
+        "positive the obfuscation tolerance costs, it is planted so that the report prints "
+        "it rather than leaving the figure to be assumed, and the test that the tolerance "
+        "does not invent out of clean text has to hold this exact number."
+    ),
+)
+
+
 STRUCTURES: tuple[NuisanceStructure, ...] = (
     *_SINGLE_ACCOUNT_DOMAINS,
     _DECOY_CLUSTER,
     _SHARED_DOMAIN_CLUSTER,
     *_HARD_NEGATIVES,
     *_NEAR_MISS_PAIRS,
+    _OBFUSCATED_CONTACTS,
 )
 
 # Spare material: the same kinds, a little stranger. A seed plants some of it and leaves
@@ -735,7 +931,7 @@ def _record(path: Path, number: int, text: str) -> NuisanceRecord:
             f"{sorted(vocabulary)}"
         )
     return NuisanceRecord(
-        kind=_kind(where, record["kind"]),
+        kind=read_vocabulary(where, "kind", record["kind"], NuisanceKind),
         nuisance_id=read_text(where, record, "nuisance_id"),
         accounts=read_names(where, record, "accounts"),
         posts=read_names(where, record, "posts"),
@@ -743,16 +939,6 @@ def _record(path: Path, number: int, text: str) -> NuisanceRecord:
         characters=_characters(where, record["characters"]),
         note=read_text(where, record, "note"),
     )
-
-
-def _kind(where: str, value: object) -> NuisanceKind:
-    if not isinstance(value, str):
-        raise ValueError(f"{where} names {value!r}, which is not a kind of Nuisance Structure")
-    try:
-        return NuisanceKind(value)
-    except ValueError as unknown:
-        kinds = ", ".join(kind.value for kind in NuisanceKind)
-        raise ValueError(f"{where} names {value!r}, and the kinds are {kinds}") from unknown
 
 
 def _characters(where: str, value: object) -> tuple[HardNegativeCharacter, ...]:

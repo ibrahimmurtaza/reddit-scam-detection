@@ -14,14 +14,21 @@
 {"account":"syn_rivermill_9085","contact_points":[],"matches":[],"post_id":"syn_p_0017","unread":[]}
 {"account":"syn_veldtrail_5502","contact_points":[],"matches":[],"post_id":"syn_p_0010","unread":[]}
 {"account":"syn_teasdale_4405","contact_points":[],"matches":[],"post_id":"syn_p_0022","unread":[]}
+{"account":"syn_wintermarch_4417","contact_points":["1ntake@copper-lantern.example"],"matches":[{"field":"body","found_as":"1ntake@copper-lantern.example.","kind":"email","value":"1ntake@copper-lantern.example"}],"post_id":"syn_p_0029","unread":[{"field":"body","found_as":"@ 9","reason":"handle_too_short"}]}
+{"account":"syn_halberdmoor_8823","contact_points":[],"matches":[],"post_id":"syn_p_0031","unread":[]}
 {"account":"syn_marrowgate_6205","contact_points":[],"matches":[],"post_id":"syn_p_0011","unread":[]}
 {"account":"syn_thistledown_9088","contact_points":[],"matches":[],"post_id":"syn_p_0009","unread":[]}
 {"account":"syn_novemberquill_2260","contact_points":[],"matches":[],"post_id":"syn_p_0018","unread":[]}
 {"account":"syn_halverson_8815","contact_points":[],"matches":[],"post_id":"syn_p_0019","unread":[]}
 {"account":"syn_greyloch_6612","contact_points":["syn_vantageledger"],"matches":[{"field":"body","found_as":"@Syn_VantageLedger","kind":"telegram","value":"syn_vantageledger"}],"post_id":"syn_p_0021","unread":[]}
 {"account":"syn_tideline_4471","contact_points":[],"matches":[],"post_id":"syn_p_0008","unread":[]}
+{"account":"syn_halberdmoor_8823","contact_points":["syn_copperlantern"],"matches":[{"field":"body","found_as":"@s y n _ c o p p e r l a n t e r n","kind":"telegram","value":"syn_copperlantern"}],"post_id":"syn_p_0028","unread":[]}
+{"account":"syn_mossgavel_2218","contact_points":[],"matches":[],"post_id":"syn_p_0034","unread":[]}
+{"account":"syn_thrushmoot_5524","contact_points":["syn_copperlantern"],"matches":[{"field":"body","found_as":"@syn_c0pperlantern","kind":"telegram","value":"syn_copperlantern"}],"post_id":"syn_p_0030","unread":[]}
 {"account":"syn_wrenfield_3308","contact_points":[],"matches":[],"post_id":"syn_p_0023","unread":[]}
 {"account":"syn_ashgrove_3318","contact_points":[],"matches":[],"post_id":"syn_p_0026","unread":[]}
 {"account":"syn_pennyfarthing_8834","contact_points":[],"matches":[],"post_id":"syn_p_0020","unread":[]}
+{"account":"syn_thrushmoot_5524","contact_points":["tonight"],"matches":[{"field":"body","found_as":"@ t o n i g h t","kind":"telegram","value":"tonight"}],"post_id":"syn_p_0033","unread":[]}
 {"account":"syn_marlowe_9960","contact_points":[],"matches":[],"post_id":"syn_p_0024","unread":[{"field":"body","found_as":"intake@","reason":"no_domain"}]}
-{"account":"syn_mossgavel_2218","contact_points":[],"matches":[],"post_id":"syn_p_0027","unread":[]}
+{"account":"syn_wintermarch_4417","contact_points":["syn_copperlantern"],"matches":[{"field":"body","found_as":"@s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n","kind":"telegram","value":"syn_copperlantern"}],"post_id":"syn_p_0027","unread":[{"field":"body","found_as":"@","reason":"prose"}]}
+{"account":"syn_thrushmoot_5524","contact_points":[],"matches":[],"post_id":"syn_p_0032","unread":[]}

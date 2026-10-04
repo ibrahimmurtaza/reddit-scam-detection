@@ -36,22 +36,74 @@ from pathlib import Path
 
 import pytest
 
-from reddit_fraud_intelligence.cli import DEFAULT_CORPUS_PATH, DEFAULT_SEED, main
-from reddit_fraud_intelligence.contacts import Unread
+from reddit_fraud_intelligence.cli import (
+    DEFAULT_CORPUS_PATH,
+    DEFAULT_LABELLED_PATH,
+    DEFAULT_SEED,
+    main,
+)
+from reddit_fraud_intelligence.contacts import (
+    ContactKind,
+    PublishedContact,
+    PublishedPost,
+    Unread,
+    Writing,
+    write_published,
+)
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
+from reddit_fraud_intelligence.jsonl import write_lines
 
 REPO_ROOT = Path(__file__).parent.parent
 COMMITTED_CONTACTS = REPO_ROOT / "data" / "contacts" / "post-contacts.jsonl"
 COMMITTED_REPORT = REPO_ROOT / "docs" / "contact-points.md"
 COMMITTED_CORPUS = REPO_ROOT / "data" / "corpus" / "corpus.jsonl"
+COMMITTED_LABELLED = REPO_ROOT / "data" / "corpus" / "labelled-contacts.jsonl"
 
 Row = Mapping[str, object]
+
+
+def write_labelled(
+    directory: Path,
+    corpus: Path,
+    published: Mapping[str, tuple[tuple[ContactKind, str, Writing], ...]] | None = None,
+) -> Path:
+    """The labelled set for a Corpus written inside a test, one row per post.
+
+    A post named in `published` gets those labels and every other post is labelled as
+    publishing nothing, which is what the generator writes for the overwhelming majority
+    of the Corpus and is what makes the false-positive figure a rate rather than a
+    fraction of nothing.
+
+    The shipped Corpus is the exception: it carries its own committed labels, so a test
+    that runs over it measures against what the generator actually wrote rather than
+    against an empty set this helper invented.
+    """
+    if corpus.resolve() == COMMITTED_CORPUS.resolve():
+        return DEFAULT_LABELLED_PATH
+    labelled = directory / "labelled-contacts.jsonl"
+    labels = published or {}
+    write_published(
+        labelled,
+        (
+            PublishedPost(
+                post_id=item.post_id,
+                published=tuple(
+                    PublishedContact(kind=kind, value=value, written_as=value, written=written)
+                    for kind, value, written in labels.get(item.post_id, ())
+                ),
+            )
+            for item in read_corpus(corpus)
+        ),
+    )
+    return labelled
 
 
 def run(
     directory: Path,
     corpus: Path = DEFAULT_CORPUS_PATH,
     capsys: pytest.CaptureFixture[str] | None = None,
+    published: Mapping[str, tuple[tuple[ContactKind, str, Writing], ...]] | None = None,
+    labelled: Path | None = None,
 ) -> tuple[Path, Path, str]:
     contacts_path = directory / "post-contacts.jsonl"
     report_path = directory / "contact-points.md"
@@ -60,6 +112,8 @@ def run(
             "contact-points",
             "--corpus",
             str(corpus),
+            "--labelled",
+            str(labelled or write_labelled(directory, corpus, published)),
             "--contacts",
             str(contacts_path),
             "--report",
@@ -285,6 +339,413 @@ def test_one_post_that_names_the_same_thing_twice_lists_it_once(tmp_path: Path) 
     assert len(records(written, "matches")) == 2
 
 
+def test_a_handle_written_out_character_by_character_is_the_one_handle(
+    tmp_path: Path,
+) -> None:
+    """The obfuscation that is in the wild, and the one both halves of it arrive in.
+
+    A handle written with a separator between its characters, and the same handle
+    written with a space between them, are one username underneath, and a post that
+    hides the handle that way has published the same Contact Point as a post that wrote
+    it plainly. Reading it is the whole of this ticket: a reader that only finds clean
+    forms is measuring the Corpus rather than the problem.
+
+    The spelling is reported beside the value, because the reader has to be able to go
+    back to the post and see what was actually written rather than take the value on
+    trust.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9008",
+                "syn_indots_9008",
+                body="Add me on @s.y.n._.v.a.n.t.a.g.e.l.e.d.g.e.r before you pay.",
+            ),
+            post(
+                "syn_p_9009",
+                "syn_inspace_9009",
+                body="Add me on @s y n _ v a n t a g e l e d g e r, or ask in here.",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+        ),
+    )
+    contacts_path, _, _ = run(tmp_path, corpus)
+
+    written = by_post(contacts_path)
+    assert points_of(written["syn_p_9008"]) == [("telegram", "syn_vantageledger")]
+    assert points_of(written["syn_p_9009"]) == [("telegram", "syn_vantageledger")]
+    assert text(records(written["syn_p_9008"], "matches")[0], "found_as") == (
+        "@s.y.n._.v.a.n.t.a.g.e.l.e.d.g.e.r"
+    )
+    assert text(records(written["syn_p_9009"], "matches")[0], "found_as") == (
+        "@s y n _ v a n t a g e l e d g e r"
+    )
+
+
+def test_a_handle_with_a_digit_standing_in_for_a_letter_is_the_same_handle(
+    tmp_path: Path,
+) -> None:
+    """Substitution, which is the one disguise that needs no shape to justify it.
+
+    A digit is not a character Telegram accepts in a username, so `syn_vantag3ledger`
+    is either a disguise or a typo and the handle underneath is the same either way. It
+    is also the one disguise that can merge two usernames which both exist, which is
+    why every spelling is printed beside the value and why the report measures how many
+    published names the reading folds together.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9010",
+                "syn_insubst_9010",
+                body="Desk is @syn_v4ntag3ledger if you want to check it first.",
+            ),
+        ),
+    )
+    contacts_path, _, _ = run(tmp_path, corpus)
+
+    written = by_post(contacts_path)["syn_p_9010"]
+    assert points_of(written) == [("telegram", "syn_vantageledger")]
+    assert text(records(written, "matches")[0], "found_as") == "@syn_v4ntag3ledger"
+
+
+def test_two_disguises_of_one_contact_point_are_reached_by_both_accounts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The claim the ticket exists for: one Contact Point, two spellings, two accounts.
+
+    An operator who writes the handle differently in every post has published one reach,
+    and a reader who cannot see that has two single-reach Contact Points and no sharing
+    at all — which is the whole failure this step has with domains rotated per post. So
+    the value is the folded one, the sharing counts the accounts, and both spellings are
+    printed in the block, so a reader can check that the fold is what joined them rather
+    than take the sharing on trust.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9011",
+                "syn_indisguise_a",
+                body="Intake is @s.y.n._.v.a.n.t.a.g.e.l.e.d.g.e.r.",
+            ),
+            post(
+                "syn_p_9012",
+                "syn_indisguise_b",
+                body="Same desk, @s y n _ v a n t a g e l e d g e r, or @syn_v4ntag3ledger.",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+            post(
+                "syn_p_9013",
+                "syn_indisguise_c",
+                body="A different operator, @syn_somebodyelse.",
+                created_at="2026-01-05T12:00:00Z",
+            ),
+        ),
+    )
+    _, _, printed = run(tmp_path, corpus, capsys)
+
+    assert "2 Contact Points read, 1 of them reached by 2 or more accounts" in printed
+    block = point_block(printed, "syn_vantageledger")
+    assert "shared, 2 posts, 2 accounts" in block
+    assert "@s.y.n._.v.a.n.t.a.g.e.l.e.d.g.e.r" in block
+    assert "@s y n _ v a n t a g e l e d g e r" in block
+    assert "@syn_v4ntag3ledger" in block
+    assert "syn_indisguise_c" not in block
+
+
+def test_an_address_written_out_is_the_same_address(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The address half of the ticket, and the one rule it is not given.
+
+    A local part written out character by character is an address, and the host beside
+    it can stay plain: the two disguises are independent and the reader judges each side
+    on its own. A full stop is never dropped from either half of an address, because a
+    full stop is a label boundary in both — `vantage.ledger.example` and
+    `vantage-ledger.example` are two hosts, and folding them together would put two
+    accounts in one Campaign Candidate over a string this project invented.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9014",
+                "syn_inaddrout_a",
+                body="Write to i n t a k e @vantage-ledger.example, they answer.",
+            ),
+            post(
+                "syn_p_9015",
+                "syn_inaddrout_b",
+                body="Or intake@vantage-ledger.example on weekdays.",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+            post(
+                "syn_p_9016",
+                "syn_inaddrout_c",
+                body="Nobody at desk@vantage-ledger.example, that host is theirs.",
+                created_at="2026-01-05T12:00:00Z",
+            ),
+            post(
+                "syn_p_9017",
+                "syn_inaddrout_d",
+                body="And desk@vantage.ledger.example is a different host altogether.",
+                created_at="2026-01-05T13:00:00Z",
+            ),
+        ),
+    )
+    _, _, printed = run(tmp_path, corpus, capsys)
+
+    assert "3 Contact Points read, 1 of them reached by 2 or more accounts" in printed
+    block = point_block(printed, "intake@vantage-ledger.example")
+    assert "shared, 2 posts, 2 accounts" in block
+    assert "i n t a k e @vantage-ledger.example" in block
+    # The dotted host stays a Contact Point of its own rather than being folded into
+    # the hyphenated one it resembles, so neither is reported as shared.
+    assert "shared" not in point_block(printed, "desk@vantage-ledger.example")
+    assert "shared" not in point_block(printed, "desk@vantage.ledger.example")
+
+
+def test_a_host_is_read_as_written_and_only_a_username_is_folded(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The limit of the substitution fold, and it is a limit on an address.
+
+    A username is a name the account owner chose and the ticket asks for the digit in it
+    to be folded; a host is a name somebody else registered, and `desk@gr4vy.io` and
+    `desk@gravy.io` are two domains that both exist. Folding the host would merge them on
+    a guess about a keyboard, which is the one merge this project must not make on its
+    own, and it would also turn `intake@vantage.ex4mple` into a Synthetic Entity by
+    removing the part that says it is a real registration.
+
+    The Corpus holds the same case on purpose — `1ntake@copper-lantern.example` is
+    published plainly and read exactly as written — so the `folded` figure is a measured
+    statement that no fold joined two values rather than a claim that none can.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9010",
+                "syn_inhostfold_a",
+                body="Both of these are the same desk, desk@gr4vy.io and desk@gravy.io.",
+            ),
+            post(
+                "syn_p_9010b",
+                "syn_inhostfold_b",
+                body="Mail 1ntake@copper-lantern.example, or intake@copper-lantern.example.",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+        ),
+    )
+    _, _, printed = run(tmp_path, corpus, capsys)
+
+    assert "4 Contact Points read" in printed
+    assert "no fold joined two of the values" in printed
+    for value in (
+        "desk@gr4vy.io",
+        "desk@gravy.io",
+        "1ntake@copper-lantern.example",
+        "intake@copper-lantern.example",
+    ):
+        assert value in printed
+    # Two domains and two mailboxes, none of them reported as shared with its twin.
+    assert "shared" not in point_block(printed, "desk@gr4vy.io")
+    assert "shared" not in point_block(printed, "desk@gravy.io")
+
+
+def test_a_run_written_out_before_the_at_is_read_as_one_run(
+    tmp_path: Path,
+) -> None:
+    """What a spaced-out price in front of a handle does, pinned so it is a decision.
+
+    The run around the `@` is read as one run, so `costs 5 0 0 @syn_vantageledger usdt`
+    reads `5 0 0` as the local part and finds no host. That is the same answer the
+    literal reading of ADR-0016 gave it — the token nearest the `@` there was `0` — so
+    obfuscation tolerance has not cost this case, but the shape is close enough to a
+    handle that the fault is worth naming: `no_domain`, reported, rather than a Contact
+    Point assembled out of a price and the handle beside it.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9009",
+                "syn_inprice_9009",
+                body="Entry costs 5 0 0, so costs 5 0 0 @syn_vantageledger usdt.",
+            ),
+        ),
+    )
+    contacts_path, _, _ = run(tmp_path, corpus)
+
+    written = by_post(contacts_path)["syn_p_9009"]
+    assert points_of(written) == []
+    assert unread_of(written) == [("5 0 0 @syn_vantageledger", "no_domain")]
+
+
+def test_reading_obfuscation_adds_no_contact_point_to_clean_text(
+    tmp_path: Path,
+) -> None:
+    """The false-positive half of the ticket, and the direction it has to fail in.
+
+    Obfuscation tolerance is the one change in this project that can invent a Contact
+    Point rather than merely miss one, and a wrong Contact Point is a shared identifier
+    between two accounts that share nothing. So the text below is the text that makes
+    it dangerous — an `@` beside ordinary words, beside a time, beside a price, beside
+    a masked address — and none of it may come out as a Contact Point.
+
+    Every one of them is reported rather than dropped, which is what makes the false
+    positive count in the report readable: a run quietly discarded would make a reading
+    that found nothing and a reading that found nothing because it refused to look
+    indistinguishable.
+
+    The dangerous shape is not here but in the shipped Corpus, because a test's own idea
+    of clean text is not a measurement: the Corpus holds a post that publishes nothing and
+    spells a word out beside an `@`, and the false-positive figure is counted over posts
+    like that one. `test_the_corpus_carries_the_obfuscation_the_recall_is_measured_over`
+    holds the exact number that shape costs.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9018",
+                "syn_inclean_9018",
+                body=(
+                    "Mail me @ home about the invoice. It was @ 9 last night and the "
+                    "asking price was @ 4200, and I paid @ nobody because nobody asked. "
+                    "The address is help @ example dot com, and 5 @ 4 is still 9."
+                ),
+            ),
+        ),
+    )
+    contacts_path, _, _ = run(tmp_path, corpus)
+
+    written = by_post(contacts_path)["syn_p_9018"]
+    assert points_of(written) == []
+    assert unread_of(written) == [
+        ("@", "prose"),
+        ("@ 9", "handle_too_short"),
+        ("@", "prose"),
+        ("@", "prose"),
+        ("@", "prose"),
+        ("5 @ 4", "no_domain"),
+    ]
+
+
+def test_a_post_that_spaces_out_a_word_beside_an_at_is_read_as_a_handle(
+    tmp_path: Path,
+) -> None:
+    """The one false positive obfuscation tolerance buys, held in the suite on purpose.
+
+    A run of pieces that each hold one character is an identifier written out, and a
+    post that writes the letters of a word with spaces between them beside an `@`
+    produces exactly that shape. There is nothing in the text to tell the two apart —
+    `email me @ t o n i g h t at 8` and `add me @ s y n _ v a n t a g e l e d g e r` are
+    the same rule applied twice — and one of the two has to be wrong.
+
+    A Contact Point invented is worse than one missed here, because a miss is a floor
+    the output already declares and an invented value is a shared identifier ADR-0005
+    would group two accounts on. So the tolerance is kept for the shapes that are
+    common, this case is stated rather than hidden, and the labelled set carries it so
+    the false-positive rate the report prints includes it rather than flattering itself
+    with text that never tried.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_9019", "syn_intrail_9019", body="Mail me @ t o n i g h t at 8"),
+        ),
+    )
+    contacts_path, _, _ = run(tmp_path, corpus)
+
+    written = by_post(contacts_path)["syn_p_9019"]
+    assert points_of(written) == [("telegram", "tonight")]
+    assert text(records(written, "matches")[0], "found_as") == "@ t o n i g h t"
+
+
+def test_the_output_reports_the_recall_and_the_false_positives_it_measured(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The figure that bounds every other figure, printed beside them rather than in
+    a ticket.
+
+    A count of Contact Points is not a count of Contact Points: it is a count of the ones
+    this reading found, and how many it did not find is what bounds it. So the run reads
+    the labelled set the generator wrote beside the Corpus, and prints what it found
+    against what was published — split by how each was published, because a reader who
+    is told 10 of 12 has been told nothing about the two — together with the number of
+    Contact Points invented in posts that publish none, which is the only number here
+    that can produce a grouping edge nobody checked.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_9021", "syn_inrecall_a", body="@syn_vantageledger"),
+            post(
+                "syn_p_9022",
+                "syn_inrecall_b",
+                body="@s y n _ v a n t a g e l e d g e r or ask in here.",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+            post(
+                "syn_p_9023",
+                "syn_inrecall_c",
+                body="Mail me @ home about it, and the screenshot has the rest.",
+                links=("https://quietmarque.example/intake-screen",),
+                created_at="2026-01-05T12:00:00Z",
+            ),
+            post(
+                "syn_p_9024",
+                "syn_inrecall_d",
+                body="Nothing to reach here, mail me @ home about it instead.",
+                created_at="2026-01-05T13:00:00Z",
+            ),
+        ),
+    )
+    _, report_path, printed = run(
+        tmp_path,
+        corpus,
+        capsys,
+        published={
+            "syn_p_9021": ((ContactKind.TELEGRAM, "syn_vantageledger", Writing.PLAIN),),
+            "syn_p_9022": (
+                (ContactKind.TELEGRAM, "syn_vantageledger", Writing.OBFUSCATED),
+            ),
+            "syn_p_9023": (
+                (ContactKind.TELEGRAM, "syn_quietmarque", Writing.IMAGE),
+            ),
+        },
+    )
+
+    figures = figures_of(printed)
+    assert "2 of 3 Contact Points the Corpus publishes were found" in figures["recall"]
+    assert "1 of 1 published plainly, 1 of 1 written out" in figures["recall"]
+    assert "1 of the 3 is published only as a picture" in figures["picture"]
+    assert "no Contact Point read in the 1 post that publishes none" in figures["invented"]
+    assert "labelled-contacts.jsonl" in figures["labelled"]
+
+    # The same figures in the report, and the miss named rather than counted only.
+    report = report_path.read_text(encoding="utf-8")
+    assert "## What the reading found, and what it missed" in report
+    assert "`syn_quietmarque`" in report
+    assert "published only as a picture" in report
+    # The path the run was given, not a fixed one: a report naming a labelled set this
+    # run did not measure against would send a reader to check the wrong rows.
+    assert (tmp_path / "labelled-contacts.jsonl").as_posix() in report
+
+
+def figures_of(printed: str) -> dict[str, str]:
+    """The figures block, keyed by its own labels, so a test can ask about one."""
+    return {
+        line.strip().split(None, 1)[0]: line.strip()
+        for line in printed.splitlines()
+        if line.startswith("  ")
+    }
+
+
 # --- what the reader cannot be given a wrong answer about ------------------------
 
 
@@ -293,14 +754,21 @@ def test_a_candidate_that_names_no_contact_point_is_reported_with_its_reason(
 ) -> None:
     """Every way a candidate fails, each with its own reason, none of them dropped.
 
-    An `@` standing on its own, a run too short for a username and one too long, a run
-    carrying a character a username cannot hold, an address with nothing after the
-    `@`, an address whose host names no host, an address too long to be one, a Telegram
-    link to a channel rather than to a person, and a link that will not parse at all.
-    All eight are things a scam post carries in the wild or a broken post does, and all
-    eight come out named rather than dropped — the last one most of all, because a
-    link the parser refuses is the one case this command cannot even classify, and an
-    unclassifiable case is exactly the one that needs a reason attached.
+    An `@` standing on its own, a run that is ordinary wording rather than an
+    identifier, a run too short for a username and one too long, a run carrying a
+    character a username cannot hold, an address with nothing after the `@`, an address
+    whose host names no host, an address too long to be one, a Telegram link to a
+    channel rather than to a person, and a link that will not parse at all. All nine are
+    things a scam post carries in the wild or a broken post does, and all nine come out
+    named rather than dropped — the last one most of all, because a link the parser
+    refuses is the one case this command cannot even classify, and an unclassifiable
+    case is exactly the one that needs a reason attached.
+
+    `prose` is the reason obfuscation tolerance adds, and it is here rather than folded
+    into `no_name` because the two have different fixes: a post that wrote `@` and
+    nothing else is a broken post, and a post that wrote `@ home about the invoice` is
+    ordinary wording that a reader reading literally would have turned into a candidate
+    anyway. One of them is a Contact Point to find and the other is not.
     """
     corpus = write_corpus(
         tmp_path / "corpus.jsonl",
@@ -312,7 +780,8 @@ def test_a_candidate_that_names_no_contact_point_is_reported_with_its_reason(
                     "Write to me at @ or to intake@ or to nobody@localhost or to "
                     "help@vantage-ledger.example, or try @jo or @"
                     + "a" * 40
-                    + " or @someone.co.uk."
+                    + " or @someone.co.uk. Mail me @ home about the invoice instead, "
+                    "or just @."
                 ),
                 links=(
                     "https://t.me/+k3Qv7xLm",
@@ -320,22 +789,26 @@ def test_a_candidate_that_names_no_contact_point_is_reported_with_its_reason(
                     "mailto:" + "a" * 250 + "@vantage-ledger.example",
                 ),
             ),
+            post("syn_p_9013", "syn_ineight_9013", body="Nothing at all here, write to me at @"),
         ),
     )
     contacts_path, report_path, _ = run(tmp_path, corpus)
 
     written = by_post(contacts_path)["syn_p_9004"]
     assert unread_of(written) == [
-        ("@", "no_name"),
+        ("@", "prose"),
         ("intake@", "no_domain"),
         ("nobody@localhost", "no_domain"),
         ("@jo", "handle_too_short"),
         ("@" + "a" * 40, "handle_too_long"),
         ("@someone.co.uk.", "handle_character"),
+        ("@", "prose"),
+        ("@.", "no_name"),
         ("https://t.me/+k3Qv7xLm", "invite_link"),
         ("http://[::1/pay", "malformed"),
         ("mailto:" + "a" * 250 + "@vantage-ledger.example", "address_too_long"),
     ]
+    assert unread_of(by_post(contacts_path)["syn_p_9013"]) == [("@", "no_name")]
     assert points_of(written) == [("email", "help@vantage-ledger.example")]
 
     # Every reason the enum holds is reached above, so a reason added later cannot be
@@ -625,10 +1098,15 @@ def test_the_planted_campaigns_carry_the_handles_their_accounts_share(
     Not every post carries the handle, and that is the point of the third account in
     the list: an extractor that is only ever right about the posts advertising a
     Contact Point has been measured on nothing else.
+
+    The obfuscated material is the third block, and it is the one ADR-0005 leans on
+    hardest: three accounts publishing one handle in three disguises is one shared
+    Contact Point, and a reading that reported three single-reach values would have
+    found no campaign here at all.
     """
     _, _, printed = run(tmp_path, capsys=capsys)
 
-    assert "3 Contact Points read, 2 of them reached by 2 or more accounts" in printed
+    assert "6 Contact Points read, 3 of them reached by 2 or more accounts" in printed
 
     alpha = point_block(printed, "syn_vantageledger")
     assert "telegram" in alpha
@@ -645,6 +1123,14 @@ def test_the_planted_campaigns_carry_the_handles_their_accounts_share(
     assert "shared, 2 posts, 2 accounts" in beta
     for account in ("syn_northwindhire_7736", "syn_clearpathwork_3184"):
         assert account in beta
+
+    disguised = point_block(printed, "syn_copperlantern")
+    assert "shared, 3 posts, 3 accounts" in disguised
+    assert "@s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n" in disguised
+    assert "@s y n _ c o p p e r l a n t e r n" in disguised
+    assert "@syn_c0pperlantern" in disguised
+    for account in ("syn_wintermarch_4417", "syn_halberdmoor_8823", "syn_thrushmoot_5524"):
+        assert account in disguised
 
     # The Corpus is planted so that not every post of a campaign carries the handle,
     # so an extractor is never only right about the posts advertising one.
@@ -780,10 +1266,17 @@ def test_the_corpus_itself_holds_a_candidate_that_names_no_contact_point(
     report = report_path.read_text(encoding="utf-8")
 
     assert unread, "the Corpus holds no candidate that names no Contact Point"
-    assert "1 unread candidate, naming no Contact Point" in printed
+    assert "3 unread candidates, naming no Contact Point" in printed
 
-    post_id, (found, reason) = unread[0]
-    assert found == "intake@"
+    planted = [
+        (text(row, "post_id"), entry)
+        for row in written
+        for entry in records(row, "unread")
+        if text(entry, "found_as") == "intake@"
+    ]
+    assert planted, f"the Corpus holds no `intake@` candidate: {unread}"
+    post_id, entry = planted[0]
+    found, reason = text(entry, "found_as"), text(entry, "reason")
     # An address with nothing after the `@`: it begins with a local part, so it is read
     # as an address rather than as a handle, and an address has to name a host.
     assert reason == "no_domain"
@@ -793,6 +1286,103 @@ def test_the_corpus_itself_holds_a_candidate_that_names_no_contact_point(
     section = report.split(f"### `{post_id}`")[1].split("\n### ")[0]
     assert "Candidates that name no Contact Point:" in section
     assert f"`{found}` in the body — **{reason}**" in section
+
+
+def test_the_corpus_carries_the_obfuscation_the_recall_is_measured_over(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A recall figure measured over a Corpus that published nothing would be free.
+
+    So the shipped Corpus publishes Contact Points in all three of the ways the reading
+    has to be taken apart on, and misses two of them on purpose: a handle published only
+    as a screenshot, which nothing in this project can read, and an address written as
+    words, which has no `@` in the post for any reader to find. Both misses are named in
+    the report, so a reader can see that the shortfall is the material rather than a
+    defect, and a Corpus that quietly lost them would fail here.
+
+    **The other half of the figure is planted too.** The Corpus holds a post that
+    publishes nothing at all and spells a word out beside an `@`, which is the one false
+    positive the obfuscation tolerance costs: `email me @ t o n i g h t at 8` reads as
+    the handle `tonight`. A Corpus whose clean posts were all shapes the literal reader
+    also refused would report a false-positive rate of nothing and be flattering itself,
+    so the shaped case is in the material and the figure has to name it.
+    """
+    _, report_path, printed = run(tmp_path, capsys=capsys)
+    figures = figures_of(printed)
+    labelled = rows(COMMITTED_LABELLED)
+
+    published = [
+        entry for row in labelled for entry in records(row, "published")
+    ]
+    writings = {text(entry, "written") for entry in published}
+    assert writings == {"plain", "obfuscated", "image"}
+
+    assert "3 of 4 written out" in figures["recall"]
+    assert "1 of the 13 is published only as a picture" in figures["picture"]
+    assert "1 of the 22 posts that publish none" in figures["invented"]
+    assert "no fold joined two of the values" in figures["folded"]
+    report = report_path.read_text(encoding="utf-8")
+    assert "2 of the 13 Contact Points" in report
+    assert "were not read, and these are all of them" in report
+    assert "| `tonight` | `@ t o n i g h t` |" in report
+
+
+def test_the_run_refuses_a_labelled_set_that_does_not_cover_the_corpus(
+    tmp_path: Path,
+) -> None:
+    """A recall figure over part of the Corpus would read as a figure over all of it.
+
+    The measurement is only meaningful against every post, because the posts publishing
+    nothing are its false-positive denominator and the posts publishing something are
+    its numerator. A labelled set missing either is refused by name, the same way
+    `read_corpus` refuses a field it does not know, rather than measured over whatever
+    happens to line up.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_9027", "syn_incover_a", body="@syn_vantageledger"),
+            post(
+                "syn_p_9028",
+                "syn_incover_b",
+                body="Nothing here at all.",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+        ),
+    )
+    write_lines(
+        tmp_path / "labelled-contacts.jsonl",
+        (
+            {
+                "post_id": "syn_p_9027",
+                "published": [
+                    {
+                        "kind": "telegram",
+                        "value": "syn_vantageledger",
+                        "written_as": "@syn_vantageledger",
+                        "written": "plain",
+                    }
+                ],
+            },
+        ),
+    )
+
+    with pytest.raises(SystemExit) as refusal:
+        main(
+            [
+                "contact-points",
+                "--corpus",
+                str(corpus),
+                "--labelled",
+                str(tmp_path / "labelled-contacts.jsonl"),
+                "--contacts",
+                str(tmp_path / "post-contacts.jsonl"),
+                "--report",
+                str(tmp_path / "contact-points.md"),
+            ]
+        )
+
+    assert "syn_p_9028" in str(refusal.value)
 
 
 # --- what the output claims about itself -----------------------------------------
@@ -850,9 +1440,7 @@ def test_the_synthetic_claim_is_measured_and_can_come_out_false(
     )
     _, _, printed = run(tmp_path, corpus, capsys)
 
-    figures = {
-        line.strip().split(None, 1)[0]: line.strip() for line in printed.splitlines() if line.startswith("  ")
-    }
+    figures = figures_of(printed)
     assert "2 of 3 are Synthetic Entities" in figures["synthetic"]
     assert "1 of 2 addresses under a TLD reserved for examples" in figures["reserved"]
     assert "1 of 1 handles carrying the syn_ marker" in figures["marked"]
@@ -861,20 +1449,30 @@ def test_the_synthetic_claim_is_measured_and_can_come_out_false(
 def test_the_output_says_every_contact_point_of_this_corpus_is_a_synthetic_entity(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The shipped Corpus holds nothing outside the synthetic namespace, and says so.
+    """Every Contact Point the Corpus publishes is inside the synthetic namespace.
 
-    Read as a claim about the whole run rather than about one value: every address
-    sits under a TLD reserved for examples and every handle carries the marker, so the
-    figures cannot be read as a partial statement about a subset.
+    Read as a claim about what was published rather than about what the reading found,
+    because those two are not the same set here and the difference is the point: the
+    reading invents one handle out of a clean post (`tonight`), which is outside the
+    synthetic namespace by definition, and the figure says `5 of 6` rather than the `6 of
+    6` a reader would want to see. So the claim is held against the labelled set, which is
+    what the Corpus actually publishes, and the reading's one value outside it is the
+    invented one the `invented` figure already names.
     """
     _, _, printed = run(tmp_path, capsys=capsys)
 
-    figures = {
-        line.strip().split(None, 1)[0]: line.strip() for line in printed.splitlines() if line.startswith("  ")
-    }
-    assert "3 of 3 are Synthetic Entities" in figures["synthetic"]
-    assert "1 of 1 addresses under a TLD reserved for examples" in figures["reserved"]
-    assert "2 of 2 handles carrying the syn_ marker" in figures["marked"]
+    figures = figures_of(printed)
+    assert "5 of 6 are Synthetic Entities" in figures["synthetic"]
+    assert "2 of 2 addresses under a TLD reserved for examples" in figures["reserved"]
+    assert "3 of 4 handles carrying the syn_ marker" in figures["marked"]
+
+    published = [
+        entry for row in rows(COMMITTED_LABELLED) for entry in records(row, "published")
+    ]
+    assert {
+        (text(entry, "kind") == "telegram") == text(entry, "value").startswith("syn_")
+        for entry in published
+    } == {True}
 
 
 def test_the_output_says_nothing_groups_on_a_contact_point_yet(
@@ -917,7 +1515,9 @@ class _Opened:
         return list(self.paths)
 
 
-def test_the_run_reads_the_corpus_and_nothing_else(tmp_path: Path) -> None:
+def test_the_run_reads_the_corpus_the_labelled_set_and_nothing_else(
+    tmp_path: Path,
+) -> None:
     """The boundary ADR-0008 is about, checked on the run rather than on the code.
 
     The Corpus file is the whole input, and the truth file and the Nuisance
@@ -926,6 +1526,13 @@ def test_the_run_reads_the_corpus_and_nothing_else(tmp_path: Path) -> None:
     number the project reports a demonstration rather than a measurement. This run
     reads no published list either, because nothing about what a post says to be
     reached at depends on what anybody registered.
+
+    The labelled set is the one file beyond the Corpus, and it is read to be measured
+    against rather than to be read from: it names what each post publishes, and
+    `tests/test_contact_points.py` holds that it cannot reach the reading by running
+    the reading over the same Corpus with and without it beside them and comparing the
+    rows. Nothing else is read, and in particular nothing that would put the reading
+    near a grouping decision.
     """
     opened = _Opened()
     sys.addaudithook(opened)
@@ -933,19 +1540,82 @@ def test_the_run_reads_the_corpus_and_nothing_else(tmp_path: Path) -> None:
         tmp_path / "corpus.jsonl",
         (post("syn_p_9021", "syn_inread_0021", body="@syn_vantageledger"),),
     )
+    labelled = write_labelled(
+        tmp_path,
+        corpus,
+        {"syn_p_9021": ((ContactKind.TELEGRAM, "syn_vantageledger", Writing.PLAIN),)},
+    )
 
     opened.recording = True
     try:
-        run(tmp_path, corpus)
+        contacts_path = tmp_path / "post-contacts.jsonl"
+        assert main(
+            [
+                "contact-points",
+                "--corpus",
+                str(corpus),
+                "--labelled",
+                str(labelled),
+                "--contacts",
+                str(contacts_path),
+                "--report",
+                str(tmp_path / "contact-points.md"),
+            ]
+        ) == 0
     finally:
         opened.recording = False
 
     data_files = {
         Path(path).name for path in opened.record() if Path(path).suffix in {".jsonl", ".dat"}
     }
-    assert data_files == {"corpus.jsonl", "post-contacts.jsonl"}
+    assert data_files == {
+        "corpus.jsonl",
+        "labelled-contacts.jsonl",
+        "post-contacts.jsonl",
+    }
     assert not [path for path in opened.record() if Path(path).name.startswith("truth")]
     assert not [path for path in opened.record() if Path(path).name.startswith("nuisance")]
+
+
+def test_the_labelled_set_cannot_reach_what_is_read(tmp_path: Path) -> None:
+    """The measurement and the reading are separated by more than convention.
+
+    `measure` is handed the finished reading rather than the Corpus, so a label has no
+    path to a decision about what was read — but that is a claim about the code, and this
+    is the behavioural version of it: the same Corpus read twice, once with labels that
+    agree and once with labels that do not, produces the same rows. If a label could
+    influence the reading, the second run's values would follow the labels rather than
+    the text.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_9025", "syn_insealed_a", body="@s.y.n._.v.a.n.t.a.g.e.l.e.d.g.e.r."),
+            post(
+                "syn_p_9026",
+                "syn_insealed_b",
+                body="Mail me @ home about it, nothing else.",
+                created_at="2026-01-05T11:00:00Z",
+            ),
+        ),
+    )
+    agreed, _, _ = run(
+        tmp_path / "agreed",
+        corpus,
+        published={
+            "syn_p_9025": ((ContactKind.TELEGRAM, "syn_vantageledger", Writing.OBFUSCATED),)
+        },
+    )
+    disagreeing, _, _ = run(
+        tmp_path / "disagreeing",
+        corpus,
+        published={
+            "syn_p_9025": ((ContactKind.TELEGRAM, "syn_somethingelse", Writing.OBFUSCATED),),
+            "syn_p_9026": ((ContactKind.TELEGRAM, "syn_inventedhere", Writing.PLAIN),),
+        },
+    )
+
+    assert rows(agreed) == rows(disagreeing)
 
 
 def test_the_run_needs_no_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1021,7 +1691,9 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_rerun(tmp_path: Path)
     them rather than about the counts this seed happens to produce.
     """
     corpus_path = tmp_path / "corpus.jsonl"
+    spellings: list[tuple[str, str]] = []
     for seed in (DEFAULT_SEED, DEFAULT_SEED + 1):
+        labelled_path = tmp_path / f"labelled-{seed}.jsonl"
         assert main(
             [
                 "generate-corpus",
@@ -1031,21 +1703,25 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_rerun(tmp_path: Path)
                 str(corpus_path),
                 "--truth",
                 str(tmp_path / f"truth-{seed}.jsonl"),
+                "--labelled",
+                str(labelled_path),
                 "--nuisance",
                 str(tmp_path / f"nuisance-{seed}.jsonl"),
                 "--shared-infrastructure",
                 str(tmp_path / f"shared-{seed}.jsonl"),
             ]
         ) == 0
-        contacts_path, report_path, _ = run(tmp_path / f"out-{seed}", corpus_path)
+        contacts_path, report_path, _ = run(
+            tmp_path / f"out-{seed}", corpus_path, labelled=labelled_path
+        )
 
         corpus = read_corpus(corpus_path)
         written = rows(contacts_path)
         assert len(written) == len(corpus)
 
         for row in written:
-            # Every value reported is a value that appears in the post it is
-            # attributed to, and every occurrence names a field the post has.
+            # Every occurrence names a field the post has and quotes it as the post
+            # wrote it, and every value reported is what that spelling reads as.
             item = next(entry for entry in corpus if entry.post_id == text(row, "post_id"))
             haystack = {"title": item.title, "body": item.body}
             for match in records(row, "matches"):
@@ -1056,6 +1732,25 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_rerun(tmp_path: Path)
                     assert found in item.links
                 else:
                     assert found in haystack[field]
-                assert text(match, "value").lower() in found.lower()
+                if seed == DEFAULT_SEED:
+                    spellings.append((found, text(match, "value")))
 
         assert report_path.read_text(encoding="utf-8").count("### `syn_p_") >= len(corpus)
+
+    # Every value the run reported is what its own spelling reads when the run reads
+    # that spelling again, on its own: a value invented by the run rather than read out
+    # of the text would not survive being read a second time. Checked through the
+    # command rather than against the rule that produced it, so the check cannot be a
+    # restatement of the implementation.
+    assert spellings, "the Corpus publishes no Contact Point to check"
+    alone = write_corpus(
+        tmp_path / "spellings.jsonl",
+        tuple(
+            post(f"syn_p_{index:04d}", f"syn_inspelled_{index:04d}", body=spelling)
+            for index, (spelling, _) in enumerate(spellings, start=1)
+        ),
+    )
+    reread_path, _, _ = run(tmp_path / "reread", alone)
+    assert sorted(
+        text(match, "value") for row in rows(reread_path) for match in records(row, "matches")
+    ) == sorted(value for _, value in spellings)
