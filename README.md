@@ -12,7 +12,7 @@ corresponds to a real person.
 
 ## Where it is
 
-Five things are built. The Corpus generator, which is the credibility boundary the
+Six things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
@@ -23,8 +23,9 @@ the Campaign Candidates those registrations produce, with known-shared infrastru
 filtered out as published data, then the Policy Score those same links and posts add
 up to, with the arithmetic printed beside it. And the measurement: how many of the two
 Planted Campaigns that grouping recovered, as X of N, joined by a command that runs
-after it rather than inside it. The Review Queue, the false-grouping rate beside that
-figure, the Confidence, and the corroborated grouping tier are not built yet. Their
+after it rather than inside it. The Review Queue those scores are ordered into, at a
+stated depth. The false-grouping rate beside that recovery figure, the Confidence, the
+figure over the Review Queue, and the corroborated grouping tier are not built yet. Their
 tickets are numbered #16 to #28 in the tracker; this README is updated as they land.
 
 ## Running it
@@ -51,10 +52,10 @@ steps, which are named against each row. Every file has one reader:
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | a reader, then the grouping-edge ticket #20 |
-| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | a reader, then the corroboration ticket #24 |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | `rfi campaign-recovery`, `rfi review-queue`, then the corroboration ticket #24 |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, then the false-grouping ticket #19 |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
-| `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | a reader, then the Review Queue ticket #16 |
+| `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -518,10 +519,11 @@ handing that to a Signal would reward every post that used a service everybody u
 Planted Campaign leaning on a shared host is lost with it, the same lower bound the
 grouping reports.
 
-One more thing the score cannot do yet: it cannot rank. Five Signals give thirty-two
-subsets and this Corpus takes eight of them, so five posts tie at 45 and three at 14.
-Breaking those ties is ticket #16's job and not this command's, and the index is ordered
-by score and then by post id so the table is at least stable.
+One more thing the score cannot do by itself: it cannot say what to read first. Five
+Signals give thirty-two subsets and this Corpus takes eight of them, so five posts tie at
+45 and three at 14. That ordering is the Review Queue's job and not this command's, which
+is why this index is ordered by score and then by post id - enough to be a stable table,
+which is all it claims to be. `rfi review-queue` is where the ties are broken.
 
 The lookalike Signal fires on both members of a pair and names neither as the copy,
 because the spelling does not say which imitates which: the Corpus plants a
@@ -546,6 +548,84 @@ unpriced, prices one that does not exist, carries a weight of zero, or leaves a
 rationale blank stops the run and names the file and the row — otherwise a Signal
 could appear in a breakdown that no arithmetic adds up to, which is the failure
 ADR-0007 rules out.
+
+## The Review Queue
+
+**The order is the Policy Score, so the two can never disagree.** The queue is every post
+in `data/signals/policy-scores.jsonl` sorted by the score the scoring command published for
+it, and nothing else is consulted: no account's age or posting rate, no model output, and
+the size of a Campaign Candidate moves nothing (ADR-0003, ADR-0007). That is why this is a
+separate command rather than an option on the scoring one — a queue is only worth a
+reviewer's attention if the number at the top of it is the number in the file beside it.
+
+```
+uv run rfi review-queue --depth 50   # reads the scores and the candidates, writes nothing
+```
+
+| Argument | Reads | Default |
+| --- | --- | --- |
+| `--scores` | `data/signals/policy-scores.jsonl`, which `rfi policy-score` wrote | that path |
+| `--candidates` | `data/campaigns/campaign-candidates.jsonl`, which `rfi campaign-candidates` wrote | that path |
+| `--depth` | how many entries to print | 50 |
+
+It runs neither step again and opens neither the Corpus nor the membership, which is
+ADR-0018's boundary used for a second purpose: measurement has to be unable to reach
+inference, and so does a ranking. `tests/test_review_queue.py` watches the files a run
+opens and requires the two published ones and nothing else. It is also the only command
+here that writes no file, because the queue is a projection of two files other commands
+publish and a third copy is a third thing to keep in step.
+
+**Ties are broken on the points earned, and the depth is in the header.** The score is
+points rounded to a whole number, so two posts can display the same one: 50 points and 49
+both come out as 45 of 110 published. The queue orders those by the points, which is that
+same arithmetic one step finer, and then by post id, which is stability rather than
+judgement. Nothing else could be used, because anything else could put a lower-scoring post
+above a higher-scoring one. The post id is last because a queue with nothing else in its
+ordering would print a different one every time the Corpus changed.
+
+Stated plainly, because a tie-break that never fires is worth knowing about: with the
+published weights every sum is a multiple of five and no two of them round to the same
+score, so on this Corpus the points decide nothing and the ordering falls through to the
+post id. It matters for a weight set where two different sums do land on one score, and
+`tests/test_review_queue.py` has to hand-write a row no run of this weight set could
+produce to reach the case at all.
+
+A depth is a parameter rather than a property of the Corpus, so it is stated twice in the
+output: in the header sentence, which says how many posts the file holds and how many sit
+below the cut, and as a figure of its own. A queue pasted into an issue without its depth
+says nothing about what was left out, and the default 50 over this 34-post Corpus has to
+say so rather than read as a claim that 50 posts were worth reading. A depth below one is
+refused: an empty queue under a header is indistinguishable from a Corpus in which nothing
+is worth reading, which is a claim about the Corpus this command has no business making.
+Every post is ordered, including the ones carrying no Signal, or the depth could never bind
+— how many posts carry a Signal is a property of the Corpus rather than of the depth.
+
+**An entry carries its arithmetic, not a number.** Each entry prints the Signals behind its
+score with the weight each was earned at and the evidence that fired it, the total against
+the published total, and the Campaign Candidates the post sits in with the registration
+each is joined on — an identifier on its own says nothing to somebody who has not opened
+the candidates file. What a candidate is named beside an entry for is worth being exact
+about: a hypothesis produced by cohesion analysis, never a confirmed claim about anyone's
+behaviour (ADR-0005). It does not say the post is fraud, and nobody has reviewed any of it.
+
+Two things are refused rather than smoothed over. A candidates file naming a post the
+scores file does not hold stops the run, because a queue that dropped that candidate would
+hide two published files disagreeing behind a shorter table. And a scores row whose score
+is not the share of its own points that the file publishes beside it, or whose points are
+not what its Signals are priced at, or whose rows disagree about the published total, stops
+the run too — which is what makes "the order and the number cannot disagree" structural
+rather than a promise. `read_policy_scores` also refuses a row carrying a field this
+project does not publish, for ADR-0008's reason: the one field that must never appear
+there is a Planted Campaign's identifier.
+
+**No figure is computed here.** How many of the entries at a stated depth turned out to be
+findings is a question about a reviewer's judgement about each of them, and every label in
+this Corpus was assigned by the generator that wrote the posts, so a figure computed over
+the queue here would measure agreement with the generator rather than anything about fraud
+(ADR-0004). The depth is published because that measurement reads it as an input, not
+because publishing the input measures anything. The words that would name such a figure
+appear nowhere in the queue's own prose, which `tests/test_review_queue.py` asserts rather
+than trusting this paragraph.
 
 ## The base rates
 
@@ -745,4 +825,6 @@ patch `urllib.request.urlopen` to refuse.
   (an obfuscated username is read as the identifier underneath it, an address's host is
   read exactly as written, and the reading is measured against a Labelled Set the
   generator writes beside the Corpus, which is the one place a measurement shares a
-  command with the step it measures).
+  command with the step it measures), and 0020 (the Review Queue is the Policy Score at a
+  stated depth, its ties are broken on the points earned, it reads the published scores and
+  candidates rather than re-running either step, and it computes no figure).

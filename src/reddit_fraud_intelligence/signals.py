@@ -38,7 +38,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass, fields
 from enum import StrEnum
 from pathlib import Path
@@ -46,7 +46,16 @@ from pathlib import Path
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedInfrastructure
-from reddit_fraud_intelligence.jsonl import JsonObject, read_rows, write_lines
+from reddit_fraud_intelligence.jsonl import (
+    JsonObject,
+    read_names,
+    read_object,
+    read_rows,
+    read_text,
+    read_vocabulary,
+    refuse_repeated,
+    write_lines,
+)
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 from reddit_fraud_intelligence.text import matcher, sentences, spans, wrap
 
@@ -357,7 +366,7 @@ class PostScore:
     points: int
     published_points: int
     published_signals: int
-    hits: tuple[SignalHit, ...]
+    signals: tuple[SignalHit, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,7 +593,7 @@ def score_corpus(
             points=points,
             published_points=weights.total,
             published_signals=len(weights.entries),
-            hits=hits,
+            signals=hits,
         )
         for item, row in zip(items, rows, strict=True)
         for hits in (_hits(item, row, index, weights),)
@@ -732,7 +741,7 @@ def _facts(
         corpus_path=corpus_path.as_posix(),
         corpus_sha256=hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
         posts=len(scores),
-        posts_with_signals=sum(1 for score in scores if score.hits),
+        posts_with_signals=sum(1 for score in scores if score.signals),
         registrations=len(index.reach),
         registrations_withheld=sum(1 for domain in index.reach if domain in index.withheld),
         rules_sha256=suffixes.rules_digest(),
@@ -767,11 +776,214 @@ def write_policy_scores(path: Path, scores: Sequence[PostScore]) -> None:
                         "weight": hit.weight,
                         "evidence": [asdict(item) for item in hit.evidence],
                     }
-                    for hit in score.hits
+                    for hit in score.signals
                 ],
             }
 
     write_lines(path, objects())
+
+
+def read_policy_scores(path: Path) -> tuple[PostScore, ...]:
+    """Every post's score, read back out of the file the scoring command wrote.
+
+    The reader lives beside the writer because they are one vocabulary: a field cannot be
+    added to `PostScore` and left out of the file, and a field cannot be in the file that
+    this does not check. An unknown field is refused rather than ignored, for the reason
+    `read_corpus` gives — the one field that must never appear here is a Planted Campaign's
+    identifier, and a reader that skipped what it did not recognise would skip that
+    without saying so (ADR-0008).
+
+    Three claims in a row are checked against the arithmetic before the row is returned,
+    because the Review Queue orders posts by these numbers and prints them beside a
+    breakdown. The points have to be what the Signals in the row are priced at, the score
+    has to be those points as a share of the published total, and the published total has
+    to be the same on every row. A row failing any of those describes a figure this
+    project could not have published, and a queue built on it would rank posts by numbers
+    that disagree with the arithmetic printed beside them.
+    """
+    scores = tuple(_score(path, number, text) for number, text in read_rows(path))
+    refuse_repeated(
+        path.as_posix(),
+        (score.post_id for score in scores),
+        "a queue would read one post's Signals into two entries and rank both of them",
+    )
+    published = {score.published_points for score in scores}
+    if len(published) > 1:
+        raise ValueError(
+            f"{path.as_posix()} publishes {sorted(published)} points of weight across its "
+            "rows, and every post has to be scored against the same published set for "
+            "these scores to be ranked against each other at all"
+        )
+    return scores
+
+
+def _score(path: Path, number: int, text: str) -> PostScore:
+    """One row, checked against the arithmetic the writer wrote it from.
+
+    Checked here rather than trusted because the numbers in this file are what a reader
+    sorts a queue by, and every one of the four claims below is one a row could fail
+    without any part of it looking wrong: a weight the weight set does not publish, a
+    Signal priced twice, points that do not add up, and a score that is not the share of
+    them the file publishes beside.
+    """
+    where = f"{path.as_posix()}:{number}"
+    record = read_object(where, text)
+    vocabulary = tuple(field.name for field in fields(PostScore))
+    if set(record) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds {sorted(record)}, which is not the score vocabulary "
+            f"{sorted(vocabulary)}"
+        )
+
+    points = _figure(where, record, "points")
+    published_points = _figure(where, record, "published_points")
+    published_signals = _figure(where, record, "published_signals")
+    if published_points == 0:
+        raise ValueError(
+            f"{where} publishes no points, and a share of nothing is not a Policy Score"
+        )
+
+    carried = record["signals"]
+    if not isinstance(carried, list):
+        raise ValueError(f"{where} has signals={carried!r}, which is not a list")
+    hits = tuple(_published(where, carried[at], at) for at in range(len(carried)))
+    refuse_repeated(
+        f"{where} signals",
+        (hit.signal.value for hit in hits),
+        "a Signal is present or absent, so one of them is not in this row (ADR-0014)",
+    )
+    priced = sum(hit.weight for hit in hits)
+    if priced != points:
+        raise ValueError(
+            f"{where} has points={points}, and its Signals are priced at {priced}"
+        )
+    if len(hits) > published_signals:
+        raise ValueError(
+            f"{where} carries {len(hits)} Signals, and the published set holds "
+            f"{published_signals}"
+        )
+
+    score = _figure(where, record, "score")
+    earned = _normalise(points, published_points)
+    if score != earned:
+        raise ValueError(
+            f"{where} has score={score}, and {points} of {published_points} published "
+            f"points is {earned}"
+        )
+    return PostScore(
+        post_id=read_text(where, record, "post_id"),
+        account=read_text(where, record, "account"),
+        score=score,
+        points=points,
+        published_points=published_points,
+        published_signals=published_signals,
+        signals=hits,
+    )
+
+
+def _published(where: str, record: object, at: int) -> SignalHit:
+    """One Signal a post is recorded as carrying, with the weight and evidence it was.
+
+    `SignalHit` checks the rest from here: a Signal present with no evidence for it, or
+    resting on evidence of another Signal's kind, is refused in its own constructor. What
+    is left here is the weight, which the weight file has already refused to publish as
+    zero and this file has no such guarantee about.
+    """
+    row = f"{where} signals[{at}]"
+    if not isinstance(record, dict):
+        raise ValueError(f"{row} is not a row: {record!r}")
+    vocabulary = tuple(field.name for field in fields(SignalHit))
+    if set(record) != set(vocabulary):
+        raise ValueError(
+            f"{row} holds {sorted(record)}, which is not the Signal vocabulary "
+            f"{sorted(vocabulary)}"
+        )
+    weight = _figure(row, record, "weight")
+    if weight == 0:
+        raise ValueError(
+            f"{row} prices {read_vocabulary(row, 'signal', record['signal'], SignalName)} at "
+            "nothing, and a Signal that adds nothing is a Signal a reader cannot weigh"
+        )
+    evidence = record["evidence"]
+    if not isinstance(evidence, list):
+        raise ValueError(f"{row} has evidence={evidence!r}, which is not a list")
+    return SignalHit(
+        signal=read_vocabulary(row, "signal", record["signal"], SignalName),
+        weight=weight,
+        evidence=tuple(
+            _evidence(f"{row} evidence[{position}]", entry)
+            for position, entry in enumerate(evidence)
+        ),
+    )
+
+
+def _evidence(where: str, record: object) -> Evidence:
+    """One piece of evidence, told apart by the fields it holds rather than by a name.
+
+    None of the three kinds says which it is: two of them are keyed on `domain`, and only
+    the sentence names a Signal. The field set is therefore what identifies it, and it is
+    the whole of what the writer wrote — a row holding anything else would have to be
+    either dropped or guessed at, and evidence that is dropped is evidence a reviewer
+    cannot check the score against.
+    """
+    if not isinstance(record, dict):
+        raise ValueError(f"{where} is not a row: {record!r}")
+    for kind, read in _EVIDENCE.items():
+        if set(record) == {field.name for field in fields(kind)}:
+            return read(where, record)
+    shapes = ", ".join(
+        f"{{{', '.join(sorted(field.name for field in fields(kind)))}}}" for kind in _EVIDENCE
+    )
+    raise ValueError(f"{where} holds evidence {sorted(record)}, which is none of {shapes}")
+
+
+def _frequency(where: str, record: JsonObject) -> DomainFrequency:
+    return DomainFrequency(
+        domain=read_text(where, record, "domain"),
+        posts=_figure(where, record, "posts"),
+        accounts=_figure(where, record, "accounts"),
+    )
+
+
+def _pair(where: str, record: JsonObject) -> ConfusablePair:
+    return ConfusablePair(
+        domain=read_text(where, record, "domain"),
+        other=read_text(where, record, "other"),
+    )
+
+
+def _sentence(where: str, record: JsonObject) -> PhraseMatch:
+    phrases = read_names(where, record, "phrases")
+    if not phrases:
+        raise ValueError(f"{where} matches no phrase, and a match on nothing is not a match")
+    return PhraseMatch(
+        signal=read_vocabulary(where, "signal", record["signal"], SignalName),
+        field=read_text(where, record, "field"),
+        phrases=phrases,
+        sentence=read_text(where, record, "sentence"),
+    )
+
+
+_EVIDENCE: Mapping[type[Evidence], Callable[[str, JsonObject], Evidence]] = {
+    DomainFrequency: _frequency,
+    ConfusablePair: _pair,
+    PhraseMatch: _sentence,
+}
+
+
+def _figure(where: str, record: JsonObject, field: str) -> int:
+    """One whole number of points, refused when it is anything else.
+
+    A boolean passes for an integer in Python and would make a weight of `true` read as
+    one, and a negative figure would have to be explained by something this file does not
+    print. Both are named rather than left to a reader of the file.
+    """
+    value = record[field]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(
+            f"{where} has {field}={value!r}, and a figure is a whole number of points"
+        )
+    return value
 
 
 def render_table(scored: Scored) -> str:
@@ -783,10 +995,11 @@ def render_table(scored: Scored) -> str:
 
     The index and the blocks are in the same order on purpose, both highest score
     first: a reader who has just read a line of the index scrolls down looking for
-    that post's block, and the queue that orders the whole Corpus is ticket #16's
-    rather than this command's.
+    that post's block. Ties fall through to the post id here rather than to the points
+    earned, so this is a stable table and not the Review Queue: `rfi review-queue` is
+    where the whole Corpus is ordered and where a tie is broken.
     """
-    scored_posts = _by_score([score for score in scored.scores if score.hits])
+    scored_posts = _by_score([score for score in scored.scores if score.signals])
     sections = (
         f"{_HEADING}\n\n{_SUBHEADING}",
         _figures(scored),
@@ -859,7 +1072,7 @@ def _index(scores: Sequence[PostScore]) -> str:
             score.post_id,
             score.account,
             str(score.score),
-            ", ".join(hit.signal.value for hit in score.hits),
+            ", ".join(hit.signal.value for hit in score.signals),
         )
         for score in scores
     ]
@@ -878,10 +1091,10 @@ def _block(score: PostScore) -> str:
     The last line is the total, against the published total, so the division that
     produced the displayed score is written out rather than left to the reader.
     """
-    name = max(len(hit.signal.value) for hit in score.hits)
-    figures = max(len(str(hit.weight)) for hit in score.hits)
+    name = max(len(hit.signal.value) for hit in score.signals)
+    figures = max(len(str(hit.weight)) for hit in score.signals)
     lines = [f"{score.post_id}  {score.account}  {score.score}/100"]
-    for hit in score.hits:
+    for hit in score.signals:
         lines.append(
             f"  {hit.signal.value.ljust(name)}  {str(hit.weight).rjust(figures)}  "
             f"{hit.line()}"
@@ -889,7 +1102,7 @@ def _block(score: PostScore) -> str:
     lines.append(
         f"  {'total'.ljust(name)}  {str(score.points).rjust(figures)}  "
         f"of {score.published_points} published points, "
-        f"{len(score.hits)} of {score.published_signals} Signals"
+        f"{len(score.signals)} of {score.published_signals} Signals"
     )
     return "\n".join(lines)
 
@@ -910,7 +1123,7 @@ def _registrations(scored: Scored) -> str:
             {
                 hit.signal.value
                 for score in scored.scores
-                for hit in score.hits
+                for hit in score.signals
                 for item in hit.evidence
                 if domain in item.registrations
             }

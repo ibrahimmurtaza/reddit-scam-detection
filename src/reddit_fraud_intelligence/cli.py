@@ -63,6 +63,7 @@ from reddit_fraud_intelligence.projection import (
     unplaced_reports,
     write_mapping,
 )
+from reddit_fraud_intelligence.review_queue import build_queue, render_table as render_queue
 from reddit_fraud_intelligence.signals import (
     render_table as render_policy_score,
     score_corpus,
@@ -102,6 +103,7 @@ DEFAULT_COMPOSITION_PATH = Path("data/corpus/composition.jsonl")
 DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
 DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
+DEFAULT_REVIEW_DEPTH = 50
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -186,6 +188,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 shared_path=Path(str(args.shared_infrastructure)),
                 weights_path=Path(str(args.weights)),
                 scores_path=Path(str(args.scores)),
+            )
+        case "review-queue":
+            return _review_queue(
+                scores_path=Path(str(args.scores)),
+                candidates_path=Path(str(args.candidates)),
+                depth=int(args.depth),
             )
         case _:
             parser.error(f"unknown command: {args.command}")
@@ -647,6 +655,46 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_SCORES_PATH,
         help=f"where to write the scores (default: {DEFAULT_SCORES_PATH})",
+    )
+
+    queue = commands.add_parser(
+        "review-queue",
+        help="order the scored posts by Triage Priority and print the top of them",
+        description=(
+            "The Review Queue: every post in the published scores, ordered by Triage "
+            "Priority, truncated to a depth stated here and in the output header. The order "
+            "is the Policy Score and nothing else, so the number a reviewer reads at the "
+            "top of the queue is the number the scoring command published for that post "
+            "(ADR-0003); two posts that tie on it are ordered by the points they earned of "
+            "the published total, which is that same arithmetic one step finer. Every entry "
+            "carries the Signal-by-Signal breakdown behind its score and names the Campaign "
+            "Candidates the post sits in, so an entry can be worked from this output alone. "
+            "It reads the scores and the candidates and runs neither step again, which is "
+            "what keeps it from reaching the Corpus or the membership (ADR-0018). No figure "
+            "is computed over the queue: how good the ordering is needs a reviewer. Reads "
+            "no network."
+        ),
+    )
+    queue.add_argument(
+        "--scores",
+        type=Path,
+        default=DEFAULT_SCORES_PATH,
+        help=f"the published Policy Scores to read (default: {DEFAULT_SCORES_PATH})",
+    )
+    queue.add_argument(
+        "--candidates",
+        type=Path,
+        default=DEFAULT_CANDIDATES_PATH,
+        help=(
+            "the published Campaign Candidates to read "
+            f"(default: {DEFAULT_CANDIDATES_PATH})"
+        ),
+    )
+    queue.add_argument(
+        "--depth",
+        type=int,
+        default=DEFAULT_REVIEW_DEPTH,
+        help=f"how many entries of the queue to print (default: {DEFAULT_REVIEW_DEPTH})",
     )
 
     composition = commands.add_parser(
@@ -1131,4 +1179,27 @@ def _policy_score(
 
     print(render_policy_score(scored))
     print(f"scores         {scores_path}")
+    return 0
+
+
+def _review_queue(*, scores_path: Path, candidates_path: Path, depth: int) -> int:
+    """Print the queue. Nothing is written: this is the first command that produces no
+    file, because the queue is a projection of two files another command published and a
+    copy of it in a third place would be a third thing to keep in step with the other two.
+    """
+    _require_present(
+        {
+            "the Policy Scores": scores_path,
+            "the Campaign Candidates": candidates_path,
+        },
+        "Run `rfi policy-score` and `rfi campaign-candidates` first; this command orders "
+        "what those two published.",
+    )
+
+    try:
+        queue = build_queue(scores_path, candidates_path, depth)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+
+    print(render_queue(queue))
     return 0
