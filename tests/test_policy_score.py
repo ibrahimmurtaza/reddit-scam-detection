@@ -1,10 +1,12 @@
-"""Link Signals, Content Signals, the Policy Score, and the arithmetic behind all three.
+"""Link Signals, Content Signals, the cross-entity Signal, and the Policy Score.
 
 Two Signals reach the Policy Score from the Corpus's links: one registration reached by
 more than one account, and two registrations one edit apart. Three more reach it from a
 post's own text: a promise that the outcome is certain, money asked for up front, and a
-deadline put on the reader. All five are here because a reviewer can check them by
-reading the post, which is the whole claim ADR-0007 makes about the Policy Score.
+deadline put on the reader. The sixth reasons across the two: a post whose Scam Category
+disagrees with the category the Registrable Domain it links is associated with. All six
+are here because a reviewer can check them by reading the post, which is the whole claim
+ADR-0007 makes about the Policy Score.
 
 Seam under test: the `policy-score` command, observed through the file it writes and
 the table it prints. Nothing here inspects the code that wrote them.
@@ -27,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from reddit_fraud_intelligence.categories import OTHER
 from reddit_fraud_intelligence.cli import DEFAULT_CORPUS_PATH, DEFAULT_SEED, main
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 
@@ -36,6 +39,7 @@ COMMITTED_SCORES = REPO_ROOT / "data" / "signals" / "policy-scores.jsonl"
 COMMITTED_CORPUS = REPO_ROOT / "data" / "corpus" / "corpus.jsonl"
 COMMITTED_NUISANCE = REPO_ROOT / "data" / "corpus" / "nuisance.jsonl"
 COMMITTED_POST_DOMAINS = REPO_ROOT / "data" / "domains" / "post-domains.jsonl"
+COMMITTED_PLACEMENTS = REPO_ROOT / "data" / "corpus" / "composition.jsonl"
 
 
 class _Opened:
@@ -194,7 +198,9 @@ def rests_on_the_post(post_id: str, item: Row) -> bool:
     Two things are in front of a reviewer of a post: the registrations its own links
     resolve to, and its own title and body. Evidence is either a registration among the
     first or a sentence of the second, so a Signal resting on anything else cannot be
-    written at all without failing here.
+    written at all without failing here. A registration's own figures are printed beside
+    it for the reader to count, which is what `domain_frequency` and `category_conflict`
+    both lean on.
     """
     linked = registrations_in(item)
     if linked is not None:
@@ -505,6 +511,255 @@ def test_a_lookalike_to_a_shared_service_still_fires(
     assert "domain_lookalike" in carried
     assert "domain_frequency" not in carried
 
+# --- the category-conflict Signal ------------------------------------------------
+
+# Two pitches, written the way this Corpus writes them: one the Investment list places
+# and one the Work and Payroll list places, neither carrying a phrase from any of the
+# Content Signal lists, so a post carrying the conflict Signal is carrying it and nothing
+# else the reader has to disentangle from it.
+_INVESTMENT = (
+    "Minimum ticket is 500 USDT and the onboarding call is compulsory, which they say "
+    "is how they filter people."
+)
+_WORK = (
+    "No experience needed, they train you in the first two days, eighteen an hour."
+)
+
+
+def registration_row(printed: str, registration: str) -> str:
+    """One row of the registrations table, read back out of the console output.
+
+    Folded, because the row is a set of columns the reader reads rather than fields
+    anything outside the run can address, and because the Scam Category cell holds spaces
+    of its own.
+    """
+    table = printed.split("\nregistrations  ")[1].split("\n\n")[0]
+    for line in table.splitlines()[1:]:
+        if line.split()[:1] == [registration]:
+            return " ".join(line.split())
+    raise AssertionError(f"the registrations table prints no row for {registration}")
+
+
+def conflicted(row: Row) -> Row:
+    """The one piece of evidence the conflict Signal fired on."""
+    return items(evidence(row, "category_conflict"))[0]
+
+
+def test_a_post_that_disagrees_with_the_registration_it_links_carries_the_signal(
+    tmp_path: Path,
+) -> None:
+    """The Signal, in the shape the ticket describes: a job pitch on an investment desk.
+
+    One registration, three postings, two of them investment and one about work. The
+    majority is what makes the registration associated with a Scam Category at all, and
+    the odd post out is the one that carries the Signal — so the two figures a reviewer
+    recomputes are named rather than summarised: what the post says it is, and what the
+    postings reaching that registration add up to.
+
+    The other two are asserted not to carry it, because a rule that fires on every post
+    of the registration rather than on the one that disagrees would satisfy a test that
+    only looked for the Signal's name.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_0201",
+                "syn_quantproof_2841",
+                "https://vantage-ledger.example/entry",
+                body=_INVESTMENT,
+            ),
+            post(
+                "syn_p_0202",
+                "syn_quantproof_2841",
+                "https://vantage-ledger.example/month-log",
+                body=_INVESTMENT,
+                created_at="2026-01-05T10:00:00Z",
+            ),
+            post(
+                "syn_p_0203",
+                "syn_harborlight_5517",
+                "https://vantage-ledger.example/entry",
+                body=_WORK,
+                created_at="2026-01-05T11:00:00Z",
+            ),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    written = by_post(scores_path)
+
+    assert signals(written["syn_p_0201"]) == ["domain_frequency"]
+    assert signals(written["syn_p_0202"]) == ["domain_frequency"]
+    assert signals(written["syn_p_0203"]) == ["category_conflict", "domain_frequency"]
+
+    shown = conflicted(written["syn_p_0203"])
+    assert domain(shown) == "vantage-ledger.example"
+    assert text(shown, "post_category") == "Work and Payroll"
+    assert text(shown, "domain_category") == "Investment and Money Offers"
+    assert count(shown, "majority") == 2
+    assert count(shown, "placed") == 3
+
+    # 20 of the 130 published points, plus the 30 the shared registration is worth.
+    assert count(written["syn_p_0203"], "points") == 50
+    assert count(written["syn_p_0203"], "score") == 38
+
+
+def test_a_registration_with_too_few_postings_is_unassociated_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One posting cannot associate a registration with anything.
+
+    A registration a single post reaches is that account's own site as far as this Corpus
+    shows, and treating its one posting as its class would be a claim with nothing behind
+    it. It is reported as unassociated with the reason in the registrations table rather
+    than left out, because a registration the resolved links hold and nothing explains is
+    a gap in the output rather than a decision in it. The reason says *placed* postings
+    rather than postings, because the tally beside it can hold more of the two.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_0211", "syn_pinecrest_9032", "https://vantage-ledger.example/entry",
+                 body=_WORK),
+        ),
+    )
+
+    scores_path, printed = run(tmp_path, corpus, capsys)
+    row = by_post(scores_path)["syn_p_0211"]
+
+    assert "category_conflict" not in signals(row)
+    assert "too few placed" in registration_row(printed, "vantage-ledger.example")
+
+
+def test_postings_that_split_evenly_leave_the_registration_unassociated(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two postings, one of each pitch, and nothing to prefer either.
+
+    The alternative would be to take whichever class the tally happens to sort first, and
+    that would be a Signal resting on an arbitrary order in a table of class names. A
+    registration whose postings split has no associated Scam Category, and the split is
+    printed so a reader can see that rather than take it on trust.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_0221", "syn_quantproof_2841", "https://vantage-ledger.example/entry",
+                 body=_INVESTMENT),
+            post("syn_p_0222", "syn_harborlight_5517", "https://vantage-ledger.example/entry",
+                 body=_WORK, created_at="2026-01-05T10:00:00Z"),
+        ),
+    )
+
+    scores_path, printed = run(tmp_path, corpus, capsys)
+
+    assert all(signals(row) == ["domain_frequency"] for row in rows(scores_path))
+    shown = registration_row(printed, "vantage-ledger.example")
+    assert "no majority" in shown
+    assert "Investment and Money Offers 1" in shown
+    assert "Work and Payroll 1" in shown
+
+
+def test_a_post_no_list_placed_is_not_a_disagreement_with_anything(
+    tmp_path: Path,
+) -> None:
+    """Other is where a post the lists say nothing about lands, so it disagrees with
+    nothing.
+
+    A placement in Other is the absence of a claim rather than a claim, and treating it as
+    one would fire the Signal on every post the phrase lists cannot reach: a pitch in a
+    language this build does not read, a link and a title, and a complaint nobody in the
+    Corpus wrote a phrase for. The registration here is associated and the post is not in
+    it, so it carries nothing.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_0231", "syn_quantproof_2841", "https://vantage-ledger.example/entry",
+                 body=_INVESTMENT),
+            post("syn_p_0232", "syn_harborlight_5517", "https://vantage-ledger.example/entry",
+                 body=_INVESTMENT, created_at="2026-01-05T10:00:00Z"),
+            post("syn_p_0233", "syn_pinecrest_9032", "https://vantage-ledger.example/entry",
+                 body="The page is here and the write-up is on it.", created_at="2026-01-05T11:00:00Z"),
+        ),
+    )
+
+    scores_path, _ = run(tmp_path, corpus)
+    written = by_post(scores_path)
+
+    assert signals(written["syn_p_0233"]) == ["domain_frequency"]
+    assert "category_conflict" not in signals(written["syn_p_0231"])
+
+
+def test_a_registration_the_shared_list_withholds_never_conflicts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A shortener four accounts paste four different pitches through.
+
+    The reach is real and it means nothing, and that is the argument ADR-0009 makes for
+    keeping the list out of the graph before the grouping rather than after it. It applies
+    here for the same reason: a majority drawn from everybody's adverts is a majority
+    about the shortener, and handing it to a Signal would score every post that used a
+    service everybody uses on the strength of the other people who used it.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_0241", "syn_draycott_5583", "https://hopcut.example/q4k", body=_WORK),
+            post("syn_p_0242", "syn_underhill_7420", "https://hopcut.example/q4k",
+                 body=_WORK, created_at="2026-01-05T10:00:00Z"),
+            post("syn_p_0243", "syn_pellworth_3196", "https://hopcut.example/q4k",
+                 body=_INVESTMENT, created_at="2026-01-05T11:00:00Z"),
+        ),
+    )
+
+    scores_path, printed = run(tmp_path, corpus, capsys)
+
+    assert all("category_conflict" not in signals(row) for row in rows(scores_path))
+    assert "hopcut.example" in printed
+    assert "data/infrastructure/shared-hosts.jsonl" in printed
+
+
+def test_the_associated_category_is_what_the_published_placements_and_links_say(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The association recomputed from two other commands' files, for every registration.
+
+    `domain_frequency` can be counted off `data/domains/post-domains.jsonl`, and this is
+    the same audit for the other half of the conflict Signal: which Scam Category each
+    registration is associated with is worked out again here from the resolved links and
+    from `data/corpus/composition.jsonl` — the placements, published by a different
+    command over the same Corpus — and has to agree with the table the run prints.
+
+    Every registration is checked rather than only the ones carrying the Signal, because
+    the unassociated ones are the claim a reader is asked to accept without a figure: too
+    few postings is a count, and no majority is a count the reader can only verify from
+    the tally printed beside it.
+    """
+    resolved = rows(COMMITTED_POST_DOMAINS)
+    placed = {text(row, "post_id"): text(row, "scam_category") for row in rows(COMMITTED_PLACEMENTS)}
+
+    counts: dict[str, dict[str, int]] = {}
+    for row in resolved:
+        for registration in texts(row, "domains"):
+            tally = counts.setdefault(registration, {})
+            category = placed[text(row, "post_id")]
+            tally[category] = tally.get(category, 0) + 1
+
+    _, printed = run(tmp_path, capsys=capsys)
+
+    assert counts, "the committed Corpus resolves no registrations to check against"
+    for registration, tally in counts.items():
+        printed_row = registration_row(printed, registration)
+        ranked = sorted(
+            tally.items(), key=lambda entry: (entry[0] == OTHER.name, -entry[1], entry[0])
+        )
+        assert f"{ranked[0][0]} {ranked[0][1]}" in printed_row, registration
+        for category, count in ranked:
+            assert f"{category} {count}" in printed_row, registration
+
+
 # --- the Content Signals ---------------------------------------------------------
 
 
@@ -565,7 +820,7 @@ def test_a_post_claiming_an_outcome_cannot_fail_carries_the_guaranteed_return_si
         ("body", ["cannot lose"], "You cannot lose on this desk."),
     ]
     assert count(row, "points") == 25
-    assert count(row, "score") == 23
+    assert count(row, "score") == 19
 
 
 def test_a_post_asking_for_money_before_the_work_carries_the_payment_request_signal(
@@ -828,14 +1083,16 @@ def published_weights() -> dict[str, int]:
     return {text(row, "signal"): count(row, "weight") for row in rows(COMMITTED_WEIGHTS)}
 
 
-# The Corpus the hand-recomputation below is worked out on. Six posts carry a Signal
+# The Corpus the hand-recomputation below is worked out on. Eight posts carry a Signal
 # and three do not, and between them every Signal in the weight set fires at least
 # once, alone and beside others, so the arithmetic has no untested case left in it.
 #
-#   syn_p_0001  vantage-ledger.example      2 accounts share it, one edit from
-#   syn_p_0002  mirror.vantage-ledger         vantage-ledgers.example, and the body
-#                                             makes all three claims  ->  30 + 20
-#                                                                     + 25 + 20 + 15
+#   syn_p_0001  vantage-ledger.example      4 accounts share it, one edit from
+#   syn_p_0002  mirror.vantage-ledger         vantage-ledgers.example, the body
+#                                             makes all three claims, and it is
+#                                             about work on a registration the
+#                                             investment posts below put there
+#                                             ->  30 + 20 + 25 + 20 + 15 + 20
 #   syn_p_0003  vantage-ledgers.example     no other account reaches it, but it is
 #                                             still one edit away            ->  20
 #   syn_p_0004  hopcut.example, hopcuty.example
@@ -846,9 +1103,12 @@ def published_weights() -> dict[str, int]:
 #   syn_p_0007  no links, a deposit asked for          payment_request    ->  20
 #   syn_p_0008  no links, a deadline pressed         urgency_language   ->  15
 #   syn_p_0009  no links, and every one of those phrases denied  ->   0
+#   syn_p_0010  vantage-ledger.example      an investment pitch on the registration
+#   syn_p_0011  vantage-ledger.example      the other two postings that make it an
+#                                             investment registration  ->  30 + 20
 #
-# 110 of 110 published points is 100, 50 of 110 is 45, 20 of 110 is 18, 15 of 110
-# is 14, and 0 of 110 is 0.
+# 130 of 130 published points is 100, 50 of 130 is 38, 20 of 130 is 15, 15 of 130
+# is 12, and 0 of 130 is 0.
 _HAND_PITCH = (
     "Guaranteed returns every month, and the intake has to be finished within 48 "
     "hours or the slot goes to somebody else. Equipment is provided but there is a "
@@ -864,6 +1124,13 @@ _HAND_DEADLINE = (
 _HAND_DENIAL = (
     "We do not ask for a deposit, a kit fee, or any money up front, and there is no "
     "equipment charge at any point in the process."
+)
+# The two investment postings that make vantage-ledger.example an investment
+# registration, so that the post above it, which is about work, is the one that disagrees.
+# The same body twice on purpose: a Signal resting on which words a post used is not the
+# claim being tested here, and identical text keeps the arithmetic table readable.
+_HAND_INVESTMENT = (
+    "Minimum ticket is 500 USDT and the onboarding call is compulsory."
 )
 HAND_CORPUS = (
     post("syn_p_0001", "syn_alpha_0001", "https://vantage-ledger.example/entry",
@@ -891,6 +1158,10 @@ HAND_CORPUS = (
          created_at="2026-01-05T15:00:00Z"),
     post("syn_p_0009", "syn_iota_0009", body=_HAND_DENIAL,
          created_at="2026-01-05T16:00:00Z"),
+    post("syn_p_0010", "syn_kappa_0010", "https://vantage-ledger.example/entry",
+         body=_HAND_INVESTMENT, created_at="2026-01-05T17:00:00Z"),
+    post("syn_p_0011", "syn_lambda_0011", "https://vantage-ledger.example/month-log",
+         body=_HAND_INVESTMENT, created_at="2026-01-05T18:00:00Z"),
 )
 
 # What a reviewer can see in each of those posts' own links, and therefore what a Link
@@ -906,6 +1177,8 @@ VISIBLE = {
     "syn_p_0007": set(),
     "syn_p_0008": set(),
     "syn_p_0009": set(),
+    "syn_p_0010": {"vantage-ledger.example", "vantage-ledgers.example"},
+    "syn_p_0011": {"vantage-ledger.example", "vantage-ledgers.example"},
 }
 
 # The other half of what a reviewer has in front of them: the text of the post itself.
@@ -917,23 +1190,26 @@ VISIBLE_TEXT = {item.post_id: (item.title, item.body) for item in HAND_CORPUS}
 EXPECTED = {
     "syn_p_0001": (
         [
+            "category_conflict",
             "domain_frequency",
             "domain_lookalike",
             "guaranteed_return",
             "payment_request",
             "urgency_language",
         ],
-        110,
+        130,
         100,
     ),
-    "syn_p_0002": (["domain_frequency", "domain_lookalike"], 50, 45),
-    "syn_p_0003": (["domain_lookalike"], 20, 18),
-    "syn_p_0004": (["domain_lookalike"], 20, 18),
+    "syn_p_0002": (["domain_frequency", "domain_lookalike"], 50, 38),
+    "syn_p_0003": (["domain_lookalike"], 20, 15),
+    "syn_p_0004": (["domain_lookalike"], 20, 15),
     "syn_p_0005": ([], 0, 0),
     "syn_p_0006": ([], 0, 0),
-    "syn_p_0007": (["payment_request"], 20, 18),
-    "syn_p_0008": (["urgency_language"], 15, 14),
+    "syn_p_0007": (["payment_request"], 20, 15),
+    "syn_p_0008": (["urgency_language"], 15, 12),
     "syn_p_0009": ([], 0, 0),
+    "syn_p_0010": (["domain_frequency", "domain_lookalike"], 50, 38),
+    "syn_p_0011": (["domain_frequency", "domain_lookalike"], 50, 38),
 }
 
 
@@ -965,6 +1241,7 @@ def test_the_published_weights_applied_to_what_a_reviewer_can_see_produce_the_sc
     weights = published_weights()
 
     assert weights == {
+        "category_conflict": 20,
         "domain_frequency": 30,
         "domain_lookalike": 20,
         "guaranteed_return": 25,
@@ -1034,7 +1311,7 @@ def test_a_signal_is_counted_once_however_many_registrations_fire_it(tmp_path: P
         "vantage-ledger.example",
         "rivermill-bikes.example",
     }
-    assert count(row, "score") == 27
+    assert count(row, "score") == 23
 
 
 def test_the_frequency_figures_can_be_counted_off_the_published_resolved_links(
@@ -1095,14 +1372,18 @@ def test_the_console_prints_the_arithmetic_beside_the_score(
     _, printed = run(tmp_path, corpus, capsys)
 
     block = printed.split("syn_p_0001  syn_alpha_0001  100/100")[1].split("\n\n")[0]
-    assert "domain_frequency   30  vantage-ledger.example: 2 posts by 2 accounts" in block
+    assert (
+        "category_conflict  20  vantage-ledger.example: this post is Work and Payroll, "
+        "and 2 of 3 placed posts reaching it are Investment and Money Offers" in block
+    )
+    assert "domain_frequency   30  vantage-ledger.example: 4 posts by 4 accounts" in block
     assert (
         "domain_lookalike   20  vantage-ledger.example: one edit from "
         "vantage-ledgers.example" in block
     )
     assert 'guaranteed_return  25  body: "Guaranteed returns every month' in block
     assert 'payment_request    20  body: "Equipment is provided' in block
-    assert "total              110  of 110 published points, 5 of 5 Signals" in block
+    assert "total              130  of 130 published points, 6 of 6 Signals" in block
 
     # The weights are quoted from the file, with the reason each one is that number.
     assert "data/signals/weights.jsonl" in printed
@@ -1199,7 +1480,9 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
     20. A post carrying every Signal is 100 either way, because carrying every Signal is
     carrying all of the weight there is; that is the normalisation doing its job rather
     than a detail, and it is why adding a Signal later moves the scores rather than
-    pushing the existing ones over the top.
+    pushing the existing ones over the top. The second set has to price the conflict
+    Signal as well, because the refusal is what makes a Signal's weight a published
+    change rather than a line of Python.
 
     No code changes between the two runs, which is the whole point. If the weights were
     a constant beside the rules, the second run would print the first run's numbers and
@@ -1213,7 +1496,8 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
             domain_lookalike=20,
             guaranteed_return=10,
             payment_request=5,
-            urgency_language=5,
+            urgency_language=3,
+            category_conflict=2,
         ),
     )
 
@@ -1223,6 +1507,7 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
     before = by_post(before_path)
     after = by_post(after_path)
     assert published_weights() == {
+        "category_conflict": 20,
         "domain_frequency": 30,
         "domain_lookalike": 20,
         "guaranteed_return": 25,
@@ -1231,7 +1516,7 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
     }
 
     # syn_p_0003 carries only the lookalike Signal, so only that weight is in play.
-    assert count(before["syn_p_0003"], "score") == 18
+    assert count(before["syn_p_0003"], "score") == 15
     assert count(after["syn_p_0003"], "score") == 20
     assert count(after["syn_p_0003"], "published_points") == 100
 
@@ -1239,8 +1524,8 @@ def test_a_weight_is_data_so_editing_the_file_moves_the_score_and_no_code_change
     assert count(after["syn_p_0006"], "score") == 0
 
     # And the table quotes the file's numbers rather than a constant.
-    assert "domain_frequency  60" in after_printed
-    assert "5 Signals, 100 points published" in after_printed
+    assert "domain_frequency   60" in after_printed
+    assert "6 Signals, 100 points published" in after_printed
 
 
 def test_each_published_weight_carries_its_own_reason_and_the_output_quotes_them(
@@ -1306,8 +1591,8 @@ def test_a_signal_with_no_published_weight_stops_the_run(tmp_path: Path) -> None
 
     assert "publishes ['domain_frequency']" in said
     assert (
-        "computes ['domain_frequency', 'domain_lookalike', 'guaranteed_return', "
-        "'payment_request', 'urgency_language']" in said
+        "computes ['category_conflict', 'domain_frequency', 'domain_lookalike', "
+        "'guaranteed_return', 'payment_request', 'urgency_language']" in said
     )
 
 
@@ -1330,8 +1615,8 @@ def test_a_published_weight_naming_no_signal_this_project_computes_stops_the_run
 
     assert "names 'account_history'" in said
     assert (
-        "the Signals are domain_frequency, domain_lookalike, guaranteed_return, "
-        "payment_request, urgency_language" in said
+        "the Signals are category_conflict, domain_frequency, domain_lookalike, "
+        "guaranteed_return, payment_request, urgency_language" in said
     )
 
 
@@ -1598,6 +1883,7 @@ def test_the_command_refuses_to_write_over_the_weight_set(tmp_path: Path) -> Non
     published = write_weights(
         tmp_path / "weights.jsonl",
         weight_set(
+            category_conflict=20,
             domain_frequency=30,
             domain_lookalike=20,
             guaranteed_return=25,
