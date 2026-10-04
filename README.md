@@ -44,7 +44,7 @@ steps, which are named against each row. Every file has one reader:
 | --- | --- | --- |
 | `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. | the pipeline |
 | `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
-| `data/corpus/labelled-contacts.jsonl` | The labelled set: one row per post, naming every Contact Point that post publishes and whether it published it plainly, written out, or only as a picture of one. | `rfi contact-points`, to measure its own reading |
+| `data/corpus/labelled-contacts.jsonl` | The Labelled Set: one row per post, naming every Contact Point that post publishes and whether it published it plainly, written out, or only as a picture of one. | `rfi contact-points`, to measure its own reading |
 | `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
 | `data/corpus/composition.jsonl` | Every post's Scam Category, with the sentences of its own text that placed it. | a reader, then the category-conflict ticket #18 |
 | `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. Each row carries where the host came from and when it was added. | `rfi campaign-candidates` |
@@ -91,7 +91,7 @@ carries the material that makes a grouping decision hard, and
 | `staggered_paraphrase` | One planted offer, reworded across a Planted Campaign's accounts. |
 | `known_shared_infrastructure` | Each shared host, with the posts and accounts that touch it. |
 | `single_account_domain` | A domain one account uses, which must not group. |
-| `obfuscated_contact` | One desk publishing the same Contact Point five ways: written out character by character, with a digit in it, as a screenshot, and as words. Two are found and three are not, which is what makes the extraction's recall a measurement. |
+| `obfuscated_contact` | One desk publishing one handle 4 ways: written out with a full stop between its characters, written out with spaces, with a digit standing in for a letter, and only as a picture of one. 3 of the 4 are found and the picture is not. Beside them an address carrying a digit in its local part is published plainly and read exactly as written, and a second address written as words is not read at all. A 7th post publishes nothing, and the 1 Contact Point the reading invents in it comes from there — which is what makes the recall beside them a measurement rather than a promise. |
 | `hard_negative` | Legitimate content near the boundary, recorded with its character: a genuine job post, satire, a complaint from someone who lost money, scam-adjacent discussion. |
 
 Every record carries a note in prose saying what it is there to test, so the file
@@ -170,13 +170,13 @@ read — an email address and a Telegram handle — from a post's own title, its
 and its links.
 
 ```
-uv run rfi contact-points   # reads the Corpus and the labelled set, writes two files
+uv run rfi contact-points   # reads the Corpus and the Labelled Set, writes two files
 ```
 
 | File | Holds |
 | --- | --- |
 | `data/contacts/post-contacts.jsonl` | One line per post: its Contact Points, every occurrence with the spelling and the field it was found in, and every candidate that named none. |
-| `data/corpus/labelled-contacts.jsonl` | The labelled set the reading is measured against, named here because it is an input rather than an output of this command. |
+| `data/corpus/labelled-contacts.jsonl` | The Labelled Set the reading is measured against, named here because it is an input rather than an output of this command. |
 | `docs/contact-points.md` | The report, generated from those rows. |
 
 **An obfuscated username is read as the identifier underneath it, an address's host is read
@@ -216,7 +216,7 @@ That figure is of *this* reading over *this* Corpus, and the report says so. It 
 against `data/corpus/labelled-contacts.jsonl`, which `rfi generate-corpus` writes beside the
 Corpus from the same plan the posts come from: one row per post, naming every Contact Point
 that post publishes and whether it published it plainly, written out, or only as a picture of
-one. A Corpus from a provider has no labelled set beside it, and measuring this reading over
+one. A Corpus from a provider has no Labelled Set beside it, and measuring this reading over
 other content means labelling that content. The labels are read after the reading has
 finished and reach nothing that decides what was read — `measure()` is handed the finished
 reading rather than the Corpus, and a test reads the same Corpus twice, once with labels that
@@ -330,7 +330,7 @@ is the direct-adjacency baseline ADR-0009 asks for — and the output reports th
 difference:
 
 ```
-  filtered      3 of 15 registrations withheld, removing 2 of 5 components
+  filtered      3 of 16 registrations withheld, removing 2 of 5 components
 ```
 
 followed by what left the graph, so a registration the resolved links hold and no
@@ -408,7 +408,7 @@ get N rather than take the numerator on trust.
 membership the generator planted, and the report says so in its own words, because a
 reader who cannot tell a command from a reviewer has been told something false about
 how the number came about. The report also names the Nuisance Structure the figure
-sits on — 19 records over six kinds, every kind counted — because a recovery rate over
+sits on — 20 records over seven kinds, every kind counted — because a recovery rate over
 a Corpus that held nothing else would be a figure about a generator that planted two
 campaigns and said so nowhere.
 
@@ -639,20 +639,44 @@ uv run rfi corpus-composition   # reads the Corpus and the base rates, writes tw
 
 **The comparison is the finding, and on this Corpus it is blunt.** Eight of the ten
 Scam Categories hold no post at all, and **82.5% of real reports land in classes
-this Corpus has nothing to say about**. The two classes it does hold are the two the
-generator writes:
+this Corpus has nothing to say about**. All ten and the Other bucket, as the report
+publishes them:
 
 ```
-  category                           posts  corpus   CAFC  difference
-  Work and Payroll                   12  44.4%   4.1%  +40.3pp
-    corpus  ##############################  44.4%
-    CAFC    ###                             4.1%
-  Investment and Money Offers         9  33.3%   7.5%  +25.8pp
-    corpus  #######################         33.3%
-    CAFC    #####                           7.5%
-  Other                               6  22.2%   3.0%  +19.2pp
-    corpus  ###############                 22.2%
-    CAFC    ##                              3.0%
+  category                          posts  corpus   CAFC  difference
+  Investment and Money Offers         13   38.2%   7.5% +30.7pp
+    corpus  ##############################             38.2%
+    CAFC    ######                                     7.5%
+  Work and Payroll                    12   35.3%   4.1% +31.2pp
+    corpus  ############################               35.3%
+    CAFC    ###                                        4.1%
+  Other                                9   26.5%   3.0% +23.5pp
+    corpus  #####################                      26.5%
+    CAFC    ##                                         3.0%
+  Bills, Invoicing and Collections     0    0.0%   1.1%  -1.1pp
+    corpus                                             0.0%
+    CAFC    #                                          1.1%
+  Extortion                            0    0.0%   9.4%  -9.4pp
+    corpus                                             0.0%
+    CAFC    #######                                    9.4%
+  Identity and Account Takeover        0    0.0%  31.0% -31.0pp
+    corpus                                             0.0%
+    CAFC    ########################                   31.0%
+  Impersonating an Institution         0    0.0%  12.0% -12.0pp
+    corpus                                             0.0%
+    CAFC    #########                                  12.0%
+  Merchandise and Goods                0    0.0%  12.0% -12.0pp
+    corpus                                             0.0%
+    CAFC    #########                                  12.0%
+  Phishing                             0    0.0%  10.5% -10.5pp
+    corpus                                             0.0%
+    CAFC    ########                                   10.5%
+  Prizes, Appeals and Psychics         0    0.0%   1.6%  -1.6pp
+    corpus                                             0.0%
+    CAFC    #                                          1.6%
+  Relationships and Second Contacts    0    0.0%   4.8%  -4.8pp
+    corpus                                             0.0%
+    CAFC    ####                                       4.8%
 ```
 
 Every recovery figure this project will publish is bounded by that, which is why the
@@ -719,6 +743,6 @@ patch `urllib.request.urlopen` to refuse.
   candidates in a command of its own, so measurement cannot reach inference and the
   two steps are a file apart rather than a boundary drawn inside one process), and 0019
   (an obfuscated username is read as the identifier underneath it, an address's host is
-  read exactly as written, and the reading is measured against a labelled set the
+  read exactly as written, and the reading is measured against a Labelled Set the
   generator writes beside the Corpus, which is the one place a measurement shares a
   command with the step it measures).

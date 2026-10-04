@@ -207,7 +207,7 @@ def _parser() -> argparse.ArgumentParser:
         "Nuisance Structure",
         description=(
             "Write five files: a Corpus holding content, accounts, and links; a truth "
-            "file holding Planted Campaign membership; the labelled set, one row per post "
+            "file holding Planted Campaign membership; the Labelled Set, one row per post "
             "naming every Contact Point that post publishes; the Nuisance Structure "
             "manifest, naming what else was planted or recorded and what each piece is "
             "for; and the known-shared infrastructure list. Each of the last four is at a "
@@ -238,7 +238,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "where to write the labelled set: what every post publishes as a Contact "
+            "where to write the Labelled Set: what every post publishes as a Contact "
             "Point (default: labelled-contacts.jsonl beside the Corpus)"
         ),
     )
@@ -406,7 +406,7 @@ def _parser() -> argparse.ArgumentParser:
             "with the obfuscation tolerance a post actually uses: an identifier written "
             "out character by character, and a digit standing in for a letter, are read "
             "as the identifier underneath them. The reading is then measured against "
-            "the labelled set the generator wrote beside the Corpus, and the recall and "
+            "the Labelled Set the generator wrote beside the Corpus, and the recall and "
             "the false-positive rate are printed beside the figures they bound, with "
             "every miss named. Nothing is dropped: a candidate that names no Contact "
             "Point is reported with which of nine faults applied, because a false "
@@ -429,7 +429,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_LABELLED_PATH,
         help=(
-            "the labelled set to measure the reading against: one row per post naming "
+            "the Labelled Set to measure the reading against: one row per post naming "
             f"what it publishes (default: {DEFAULT_LABELLED_PATH})"
         ),
     )
@@ -695,11 +695,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _labelled_beside(labelled: Path | str | None, corpus: Path | str) -> Path:
-    """Where the labelled set goes: where it was asked for, or beside the Corpus.
+    """Where the Labelled Set goes: where it was asked for, or beside the Corpus.
 
     Beside the Corpus rather than at a path of its own, because a run that writes a
     Corpus somewhere else on purpose — every test, and any reader who does not want the
-    committed one — would otherwise reach over and overwrite the committed labelled set
+    committed one — would otherwise reach over and overwrite the committed Labelled Set
     beside it. The set is a projection of the Corpus (ADR-0008), so it belongs in the
     Corpus's own directory rather than at a fixed one of the project's.
     """
@@ -721,7 +721,7 @@ def _generate_corpus(
         {
             "the Corpus": corpus_path,
             "the membership": truth_path,
-            "the labelled set": labelled_path,
+            "the Labelled Set": labelled_path,
             "the Nuisance Structure": nuisance_path,
             "the known-shared infrastructure list": shared_path,
         }
@@ -913,12 +913,12 @@ def _contact_points(
         {
             "the Corpus": corpus_path,
             "the report": report_path,
-            "the labelled set": labelled_path,
+            "the Labelled Set": labelled_path,
             "the Contact Points": contacts_path,
         }
     )
     _require_present(
-        {"the Corpus": corpus_path, "the labelled set": labelled_path},
+        {"the Corpus": corpus_path, "the Labelled Set": labelled_path},
         "Run `rfi generate-corpus` first; this command reads no published list.",
     )
 
