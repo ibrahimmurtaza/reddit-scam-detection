@@ -1,7 +1,7 @@
 """Deterministic Corpus generation.
 
 A fixed seed fixes the Corpus: two runs with the same seed write byte-identical
-files. The Corpus, the truth file, the labelled set, and the Nuisance Structure
+files. The Corpus, the truth file, the Labelled Set, and the Nuisance Structure
 manifest are projections of one plan, and the Corpus projection carries nothing
 the others carry — a `CorpusItem` has no membership field, no published Contact
 Point, and no nuisance field, and the writer that serialises it takes nothing but
@@ -81,7 +81,7 @@ def nuisance_records(seed: int) -> list[NuisanceRecord]:
 
 
 def published_posts(seed: int) -> list[PublishedPost]:
-    """The labelled set: what every post publishes, and the posts that publish nothing.
+    """The Labelled Set: what every post publishes, and the posts that publish nothing.
 
     One row per post, built from what the post declared rather than from reading its
     text back for an `@`, so a label is something somebody wrote down and a disagreement

@@ -63,6 +63,7 @@ from reddit_fraud_intelligence.projection import (
     unplaced_reports,
     write_mapping,
 )
+from reddit_fraud_intelligence.review_queue import build_queue, render_table as render_queue
 from reddit_fraud_intelligence.signals import (
     render_table as render_policy_score,
     score_corpus,
@@ -102,6 +103,7 @@ DEFAULT_COMPOSITION_PATH = Path("data/corpus/composition.jsonl")
 DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
 DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
+DEFAULT_REVIEW_DEPTH = 50
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -187,6 +189,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 weights_path=Path(str(args.weights)),
                 scores_path=Path(str(args.scores)),
             )
+        case "review-queue":
+            return _review_queue(
+                scores_path=Path(str(args.scores)),
+                candidates_path=Path(str(args.candidates)),
+                depth=int(args.depth),
+            )
         case _:
             parser.error(f"unknown command: {args.command}")
 
@@ -207,7 +215,7 @@ def _parser() -> argparse.ArgumentParser:
         "Nuisance Structure",
         description=(
             "Write five files: a Corpus holding content, accounts, and links; a truth "
-            "file holding Planted Campaign membership; the labelled set, one row per post "
+            "file holding Planted Campaign membership; the Labelled Set, one row per post "
             "naming every Contact Point that post publishes; the Nuisance Structure "
             "manifest, naming what else was planted or recorded and what each piece is "
             "for; and the known-shared infrastructure list. Each of the last four is at a "
@@ -238,7 +246,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help=(
-            "where to write the labelled set: what every post publishes as a Contact "
+            "where to write the Labelled Set: what every post publishes as a Contact "
             "Point (default: labelled-contacts.jsonl beside the Corpus)"
         ),
     )
@@ -406,7 +414,7 @@ def _parser() -> argparse.ArgumentParser:
             "with the obfuscation tolerance a post actually uses: an identifier written "
             "out character by character, and a digit standing in for a letter, are read "
             "as the identifier underneath them. The reading is then measured against "
-            "the labelled set the generator wrote beside the Corpus, and the recall and "
+            "the Labelled Set the generator wrote beside the Corpus, and the recall and "
             "the false-positive rate are printed beside the figures they bound, with "
             "every miss named. Nothing is dropped: a candidate that names no Contact "
             "Point is reported with which of nine faults applied, because a false "
@@ -429,7 +437,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_LABELLED_PATH,
         help=(
-            "the labelled set to measure the reading against: one row per post naming "
+            "the Labelled Set to measure the reading against: one row per post naming "
             f"what it publishes (default: {DEFAULT_LABELLED_PATH})"
         ),
     )
@@ -649,6 +657,46 @@ def _parser() -> argparse.ArgumentParser:
         help=f"where to write the scores (default: {DEFAULT_SCORES_PATH})",
     )
 
+    queue = commands.add_parser(
+        "review-queue",
+        help="order the scored posts by Triage Priority and print the top of them",
+        description=(
+            "The Review Queue: every post in the published scores, ordered by Triage "
+            "Priority, truncated to a depth stated here and in the output header. The order "
+            "is the Policy Score and nothing else, so the number a reviewer reads at the "
+            "top of the queue is the number the scoring command published for that post "
+            "(ADR-0003); two posts that tie on it are ordered by the points they earned of "
+            "the published total, which is that same arithmetic one step finer. Every entry "
+            "carries the Signal-by-Signal breakdown behind its score and names the Campaign "
+            "Candidates the post sits in, so an entry can be worked from this output alone. "
+            "It reads the scores and the candidates and runs neither step again, which is "
+            "what keeps it from reaching the Corpus or the membership (ADR-0018). No figure "
+            "is computed over the queue: how good the ordering is needs a reviewer. Reads "
+            "no network."
+        ),
+    )
+    queue.add_argument(
+        "--scores",
+        type=Path,
+        default=DEFAULT_SCORES_PATH,
+        help=f"the published Policy Scores to read (default: {DEFAULT_SCORES_PATH})",
+    )
+    queue.add_argument(
+        "--candidates",
+        type=Path,
+        default=DEFAULT_CANDIDATES_PATH,
+        help=(
+            "the published Campaign Candidates to read "
+            f"(default: {DEFAULT_CANDIDATES_PATH})"
+        ),
+    )
+    queue.add_argument(
+        "--depth",
+        type=int,
+        default=DEFAULT_REVIEW_DEPTH,
+        help=f"how many entries of the queue to print (default: {DEFAULT_REVIEW_DEPTH})",
+    )
+
     composition = commands.add_parser(
         "corpus-composition",
         help="report the Corpus's Scam Category distribution beside CAFC's base rates",
@@ -695,11 +743,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _labelled_beside(labelled: Path | str | None, corpus: Path | str) -> Path:
-    """Where the labelled set goes: where it was asked for, or beside the Corpus.
+    """Where the Labelled Set goes: where it was asked for, or beside the Corpus.
 
     Beside the Corpus rather than at a path of its own, because a run that writes a
     Corpus somewhere else on purpose — every test, and any reader who does not want the
-    committed one — would otherwise reach over and overwrite the committed labelled set
+    committed one — would otherwise reach over and overwrite the committed Labelled Set
     beside it. The set is a projection of the Corpus (ADR-0008), so it belongs in the
     Corpus's own directory rather than at a fixed one of the project's.
     """
@@ -721,7 +769,7 @@ def _generate_corpus(
         {
             "the Corpus": corpus_path,
             "the membership": truth_path,
-            "the labelled set": labelled_path,
+            "the Labelled Set": labelled_path,
             "the Nuisance Structure": nuisance_path,
             "the known-shared infrastructure list": shared_path,
         }
@@ -913,12 +961,12 @@ def _contact_points(
         {
             "the Corpus": corpus_path,
             "the report": report_path,
-            "the labelled set": labelled_path,
+            "the Labelled Set": labelled_path,
             "the Contact Points": contacts_path,
         }
     )
     _require_present(
-        {"the Corpus": corpus_path, "the labelled set": labelled_path},
+        {"the Corpus": corpus_path, "the Labelled Set": labelled_path},
         "Run `rfi generate-corpus` first; this command reads no published list.",
     )
 
@@ -1131,4 +1179,27 @@ def _policy_score(
 
     print(render_policy_score(scored))
     print(f"scores         {scores_path}")
+    return 0
+
+
+def _review_queue(*, scores_path: Path, candidates_path: Path, depth: int) -> int:
+    """Print the queue. Nothing is written: this is the first command that produces no
+    file, because the queue is a projection of two files another command published and a
+    copy of it in a third place would be a third thing to keep in step with the other two.
+    """
+    _require_present(
+        {
+            "the Policy Scores": scores_path,
+            "the Campaign Candidates": candidates_path,
+        },
+        "Run `rfi policy-score` and `rfi campaign-candidates` first; this command orders "
+        "what those two published.",
+    )
+
+    try:
+        queue = build_queue(scores_path, candidates_path, depth)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+
+    print(render_queue(queue))
     return 0

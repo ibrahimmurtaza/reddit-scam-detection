@@ -12,7 +12,7 @@ Planted Campaign link to the same registrable domain while nothing in the
 file says they belong together.
 
 Every post also declares the Contact Points it publishes, in `published`, which the
-generator writes to a labelled set of its own. That is what makes the reading measurable:
+generator writes to a Labelled Set of its own. That is what makes the reading measurable:
 `rfi contact-points` can be held to what the Corpus actually publishes rather than to
 what a test expected of it, and a post that publishes a handle disguised is labelled as
 publishing that handle. It sits here rather than in the file because a label and the
@@ -49,7 +49,7 @@ def telegram(
     reads as what it is — a handle, or an address, published plainly or written out — and
     a reader can see at a glance that the Corpus publishes Contact Points in three
     shapes, which is the range the reading is measured over. The three ways of writing
-    are the same enum the labelled set carries, so a fixture and the row it becomes
+    are the same enum the Labelled Set carries, so a fixture and the row it becomes
     cannot drift apart.
     """
     return PublishedContact(

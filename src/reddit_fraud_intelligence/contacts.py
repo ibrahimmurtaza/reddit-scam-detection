@@ -25,12 +25,12 @@ join two accounts on nothing else, so a value that was guessed is a grouping edg
 checked; reading loosely would be worse than reading narrowly here even where the recall
 would be better.
 
-Which is why the run reads a **labelled set** — one row per post, naming every Contact
+Which is why the run reads a **Labelled Set** — one row per post, naming every Contact
 Point that post publishes and whether it published it plainly, written out, or only as a
 picture of one — and prints the recall and the false-positive rate beside the figures
 those numbers bound. A count of Contact Points is a count of the ones this reading found,
 and the shortfall is named row by row rather than left to be inferred from the count. The
-labelled set is read after the reading has finished and is handed to `measure` rather than
+Labelled Set is read after the reading has finished and is handed to `measure` rather than
 to the rules, so a label has no path to a decision about what was read; the Corpus is
 still the whole input, no published list decides what a post says to be reached at, and
 the truth file is joined by the evaluator after this has finished (ADR-0008, ADR-0019).
@@ -77,7 +77,7 @@ ADR-0004 is measured against. The output says so, because a shared list read as 
 of groupings is the more damaging of the two misreadings.
 
 Nothing here reads the truth file or the Nuisance Structure manifest. The Corpus and the
-labelled set beside it are the whole input — no published list decides what a post says
+Labelled Set beside it are the whole input — no published list decides what a post says
 to be reached at — and the truth file is joined by the evaluator after this has finished
 (ADR-0008).
 
@@ -150,9 +150,10 @@ _MAX_HANDLE_CHARS = 32
 # username cannot hold one. Scanning starts at every `@`, so a candidate in the middle
 # of a sentence is found without the rule knowing anything about sentences.
 #
-# Both halves stop at a character neither half can hold, which is what makes
-# `write to me at @ or ring` two candidates rather than one: the run after the `@` is
-# empty, and a candidate whose name is empty is reported rather than skipped.
+# Both halves stop at a character neither half can hold, so the `@` in
+# `write to me at @ or ring` yields the single character `@` rather than a run reaching
+# into the sentence beside it. An `@` naming nothing is prose, and prose is reported
+# rather than skipped, so a reader can tell it was looked at and refused.
 _LEFT_RUN = re.compile(r"[A-Za-z0-9_%+.\- ]")
 _RIGHT_RUN = re.compile(r"[A-Za-z0-9_.\- ]")
 
@@ -293,7 +294,7 @@ class PublishedPost:
 
 
 def write_published(path: Path, posts: Iterable[PublishedPost]) -> None:
-    """The labelled set, one row per post, sorted so a fixed seed writes fixed bytes.
+    """The Labelled Set, one row per post, sorted so a fixed seed writes fixed bytes.
 
     Sorted by post rather than written in the plan's order because the Corpus file is
     sorted by time and the two are different projections of the same plan; a reader
@@ -319,7 +320,7 @@ def write_published(path: Path, posts: Iterable[PublishedPost]) -> None:
 
 
 def read_published(path: Path) -> tuple[PublishedPost, ...]:
-    """The labelled set, read back and checked row by row.
+    """The Labelled Set, read back and checked row by row.
 
     Every field is parsed rather than passed through, for the reason `read_nuisance`
     gives and because this file decides what the recall figure means: a kind or a way of
@@ -438,7 +439,7 @@ def _written_out(side: str, at_the_end: bool) -> str:
     The cost is stated rather than hidden: a post that spaces out the letters of a word
     beside an `@` produces an identifier nobody published, `email me @ t o n i g h t at
     8` reads as the handle `tonight`, and that is the one false positive this reading
-    has that the literal reader did not. It is measured against the labelled set and
+    has that the literal reader did not. It is measured against the Labelled Set and
     printed beside the figures rather than argued here.
 
     An empty result means the side holds no written-out identifier and is read plainly,
@@ -523,7 +524,7 @@ class Match:
 
 @dataclass(frozen=True, slots=True)
 class UnreadCandidate:
-    """One candidate that names no Contact Point, and which of the eight faults it was."""
+    """One candidate that names no Contact Point, and which of the nine faults it was."""
 
     found_as: str
     field: str
@@ -927,7 +928,7 @@ class Missed(Finding):
 
 @dataclass(frozen=True, slots=True)
 class Invented(Finding):
-    """A Contact Point read out of a post the labelled set says publishes none."""
+    """A Contact Point read out of a post the Labelled Set says publishes none."""
 
     written_as: str
 
@@ -953,11 +954,11 @@ class Recall:
     Three numbers and three lists, and the three lists are what make the numbers
     checkable: how much of what was published was found, how much was invented where
     nothing was published, and how many published Contact Points came out under another
-    one's name. Each is counted over the labelled set rather than over the run, so none of
+    one's name. Each is counted over the Labelled Set rather than over the run, so none of
     them can be moved by a change to the Corpus that the labels do not move with.
 
     The figure is a measurement of *this* reading over *this* Corpus, and the report says
-    so: a Corpus from a provider has no labelled set beside it, and a reader wanting the
+    so: a Corpus from a provider has no Labelled Set beside it, and a reader wanting the
     figure over other content has to label that content themselves.
     """
 
@@ -995,10 +996,10 @@ def measure(
     sit in the same command as the reading: the labels reach nothing that decides what is
     read, because the only thing they reach is this function and this function is handed
     the result. `tests/test_contact_points.py` holds that by running the reading over the
-    Corpus twice, once with the labelled set beside it and once without, and asserting
+    Corpus twice, once with the Labelled Set beside it and once without, and asserting
     the rows are identical.
 
-    A labelled post the Corpus does not hold, or a Corpus post the labelled set does not
+    A labelled post the Corpus does not hold, or a Corpus post the Labelled Set does not
     cover, is refused rather than measured: a recall figure over a subset of the posts
     would read as a figure over the Corpus, and a false-positive rate with the posts that
     publish nothing left out of it has no denominator.
@@ -1011,13 +1012,13 @@ def measure(
     missing = sorted(set(read) - set(labelled))
     if missing:
         raise ValueError(
-            f"the labelled set says nothing about {missing}, and a recall figure over "
+            f"the Labelled Set says nothing about {missing}, and a recall figure over "
             "some of the posts is a figure over none of the Corpus"
         )
     extra = sorted(set(labelled) - set(read))
     if extra:
         raise ValueError(
-            f"the labelled set names {extra}, which the Corpus does not hold"
+            f"the Labelled Set names {extra}, which the Corpus does not hold"
         )
 
     missed: list[Missed] = []
@@ -1072,7 +1073,7 @@ def measure(
 
 
 def contact_points(corpus_path: Path, labelled_path: Path) -> ContactPoints:
-    """Read the Corpus, measure the reading against the labelled set, and return both.
+    """Read the Corpus, measure the reading against the Labelled Set, and return both.
 
     One call, for the same reason the grouping is one call: the per-post rows, the shared
     list, the figures, and the measurement are four views of one pass over the Corpus, and
@@ -1080,7 +1081,7 @@ def contact_points(corpus_path: Path, labelled_path: Path) -> ContactPoints:
     printing one run's figures over another's results.
 
     The Corpus is read rather than generated, because the file is the boundary
-    (ADR-0001, ADR-0008). The labelled set is read afterwards and only to be measured
+    (ADR-0001, ADR-0008). The Labelled Set is read afterwards and only to be measured
     against, and no published list is read at all: nothing about what a post says to be
     reached at depends on what anybody registered.
     """
@@ -1198,7 +1199,7 @@ def _labelled(facts: ContactFacts, recall: Recall) -> str:
     The path the run actually read, from the facts, rather than the one the command
     defaults to: a report naming a file this run did not measure against would send a
     reader to check the wrong rows, and the same bytes would be a different report over a
-    different labelled set.
+    different Labelled Set.
     """
     return (
         f"{facts.labelled_path}: {recall.posts} posts, "
@@ -1287,6 +1288,18 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun if number == 1 else f"{noun}s"}"
 
 
+def _by_reach(point: SharedContact) -> tuple[int, str, str]:
+    """One Contact Point's place in the order both views print them in.
+
+    Widest reach first, then kind, then value. The console and the report publish the
+    same order and a reader moves between them by looking for a value they read on one
+    page in the other, so the order is written once here rather than twice at the two
+    call sites — which is what stops the two views drifting apart the next time the
+    order is argued about.
+    """
+    return (-len(point.accounts), point.kind.value, point.value)
+
+
 def _points(found: ContactPoints) -> str:
     """Every Contact Point the Corpus names, and every place in the Corpus that names it.
 
@@ -1295,9 +1308,7 @@ def _points(found: ContactPoints) -> str:
     post, and the spelling: the three things a reader needs to go and see for
     themselves that two posts named the same thing.
     """
-    ordered = sorted(
-        found.points.values(), key=lambda point: (-len(point.accounts), point.kind.value, point.value)
-    )
+    ordered = sorted(found.points.values(), key=_by_reach)
     reached = sum(1 for point in ordered if point.shared)
     heading = (
         f"points  {_count(len(ordered), 'Contact Point')} read, {reached} of them reached by 2 "
@@ -1357,7 +1368,7 @@ content would read `0 of {found.facts.points}`, which is what measuring them buy
 
 Nothing on this path reads the truth file or the Nuisance Structure manifest, and no
 published list is read either: what a post says to be reached at does not depend on
-what anybody registered (ADR-0008). The labelled set is read, and only after the reading
+what anybody registered (ADR-0008). The Labelled Set is read, and only after the reading
 has finished, to be measured against: it names what each post publishes and cannot reach
 a decision about what was read."""
 
@@ -1372,7 +1383,7 @@ def render_report(found: ContactPoints) -> str:
     facts = found.facts
     return f"""# Contact Points in the Corpus
 
-Generated by `rfi contact-points` from the Corpus file and the labelled set beside it.
+Generated by `rfi contact-points` from the Corpus file and the Labelled Set beside it.
 Do not edit it by hand — a test holds this file to what that produces, and re-running
 the command rewrites it byte for byte.
 
@@ -1390,8 +1401,8 @@ the command rewrites it byte for byte.
 | Synthetic Entities | {facts.synthetic} of {facts.points} |
 | Corpus | `{facts.corpus_path}` |
 | SHA-256 of the Corpus | `{facts.corpus_sha256}` |
-| Labelled set | `{facts.labelled_path}` |
-| SHA-256 of the labelled set | `{facts.labelled_sha256}` |
+| Labelled Set | `{facts.labelled_path}` |
+| SHA-256 of the Labelled Set | `{facts.labelled_sha256}` |
 
 {_recall_section(found)}
 
@@ -1446,9 +1457,20 @@ before the `@` is not, because RFC 5321 says nothing of the sort about it: foldi
 would merge `Desk@` and `desk@` into one mailbox that may be two, which is a shared
 identifier between two accounts that share nothing — this module inventing a grouping
 edge in order to be helpful, which is the failure it exists to avoid. An address is
-folded for spacing and for substitution and for nothing else, so a local part written out
+folded for spacing and for nothing else, so a local part written out
 (`i n t a k e @vantage-ledger.example`) is read as `intake@vantage-ledger.example` while
 `intake @ vantage-ledger.example` is not read at all.
+
+**The substitution above reaches a username and never an address.** `1ntake@` is not
+`intake@` here, and `desk@gr4vy.io` is not `desk@gravy.io`. A username is a name the
+account owner chose, so a digit standing in for a letter is a fair guess at it, and the
+fold can be published; a host is a name somebody else registered, `gr4vy.io` may be
+exactly what they registered, and `vantage.ex4mple` may be a real domain rather than a
+disguised word. Nothing in a post says which, so the guess is withheld from an address
+and two domains that both exist are never merged on a keyboard. The Corpus carries the
+case on purpose — `1ntake@copper-lantern.example` is published plainly and read exactly
+as written — so the `folded` line below is a measured statement that no fold joined two
+values rather than a claim that none can.
 
 **A link is read for a Contact Point, on the same rule as any other link.** A
 `mailto:` names an address rather than a page — `rfi post-domains` reports it as naming
@@ -1480,7 +1502,7 @@ the handle `tonight`. Nothing in the text tells the two apart. A Contact Point i
 is worse here than one missed — a miss is the floor the output already declares, an
 invented value is a shared identifier ADR-0005 would group two accounts on — so the
 reading is kept for the shapes that are common, this case is measured against the
-labelled set, and the `invented` figure beside the recall is the number that would show
+Labelled Set, and the `invented` figure beside the recall is the number that would show
 it happening in a Corpus of other content.
 
 A handle is read as a Telegram handle whatever service it belongs to. Every service
@@ -1526,7 +1548,7 @@ def _recall_section(found: ContactPoints) -> str:
         "beside the Corpus: one row per post, naming every Contact Point that post",
         "publishes and whether it published it plainly, written out, or only as a",
         "picture of one. The figure is of *this* reading over *this* Corpus — a Corpus",
-        "from a provider has no labelled set beside it, and measuring this reading",
+        "from a provider has no Labelled Set beside it, and measuring this reading",
         "over other content means labelling that content.",
         "",
         "| How it was published | Published | Found |",
@@ -1569,6 +1591,10 @@ def _invented_rows(recall: Recall) -> str:
     The figure that can produce a grouping edge nobody checked, so it is named per post
     rather than counted: the rate is the count and the rows are what a reviewer needs to
     decide whether the reading is wrong here or the label is.
+
+    Both branches call the figure the same thing. Naming it a rate only when it came out
+    at zero would make the sentence that reports it the measure a case of the reader has
+    to look for, which is the opposite of what a figure nobody checked is for.
     """
     if not recall.invented:
         return f"""No Contact Point was read out of any of the {recall.clean_posts} posts that publish
@@ -1579,8 +1605,9 @@ none, so the false-positive rate of this reading over this Corpus is 0 of
         for entry in recall.invented
     )
     return f"""A Contact Point was read out of {len(recall.invented)} of the {recall.clean_posts} posts
-that publish none, and each one is named so a reviewer can tell a reading that is
-wrong here from a label that is:
+that publish none, so the false-positive rate of this reading over this Corpus is
+{len(recall.invented)} of {recall.clean_posts}, and each one is named so a reviewer can tell a
+reading that is wrong here from a label that is:
 
 | Post | Read as | Written as |
 | --- | --- | --- |
@@ -1618,10 +1645,7 @@ def _point_table(found: ContactPoints) -> str:
     report does — a table padded to a fixed width carries a column of spaces into a
     committed file for no reader.
     """
-    ordered = sorted(
-        found.points.values(),
-        key=lambda point: (-len(point.accounts), point.kind.value, point.value),
-    )
+    ordered = sorted(found.points.values(), key=_by_reach)
     if not ordered:
         return "The Corpus names no Contact Point at all."
 

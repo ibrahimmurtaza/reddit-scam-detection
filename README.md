@@ -12,7 +12,7 @@ corresponds to a real person.
 
 ## Where it is
 
-Five things are built. The Corpus generator, which is the credibility boundary the
+Six things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
@@ -23,8 +23,9 @@ the Campaign Candidates those registrations produce, with known-shared infrastru
 filtered out as published data, then the Policy Score those same links and posts add
 up to, with the arithmetic printed beside it. And the measurement: how many of the two
 Planted Campaigns that grouping recovered, as X of N, joined by a command that runs
-after it rather than inside it. The Review Queue, the false-grouping rate beside that
-figure, the Confidence, and the corroborated grouping tier are not built yet. Their
+after it rather than inside it. The Review Queue those scores are ordered into, at a
+stated depth. The false-grouping rate beside that recovery figure, the Confidence, the
+figure over the Review Queue, and the corroborated grouping tier are not built yet. Their
 tickets are numbered #16 to #28 in the tracker; this README is updated as they land.
 
 ## Running it
@@ -44,17 +45,17 @@ steps, which are named against each row. Every file has one reader:
 | --- | --- | --- |
 | `data/corpus/corpus.jsonl` | Content, accounts, and links. Nothing else. | the pipeline |
 | `data/corpus/truth.jsonl` | Planted Campaign membership, written to a different path. | the evaluator |
-| `data/corpus/labelled-contacts.jsonl` | The labelled set: one row per post, naming every Contact Point that post publishes and whether it published it plainly, written out, or only as a picture of one. | `rfi contact-points`, to measure its own reading |
+| `data/corpus/labelled-contacts.jsonl` | The Labelled Set: one row per post, naming every Contact Point that post publishes and whether it published it plainly, written out, or only as a picture of one. | `rfi contact-points`, to measure its own reading |
 | `data/corpus/nuisance.jsonl` | The Nuisance Structure: what else was planted or recorded, and what each piece is for. | the evaluator |
 | `data/corpus/composition.jsonl` | Every post's Scam Category, with the sentences of its own text that placed it. | a reader, then the category-conflict ticket #18 |
 | `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. Each row carries where the host came from and when it was added. | `rfi campaign-candidates` |
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | a reader, then the grouping-edge ticket #20 |
-| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | a reader, then the corroboration ticket #24 |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | `rfi campaign-recovery`, `rfi review-queue`, then the corroboration ticket #24 |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, then the false-grouping ticket #19 |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
-| `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | a reader, then the Review Queue ticket #16 |
+| `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -91,7 +92,7 @@ carries the material that makes a grouping decision hard, and
 | `staggered_paraphrase` | One planted offer, reworded across a Planted Campaign's accounts. |
 | `known_shared_infrastructure` | Each shared host, with the posts and accounts that touch it. |
 | `single_account_domain` | A domain one account uses, which must not group. |
-| `obfuscated_contact` | One desk publishing the same Contact Point five ways: written out character by character, with a digit in it, as a screenshot, and as words. Two are found and three are not, which is what makes the extraction's recall a measurement. |
+| `obfuscated_contact` | One desk publishing one handle 4 ways: written out with a full stop between its characters, written out with spaces, with a digit standing in for a letter, and only as a picture of one. 3 of the 4 are found and the picture is not. Beside them an address carrying a digit in its local part is published plainly and read exactly as written, and a second address written as words is not read at all. A 7th post publishes nothing, and the 1 Contact Point the reading invents in it comes from there — which is what makes the recall beside them a measurement rather than a promise. |
 | `hard_negative` | Legitimate content near the boundary, recorded with its character: a genuine job post, satire, a complaint from someone who lost money, scam-adjacent discussion. |
 
 Every record carries a note in prose saying what it is there to test, so the file
@@ -170,13 +171,13 @@ read — an email address and a Telegram handle — from a post's own title, its
 and its links.
 
 ```
-uv run rfi contact-points   # reads the Corpus and the labelled set, writes two files
+uv run rfi contact-points   # reads the Corpus and the Labelled Set, writes two files
 ```
 
 | File | Holds |
 | --- | --- |
 | `data/contacts/post-contacts.jsonl` | One line per post: its Contact Points, every occurrence with the spelling and the field it was found in, and every candidate that named none. |
-| `data/corpus/labelled-contacts.jsonl` | The labelled set the reading is measured against, named here because it is an input rather than an output of this command. |
+| `data/corpus/labelled-contacts.jsonl` | The Labelled Set the reading is measured against, named here because it is an input rather than an output of this command. |
 | `docs/contact-points.md` | The report, generated from those rows. |
 
 **An obfuscated username is read as the identifier underneath it, an address's host is read
@@ -216,7 +217,7 @@ That figure is of *this* reading over *this* Corpus, and the report says so. It 
 against `data/corpus/labelled-contacts.jsonl`, which `rfi generate-corpus` writes beside the
 Corpus from the same plan the posts come from: one row per post, naming every Contact Point
 that post publishes and whether it published it plainly, written out, or only as a picture of
-one. A Corpus from a provider has no labelled set beside it, and measuring this reading over
+one. A Corpus from a provider has no Labelled Set beside it, and measuring this reading over
 other content means labelling that content. The labels are read after the reading has
 finished and reach nothing that decides what was read — `measure()` is handed the finished
 reading rather than the Corpus, and a test reads the same Corpus twice, once with labels that
@@ -330,7 +331,7 @@ is the direct-adjacency baseline ADR-0009 asks for — and the output reports th
 difference:
 
 ```
-  filtered      3 of 15 registrations withheld, removing 2 of 5 components
+  filtered      3 of 16 registrations withheld, removing 2 of 5 components
 ```
 
 followed by what left the graph, so a registration the resolved links hold and no
@@ -408,7 +409,7 @@ get N rather than take the numerator on trust.
 membership the generator planted, and the report says so in its own words, because a
 reader who cannot tell a command from a reviewer has been told something false about
 how the number came about. The report also names the Nuisance Structure the figure
-sits on — 19 records over six kinds, every kind counted — because a recovery rate over
+sits on — 20 records over seven kinds, every kind counted — because a recovery rate over
 a Corpus that held nothing else would be a figure about a generator that planted two
 campaigns and said so nowhere.
 
@@ -518,10 +519,11 @@ handing that to a Signal would reward every post that used a service everybody u
 Planted Campaign leaning on a shared host is lost with it, the same lower bound the
 grouping reports.
 
-One more thing the score cannot do yet: it cannot rank. Five Signals give thirty-two
-subsets and this Corpus takes eight of them, so five posts tie at 45 and three at 14.
-Breaking those ties is ticket #16's job and not this command's, and the index is ordered
-by score and then by post id so the table is at least stable.
+One more thing the score cannot do by itself: it cannot say what to read first. Five
+Signals give thirty-two subsets and this Corpus takes eight of them, so five posts tie at
+45 and three at 14. That ordering is the Review Queue's job and not this command's, which
+is why this index is ordered by score and then by post id - enough to be a stable table,
+which is all it claims to be. `rfi review-queue` is where the ties are broken.
 
 The lookalike Signal fires on both members of a pair and names neither as the copy,
 because the spelling does not say which imitates which: the Corpus plants a
@@ -546,6 +548,84 @@ unpriced, prices one that does not exist, carries a weight of zero, or leaves a
 rationale blank stops the run and names the file and the row — otherwise a Signal
 could appear in a breakdown that no arithmetic adds up to, which is the failure
 ADR-0007 rules out.
+
+## The Review Queue
+
+**The order is the Policy Score, so the two can never disagree.** The queue is every post
+in `data/signals/policy-scores.jsonl` sorted by the score the scoring command published for
+it, and nothing else is consulted: no account's age or posting rate, no model output, and
+the size of a Campaign Candidate moves nothing (ADR-0003, ADR-0007). That is why this is a
+separate command rather than an option on the scoring one — a queue is only worth a
+reviewer's attention if the number at the top of it is the number in the file beside it.
+
+```
+uv run rfi review-queue --depth 50   # reads the scores and the candidates, writes nothing
+```
+
+| Argument | Reads | Default |
+| --- | --- | --- |
+| `--scores` | `data/signals/policy-scores.jsonl`, which `rfi policy-score` wrote | that path |
+| `--candidates` | `data/campaigns/campaign-candidates.jsonl`, which `rfi campaign-candidates` wrote | that path |
+| `--depth` | how many entries to print | 50 |
+
+It runs neither step again and opens neither the Corpus nor the membership, which is
+ADR-0018's boundary used for a second purpose: measurement has to be unable to reach
+inference, and so does a ranking. `tests/test_review_queue.py` watches the files a run
+opens and requires the two published ones and nothing else. It is also the only command
+here that writes no file, because the queue is a projection of two files other commands
+publish and a third copy is a third thing to keep in step.
+
+**Ties are broken on the points earned, and the depth is in the header.** The score is
+points rounded to a whole number, so two posts can display the same one: 50 points and 49
+both come out as 45 of 110 published. The queue orders those by the points, which is that
+same arithmetic one step finer, and then by post id, which is stability rather than
+judgement. Nothing else could be used, because anything else could put a lower-scoring post
+above a higher-scoring one. The post id is last because a queue with nothing else in its
+ordering would print a different one every time the Corpus changed.
+
+Stated plainly, because a tie-break that never fires is worth knowing about: with the
+published weights every sum is a multiple of five and no two of them round to the same
+score, so on this Corpus the points decide nothing and the ordering falls through to the
+post id. It matters for a weight set where two different sums do land on one score, and
+`tests/test_review_queue.py` has to hand-write a row no run of this weight set could
+produce to reach the case at all.
+
+A depth is a parameter rather than a property of the Corpus, so it is stated twice in the
+output: in the header sentence, which says how many posts the file holds and how many sit
+below the cut, and as a figure of its own. A queue pasted into an issue without its depth
+says nothing about what was left out, and the default 50 over this 34-post Corpus has to
+say so rather than read as a claim that 50 posts were worth reading. A depth below one is
+refused: an empty queue under a header is indistinguishable from a Corpus in which nothing
+is worth reading, which is a claim about the Corpus this command has no business making.
+Every post is ordered, including the ones carrying no Signal, or the depth could never bind
+— how many posts carry a Signal is a property of the Corpus rather than of the depth.
+
+**An entry carries its arithmetic, not a number.** Each entry prints the Signals behind its
+score with the weight each was earned at and the evidence that fired it, the total against
+the published total, and the Campaign Candidates the post sits in with the registration
+each is joined on — an identifier on its own says nothing to somebody who has not opened
+the candidates file. What a candidate is named beside an entry for is worth being exact
+about: a hypothesis produced by cohesion analysis, never a confirmed claim about anyone's
+behaviour (ADR-0005). It does not say the post is fraud, and nobody has reviewed any of it.
+
+Two things are refused rather than smoothed over. A candidates file naming a post the
+scores file does not hold stops the run, because a queue that dropped that candidate would
+hide two published files disagreeing behind a shorter table. And a scores row whose score
+is not the share of its own points that the file publishes beside it, or whose points are
+not what its Signals are priced at, or whose rows disagree about the published total, stops
+the run too — which is what makes "the order and the number cannot disagree" structural
+rather than a promise. `read_policy_scores` also refuses a row carrying a field this
+project does not publish, for ADR-0008's reason: the one field that must never appear
+there is a Planted Campaign's identifier.
+
+**No figure is computed here.** How many of the entries at a stated depth turned out to be
+findings is a question about a reviewer's judgement about each of them, and every label in
+this Corpus was assigned by the generator that wrote the posts, so a figure computed over
+the queue here would measure agreement with the generator rather than anything about fraud
+(ADR-0004). The depth is published because that measurement reads it as an input, not
+because publishing the input measures anything. The words that would name such a figure
+appear nowhere in the queue's own prose, which `tests/test_review_queue.py` asserts rather
+than trusting this paragraph.
 
 ## The base rates
 
@@ -639,20 +719,44 @@ uv run rfi corpus-composition   # reads the Corpus and the base rates, writes tw
 
 **The comparison is the finding, and on this Corpus it is blunt.** Eight of the ten
 Scam Categories hold no post at all, and **82.5% of real reports land in classes
-this Corpus has nothing to say about**. The two classes it does hold are the two the
-generator writes:
+this Corpus has nothing to say about**. All ten and the Other bucket, as the report
+publishes them:
 
 ```
-  category                           posts  corpus   CAFC  difference
-  Work and Payroll                   12  44.4%   4.1%  +40.3pp
-    corpus  ##############################  44.4%
-    CAFC    ###                             4.1%
-  Investment and Money Offers         9  33.3%   7.5%  +25.8pp
-    corpus  #######################         33.3%
-    CAFC    #####                           7.5%
-  Other                               6  22.2%   3.0%  +19.2pp
-    corpus  ###############                 22.2%
-    CAFC    ##                              3.0%
+  category                          posts  corpus   CAFC  difference
+  Investment and Money Offers         13   38.2%   7.5% +30.7pp
+    corpus  ##############################             38.2%
+    CAFC    ######                                     7.5%
+  Work and Payroll                    12   35.3%   4.1% +31.2pp
+    corpus  ############################               35.3%
+    CAFC    ###                                        4.1%
+  Other                                9   26.5%   3.0% +23.5pp
+    corpus  #####################                      26.5%
+    CAFC    ##                                         3.0%
+  Bills, Invoicing and Collections     0    0.0%   1.1%  -1.1pp
+    corpus                                             0.0%
+    CAFC    #                                          1.1%
+  Extortion                            0    0.0%   9.4%  -9.4pp
+    corpus                                             0.0%
+    CAFC    #######                                    9.4%
+  Identity and Account Takeover        0    0.0%  31.0% -31.0pp
+    corpus                                             0.0%
+    CAFC    ########################                   31.0%
+  Impersonating an Institution         0    0.0%  12.0% -12.0pp
+    corpus                                             0.0%
+    CAFC    #########                                  12.0%
+  Merchandise and Goods                0    0.0%  12.0% -12.0pp
+    corpus                                             0.0%
+    CAFC    #########                                  12.0%
+  Phishing                             0    0.0%  10.5% -10.5pp
+    corpus                                             0.0%
+    CAFC    ########                                   10.5%
+  Prizes, Appeals and Psychics         0    0.0%   1.6%  -1.6pp
+    corpus                                             0.0%
+    CAFC    #                                          1.6%
+  Relationships and Second Contacts    0    0.0%   4.8%  -4.8pp
+    corpus                                             0.0%
+    CAFC    ####                                       4.8%
 ```
 
 Every recovery figure this project will publish is bounded by that, which is why the
@@ -719,6 +823,8 @@ patch `urllib.request.urlopen` to refuse.
   candidates in a command of its own, so measurement cannot reach inference and the
   two steps are a file apart rather than a boundary drawn inside one process), and 0019
   (an obfuscated username is read as the identifier underneath it, an address's host is
-  read exactly as written, and the reading is measured against a labelled set the
+  read exactly as written, and the reading is measured against a Labelled Set the
   generator writes beside the Corpus, which is the one place a measurement shares a
-  command with the step it measures).
+  command with the step it measures), and 0020 (the Review Queue is the Policy Score at a
+  stated depth, its ties are broken on the points earned, it reads the published scores and
+  candidates rather than re-running either step, and it computes no figure).

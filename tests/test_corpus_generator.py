@@ -183,7 +183,7 @@ def test_generation_refuses_to_write_both_files_to_one_path(tmp_path: Path) -> N
 def test_the_labelled_set_names_a_contact_point_only_where_a_post_publishes_one(
     tmp_path: Path,
 ) -> None:
-    """The measurement needs a labelled set, and it has to be the Corpus's own.
+    """The measurement needs a Labelled Set, and it has to be the Corpus's own.
 
     Recalling an extraction is only meaningful against content somebody has labelled,
     and this project generates its content, so the labels come from the same plan the
@@ -234,7 +234,7 @@ def test_the_labelled_set_names_a_contact_point_only_where_a_post_publishes_one(
 
 
 def test_the_corpus_file_carries_no_contact_point_labels(tmp_path: Path) -> None:
-    """The labelled set is a separate file for the reason ADR-0008 is about.
+    """The Labelled Set is a separate file for the reason ADR-0008 is about.
 
     The Corpus is what the pipeline sees, and a post that carried the Contact Points it
     publishes would be carrying its own answer: a reader could grep for the labels, and

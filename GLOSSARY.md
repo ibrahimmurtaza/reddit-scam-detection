@@ -15,6 +15,14 @@ The body of Reddit content the system analyses — posts, comments, accounts, an
 the links between them. Independent of where it came from.
 _Avoid_: Dataset, data, feed, records
 
+**Content Item**:
+One unit of the Corpus as a reviewer meets it: a post's own title, body, and
+links. What the Review Queue ranks and what a Policy Score is computed from. In
+this build every Content Item is a post, and a Content Item is never an account
+or a Campaign Candidate, which are things Content Items sit inside rather than
+are.
+_Avoid_: Document, submission
+
 **Corpus Provider**:
 The component that supplies a Corpus to the pipeline. Swappable, so no analysis
 code assumes where content originated.
@@ -97,9 +105,15 @@ _Avoid_: Text Signal, keyword, keyword list
 
 **Review Queue**:
 The ranked list of content items a reviewer works through, ordered by Triage
-Priority. The headline metric is the fraction of true findings within its top D
-entries — precision at a stated depth, never accuracy.
+Priority. The headline metric will be the fraction of true findings within its
+top D entries — precision at a stated depth, never accuracy — and is not
+computed yet: what ships today is the ranking and the arithmetic behind it.
 _Avoid_: Inbox, dashboard, results
+
+**Review depth**:
+How many entries of the Review Queue a run prints. Stated in the output header,
+because a queue without its depth says nothing about what was left below it.
+_Avoid_: Limit, cap, cutoff, top-k
 
 **Policy Score**:
 The additive 0-100 severity shown to a reviewer, computed from weighted Signals

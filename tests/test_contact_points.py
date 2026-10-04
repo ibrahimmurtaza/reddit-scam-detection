@@ -67,7 +67,7 @@ def write_labelled(
     corpus: Path,
     published: Mapping[str, tuple[tuple[ContactKind, str, Writing], ...]] | None = None,
 ) -> Path:
-    """The labelled set for a Corpus written inside a test, one row per post.
+    """The Labelled Set for a Corpus written inside a test, one row per post.
 
     A post named in `published` gets those labels and every other post is labelled as
     publishing nothing, which is what the generator writes for the overwhelming majority
@@ -388,11 +388,13 @@ def test_a_handle_with_a_digit_standing_in_for_a_letter_is_the_same_handle(
 ) -> None:
     """Substitution, which is the one disguise that needs no shape to justify it.
 
-    A digit is not a character Telegram accepts in a username, so `syn_vantag3ledger`
-    is either a disguise or a typo and the handle underneath is the same either way. It
-    is also the one disguise that can merge two usernames which both exist, which is
-    why every spelling is printed beside the value and why the report measures how many
-    published names the reading folds together.
+    A digit is a character Telegram accepts in a username, so `syn_vantag3ledger` may be
+    a username somebody registered rather than a disguise, and the fold is a decision
+    rather than a repair. It is taken anyway, because the two readings differ only in
+    which name to publish and a desk that spells its reach with a digit would otherwise
+    be invisible here. It is also the one disguise that can merge two usernames which
+    both exist, which is why every spelling is printed beside the value and why the
+    report measures how many published names the reading folds together.
     """
     corpus = write_corpus(
         tmp_path / "corpus.jsonl",
@@ -556,6 +558,49 @@ def test_a_host_is_read_as_written_and_only_a_username_is_folded(
     assert "shared" not in point_block(printed, "desk@gravy.io")
 
 
+def test_the_report_publishes_the_same_address_rule_the_command_applies(
+    tmp_path: Path,
+) -> None:
+    """The rule the report states about an address, held to what it did to one.
+
+    The report's "How a Contact Point is read" section is what a reader takes the folds
+    from, and the folds differ by kind: a username has its separators dropped and its
+    digits substituted, an address has its spacing removed and nothing else. The Corpus
+    carries the case that tells the two apart — `1ntake@copper-lantern.example` holds a
+    `1` that stands in for nothing, and it is published plainly and read exactly as
+    written — so a report claiming the substitution reaches an address prints the rule
+    and the refutation in the same table.
+
+    A wrong fold here does not merely misreport. A reader who believes an address is
+    folded for substitution will read `1ntake@` and `intake@` as one mailbox, which is
+    the shared identifier this command exists not to invent, so the prose and the
+    behaviour are asserted together rather than the prose alone.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9011",
+                "syn_inaddrrule_0011",
+                body="Mail 1ntake@copper-lantern.example, or intake@copper-lantern.example.",
+            ),
+        ),
+    )
+    _, report_path, _ = run(tmp_path, corpus)
+    report = report_path.read_text(encoding="utf-8")
+
+    assert "folded for spacing and for nothing else" in report, (
+        "the report does not state the address rule the command applies"
+    )
+    # The username's fold is published as its own, so a reader is not left to apply the
+    # substitution paragraph above to the address paragraph below it.
+    assert "A digit standing in for a letter is folded" in report
+    # And the value the report's own table prints is the one the command read, digit and
+    # all, which is what makes the rule above a measurement rather than a claim.
+    assert "1ntake@copper-lantern.example" in report
+    assert "intake@copper-lantern.example" in report
+
+
 def test_a_run_written_out_before_the_at_is_read_as_one_run(
     tmp_path: Path,
 ) -> None:
@@ -649,7 +694,7 @@ def test_a_post_that_spaces_out_a_word_beside_an_at_is_read_as_a_handle(
     A Contact Point invented is worse than one missed here, because a miss is a floor
     the output already declares and an invented value is a shared identifier ADR-0005
     would group two accounts on. So the tolerance is kept for the shapes that are
-    common, this case is stated rather than hidden, and the labelled set carries it so
+    common, this case is stated rather than hidden, and the Labelled Set carries it so
     the false-positive rate the report prints includes it rather than flattering itself
     with text that never tried.
     """
@@ -674,7 +719,7 @@ def test_the_output_reports_the_recall_and_the_false_positives_it_measured(
 
     A count of Contact Points is not a count of Contact Points: it is a count of the ones
     this reading found, and how many it did not find is what bounds it. So the run reads
-    the labelled set the generator wrote beside the Corpus, and prints what it found
+    the Labelled Set the generator wrote beside the Corpus, and prints what it found
     against what was published — split by how each was published, because a reader who
     is told 10 of 12 has been told nothing about the two — together with the number of
     Contact Points invented in posts that publish none, which is the only number here
@@ -732,7 +777,7 @@ def test_the_output_reports_the_recall_and_the_false_positives_it_measured(
     assert "## What the reading found, and what it missed" in report
     assert "`syn_quietmarque`" in report
     assert "published only as a picture" in report
-    # The path the run was given, not a fixed one: a report naming a labelled set this
+    # The path the run was given, not a fixed one: a report naming a Labelled Set this
     # run did not measure against would send a reader to check the wrong rows.
     assert (tmp_path / "labelled-contacts.jsonl").as_posix() in report
 
@@ -1334,7 +1379,7 @@ def test_the_run_refuses_a_labelled_set_that_does_not_cover_the_corpus(
 
     The measurement is only meaningful against every post, because the posts publishing
     nothing are its false-positive denominator and the posts publishing something are
-    its numerator. A labelled set missing either is refused by name, the same way
+    its numerator. A Labelled Set missing either is refused by name, the same way
     `read_corpus` refuses a field it does not know, rather than measured over whatever
     happens to line up.
     """
@@ -1455,7 +1500,7 @@ def test_the_output_says_every_contact_point_of_this_corpus_is_a_synthetic_entit
     because those two are not the same set here and the difference is the point: the
     reading invents one handle out of a clean post (`tonight`), which is outside the
     synthetic namespace by definition, and the figure says `5 of 6` rather than the `6 of
-    6` a reader would want to see. So the claim is held against the labelled set, which is
+    6` a reader would want to see. So the claim is held against the Labelled Set, which is
     what the Corpus actually publishes, and the reading's one value outside it is the
     invented one the `invented` figure already names.
     """
@@ -1527,7 +1572,7 @@ def test_the_run_reads_the_corpus_the_labelled_set_and_nothing_else(
     reads no published list either, because nothing about what a post says to be
     reached at depends on what anybody registered.
 
-    The labelled set is the one file beyond the Corpus, and it is read to be measured
+    The Labelled Set is the one file beyond the Corpus, and it is read to be measured
     against rather than to be read from: it names what each post publishes, and
     `tests/test_contact_points.py` holds that it cannot reach the reading by running
     the reading over the same Corpus with and without it beside them and comparing the
