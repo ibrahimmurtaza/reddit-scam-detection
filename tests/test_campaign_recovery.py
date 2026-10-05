@@ -24,7 +24,7 @@ import re
 import sys
 import urllib.request
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -34,6 +34,7 @@ from reddit_fraud_intelligence.cli import (
     DEFAULT_CORPUS_PATH,
     DEFAULT_NUISANCE_PATH,
     DEFAULT_SEED,
+    DEFAULT_SCORES_PATH,
     DEFAULT_TRUTH_PATH,
     main,
 )
@@ -91,6 +92,8 @@ def run(
     candidates: Path = DEFAULT_CANDIDATES_PATH,
     truth: Path = DEFAULT_TRUTH_PATH,
     nuisance: Path = DEFAULT_NUISANCE_PATH,
+    scores: Path = DEFAULT_SCORES_PATH,
+    depths: Sequence[int] | None = None,
     capsys: pytest.CaptureFixture[str] | None = None,
 ) -> tuple[Path, Path, str]:
     """Run the command, writing both outputs into `directory`.
@@ -101,23 +104,26 @@ def run(
     """
     recovery = directory / "recovery.jsonl"
     report = directory / "campaign-recovery.md"
-    exit_code = main(
-        [
-            "campaign-recovery",
-            "--corpus",
-            str(corpus),
-            "--candidates",
-            str(candidates),
-            "--truth",
-            str(truth),
-            "--nuisance",
-            str(nuisance),
-            "--recovery",
-            str(recovery),
-            "--report",
-            str(report),
-        ]
-    )
+    argv = [
+        "campaign-recovery",
+        "--corpus",
+        str(corpus),
+        "--candidates",
+        str(candidates),
+        "--truth",
+        str(truth),
+        "--nuisance",
+        str(nuisance),
+        "--scores",
+        str(scores),
+        "--recovery",
+        str(recovery),
+        "--report",
+        str(report),
+    ]
+    if depths is not None:
+        argv += ["--depths", ",".join(str(depth) for depth in depths)]
+    exit_code = main(argv)
     assert exit_code == 0
     printed = capsys.readouterr().out if capsys is not None else ""
     return recovery, report, printed
@@ -580,7 +586,7 @@ def test_the_report_states_the_nuisance_structure_it_was_measured_against(
         of_kind = [row for row in manifest if text(row, "kind") == kind.value]
         assert of_kind, f"the manifest holds no {kind.value}"
         assert f"| `{kind.value}` | {len(of_kind)} |" in page
-    assert "companion figure" in page
+    assert "false groupings" in page
 
 
 def test_a_partial_match_beside_a_recovery_is_reported_in_every_view(
@@ -727,7 +733,7 @@ def test_the_evaluation_reads_the_membership_and_the_grouping_never_does(
     assert not [name for name in grouping if name.startswith(("truth", "nuisance"))]
     assert "campaign-candidates.jsonl" in grouping
 
-    assert {"truth.jsonl", "nuisance.jsonl", "campaign-candidates.jsonl"} <= evaluation
+    assert {"truth.jsonl", "nuisance.jsonl", "campaign-candidates.jsonl", "policy-scores.jsonl"} <= evaluation
     assert "public_suffix_list.dat" not in evaluation
     assert "shared-hosts.jsonl" not in evaluation
 
@@ -876,6 +882,227 @@ def test_the_figure_is_reproducible_from_the_seed_the_report_names(
     assert digests(rebuilt_report.read_text(encoding="utf-8")) == digests(
         first_report.read_text(encoding="utf-8")
     )
+
+
+def score_row(
+    post_id: str,
+    account: str,
+    points: int,
+    published_points: int = 100,
+    published_signals: int = 6,
+) -> Row:
+    """One row of `policy-scores.jsonl`, hand-written.
+
+    `points` of zero is a row carrying no Signal, which the reader allows: a post
+    that fires nothing is scored out at 0 and still takes its place in the queue.
+    The nonzero row carries one Content Signal priced at the points, so the
+    breakdown sums to the points beside it.
+    """
+    score = (200 * points + published_points) // (2 * published_points)
+    return {
+        "post_id": post_id,
+        "account": account,
+        "score": score,
+        "points": points,
+        "published_points": published_points,
+        "published_signals": published_signals,
+        "signals": (
+            [
+                {
+                    "signal": "payment_request",
+                    "weight": points,
+                    "evidence": [
+                        {
+                            "signal": "payment_request",
+                            "field": "body",
+                            "phrases": ["deposit for"],
+                            "sentence": (
+                                "There is a refundable deposit for the materials, "
+                                "and that is the whole of it."
+                            ),
+                        }
+                    ],
+                }
+            ]
+            if points
+            else []
+        ),
+    }
+
+
+def precision_at(printed: str) -> dict[int, tuple[int, int]]:
+    """The precision table of the console output: depth to (true, entries)."""
+    lines = printed.splitlines()
+    start = next(
+        number
+        for number, line in enumerate(lines)
+        if line.split() == ["depth", "true", "of"]
+    )
+    found: dict[int, tuple[int, int]] = {}
+    for line in lines[start + 1 :]:
+        if not line.strip():
+            break
+        depth, true, of = line.split()
+        found[int(depth)] = (int(true), int(of))
+    return found
+
+
+# --- the false-grouping rate ------------------------------------------------------
+
+
+def test_the_report_defines_what_a_false_grouping_is(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The definition has to be in the output itself, not in a ticket."""
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    for view in (page, printed):
+        assert "different Planted Campaigns, or to none" in " ".join(view.split())
+        # The figure the report must never publish, checked here as well as on the
+        # recovery sections: new prose is new ways to say it by accident.
+        assert BANNED_FIGURE not in view.lower()
+
+
+def test_the_false_grouping_rate_is_reported_against_the_nuisance_structure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The rate has to be said, and said against the manifest.
+
+    On the committed Corpus the figure is one false grouping of three
+    candidates: `cc-02`, the shop's accounts, grouped because ADR-0005 puts
+    them together and counted as false because they belong to no Planted
+    Campaign. `cc-01` and `cc-03` recover whole memberships and are not false.
+    """
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    assert "1 of 3 Campaign Candidates" in page
+    assert "cc-02" in page and "cc-02" in printed
+    assert "no Planted Campaign" in page
+    # The rate is named beside the Nuisance Structure it was measured against.
+    assert "data/corpus/nuisance.jsonl" in page
+    assert "decoy_account_cluster" in page
+
+
+def test_precision_in_the_review_queue_is_reported_at_several_depths(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Several depths, not one, and every figure named beside its depth."""
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    assert "precision" in printed.lower()
+    rows = precision_at(printed)
+    assert set(rows) == {5, 10, 20, 50}, rows
+    for depth, (true, of) in rows.items():
+        assert true <= of
+        assert f"| {depth} | {true} | {of} |" in page
+
+
+def test_precision_matches_a_hand_computed_value(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The figure has to be checkable by hand, so it is one on a small Corpus.
+
+    Five posts, five scores: the two that belong to a Planted Campaign sit at
+    ranks 2 and 3. At depth 1 the top entry is a post from no campaign, so the
+    figure is 0 of 1; by depth 4 it is 2 of 4. The candidate holding rank 2's
+    account and one from no campaign is a false grouping.
+    """
+    corpus = corpus_of(
+        tmp_path,
+        post("syn_p_0001", "syn_alpha_0001"),
+        post("syn_p_0002", "syn_nowhere_0002"),
+        post("syn_p_0003", "syn_beta_0003"),
+        post("syn_p_0004", "syn_elsewhere_0004"),
+        post("syn_p_0005", "syn_alsogone_0005"),
+    )
+    candidates = write_rows(
+        tmp_path / "campaign-candidates.jsonl",
+        [
+            candidate(
+                "cc-01",
+                ("syn_alpha_0001", "syn_alsogone_0005"),
+                ("syn_p_0001", "syn_p_0005"),
+                "alsogone.example",
+            )
+        ],
+    )
+    truth = write_rows(
+        tmp_path / "truth.jsonl",
+        [
+            campaign("syn-campaign-one", ("syn_alpha_0001",), ("syn_p_0001",)),
+            campaign("syn-campaign-two", ("syn_beta_0003",), ("syn_p_0003",)),
+        ],
+    )
+    nuisance_path = write_rows(
+        tmp_path / "nuisance.jsonl",
+        [nuisance("syn-nuisance-single", NuisanceKind.SINGLE_ACCOUNT_DOMAIN)],
+    )
+    scores = write_rows(
+        tmp_path / "policy-scores.jsonl",
+        [
+            score_row("syn_p_0002", "syn_nowhere_0002", 100),
+            score_row("syn_p_0001", "syn_alpha_0001", 80),
+            score_row("syn_p_0003", "syn_beta_0003", 60),
+            score_row("syn_p_0004", "syn_elsewhere_0004", 40),
+            score_row("syn_p_0005", "syn_alsogone_0005", 0),
+        ],
+    )
+
+    _, report, printed = run(
+        tmp_path / "out",
+        corpus=corpus,
+        candidates=candidates,
+        truth=truth,
+        nuisance=nuisance_path,
+        scores=scores,
+        depths=(1, 2, 3, 4),
+        capsys=capsys,
+    )
+    page = report.read_text(encoding="utf-8")
+
+    assert precision_at(printed) == {1: (0, 1), 2: (1, 2), 3: (2, 3), 4: (2, 4)}
+    assert "| 1 | 0 | 1 |" in page
+    assert "| 2 | 1 | 2 |" in page
+    assert "| 3 | 2 | 3 |" in page
+    assert "| 4 | 2 | 4 |" in page
+    assert "cc-01" in page and "no Planted Campaign" in page
+
+
+def test_the_report_states_the_lower_of_the_two_is_the_more_trustworthy(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The report says, plainly, which of the two numbers to believe."""
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    for view in (page, printed):
+        assert "the lower of the two" in view.lower()
+        assert "deliberate" in view.lower()
+
+
+def test_the_report_states_who_measured_precision(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Precision is the evaluator's figure, not a reviewer clicking."""
+    _, report, _ = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    assert "not by a person reviewing the queue" in page
+
+
+def test_recovery_and_the_false_grouping_rate_are_in_the_same_report(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Neither number appears alone: both headline figures are on one page."""
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    for view in (page, printed):
+        assert "2 of 2 Planted Campaigns" in view
+        assert "1 of 3 Campaign Candidates" in view
 
 
 # --- the shape of the output ------------------------------------------------------

@@ -24,9 +24,11 @@ filtered out as published data, then the Policy Score those same links and posts
 up to, with the arithmetic printed beside it. And the measurement: how many of the two
 Planted Campaigns that grouping recovered, as X of N, joined by a command that runs
 after it rather than inside it. The Review Queue those scores are ordered into, at a
-stated depth. The false-grouping rate beside that recovery figure, the Confidence, the
-figure over the Review Queue, and the corroborated grouping tier are not built yet. Their
-tickets are numbered #16 to #28 in the tracker; this README is updated as they land.
+stated depth. The false-grouping rate beside that recovery figure, and the Review
+Queue's precision at several depths, are measured by the same evaluator. The
+Confidence, the corroborated grouping tier, and the graph report are not built yet.
+Their tickets are numbered #25 to #28 in the tracker; this README is updated as
+they land.
 
 ## Running it
 
@@ -53,7 +55,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | a reader, then the grouping-edge ticket #20 |
 | `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | `rfi campaign-recovery`, `rfi review-queue`, then the corroboration ticket #24 |
-| `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, then the false-grouping ticket #19 |
+| `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, and the recovery report beside it |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
 
@@ -110,8 +112,9 @@ Campaign or to the shop that is planted there as a decoy, so the interesting fal
 groupings live entirely in the shared infrastructure — which is why the filter is the
 subject of its own section above rather than a detail of the domain report. The
 recovery report below prints that shop beside the figure, because a recovery rate
-readable without knowing what the other candidates are is not readable; ticket #19
-measures the rate. This Corpus is small enough to read the answer by hand.
+readable without knowing what the other candidates are is not readable. The
+false-grouping rate is measured now, and the Corpus is small enough to read the
+answer by hand: one false grouping of three, and the shop is it.
 
 ## Registrable domains
 
@@ -371,7 +374,9 @@ the run opens rather than by reading the code that decides what to open.
 ## The recovery figure
 
 `docs/campaign-recovery.md` is the report: how many of the two Planted Campaigns the
-grouping recovered. **2 of 2**, with the shop printed beside them.
+grouping recovered. **2 of 2**, with the shop printed beside them, the false-grouping
+rate counted against it, and the Review Queue's precision at several depths beside
+that.
 
 ```
 uv run rfi campaign-candidates   # writes the candidates this measures
@@ -381,7 +386,7 @@ uv run rfi campaign-recovery     # reads them, and the membership, and writes tw
 | File | Holds |
 | --- | --- |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. |
-| `docs/campaign-recovery.md` | The report: the figure, the join behind it, the candidates that are not a recovery, the Nuisance Structure it was measured against, and what the number cannot say. |
+| `docs/campaign-recovery.md` | The report: the figure, the join behind it, the candidates that are not a recovery, the false-grouping rate, the precision of the Review Queue at several depths, the Nuisance Structure it was measured against, and what the number cannot say. |
 
 **It is a separate command, and that is the point.** It reads the candidates
 `rfi campaign-candidates` published and does no grouping of its own — it opens neither
@@ -430,8 +435,9 @@ is lost with the host, an account that reaches no registration cannot be propose
 all, and a campaign that rotates its registration per post is invisible by
 construction — so this is a lower bound. Recovery on its own can also be produced by
 a grouping that merges unrelated accounts, so the rate of false groupings against the
-same manifest is not measured yet (ticket #19), and until it arrives a reader should
-treat the figure as uninterpretable on its own.
+same manifest is published beside it (ticket #19), and the Review Queue's precision
+at several depths is published with them. Of the two rates on the page — recovery and
+precision — the lower of the two numbers is the more trustworthy, deliberately.
 
 ## The Policy Score
 
@@ -621,7 +627,9 @@ ADR-0018's boundary used for a second purpose: measurement has to be unable to r
 inference, and so does a ranking. `tests/test_review_queue.py` watches the files a run
 opens and requires the two published ones and nothing else. It is also the only command
 here that writes no file, because the queue is a projection of two files other commands
-publish and a third copy is a third thing to keep in step.
+publish and a third copy is a third thing to keep in step. This command prints no
+figure over the queue: precision at several depths over it is published by
+`rfi campaign-recovery`, alongside the recovery and the false-grouping rate.
 
 **Ties are broken on the points earned, and the depth is in the header.** The score is
 points rounded to a whole number, so two posts can display the same one: 50 points and 49
