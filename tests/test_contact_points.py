@@ -1210,7 +1210,7 @@ def test_the_handle_a_victim_quotes_is_shared_with_the_campaign_it_names(
     person who lost money and named the channel they were given. That is correct
     reporting and the worst possible grouping input, because the handle is shared
     across the boundary and nothing in the string says which side of it either party
-    is on. Whether the accounts belong together is ticket #20's question to ask and a
+    is on. Whether the accounts belong together is the grouping's question to ask and a
     reviewer's to answer; this command's job is to refuse to hide the handle in the
     row and to say how many accounts are on each side of it.
     """
@@ -1520,15 +1520,16 @@ def test_the_output_says_every_contact_point_of_this_corpus_is_a_synthetic_entit
     } == {True}
 
 
-def test_the_output_says_nothing_groups_on_a_contact_point_yet(
+def test_the_output_says_this_command_does_no_grouping_of_its_own(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """ADR-0005 permits a Contact Point as a grouping edge; this build does not use it.
+    """ADR-0005 permits a Contact Point as a grouping edge; another command uses it.
 
-    The shared table is the evidence ticket #20 needs and the reader needs first, and
-    a grouping built on it in this ticket would put an unmeasured edge into the
-    recovery figure ADR-0004 is measured against. The output has to say which of the
-    two it is doing, or a reader will read the shared table as a list of groupings.
+    `rfi campaign-candidates` groups on the shared table, and this command still builds
+    no grouping of its own — the boundary is that the edge is measured here, against the
+    Labelled Set, before it reaches the recovery figure ADR-0004 is measured against.
+    The output has to say which of the two it is doing, or a reader will read the shared
+    table as a list of groupings.
     """
     _, _, printed = run(tmp_path, capsys=capsys)
 

@@ -1,12 +1,17 @@
-"""Campaign Candidates: the accounts that share a registrable domain, and nothing else.
+"""Campaign Candidates: the accounts that share a registrable domain or a Contact Point.
 
 This is the spine of the project — the first command that cuts a complete path from
 the Corpus to output. ADR-0005 puts two accounts in the same Campaign Candidate only
-if they share a registrable domain or a Contact Point, and a Contact Point is not
-extracted yet, so everything here rests on shared registration and on nothing else.
+if they share a registrable domain or a Contact Point, and both edges are read here,
+from the Corpus alone.
 
 Seam under test: the `campaign-candidates` command, observed through the file it
 writes and the table it prints. Nothing here inspects the code that wrote them.
+
+The Contact Points are read by the same `contacts.extract` that `rfi contact-points`
+publishes rather than from the file it writes, so this command still opens three
+files and no fourth: a grouping that depended on somebody having run the step before it
+would not be a function of the Corpus.
 
 Known-shared infrastructure is withheld before the grouping rather than after it,
 from the published list at `data/infrastructure/shared-hosts.jsonl`: a link shortener,
@@ -34,6 +39,7 @@ from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 REPO_ROOT = Path(__file__).parent.parent
 SOURCE = REPO_ROOT / "src" / "reddit_fraud_intelligence"
 COMMITTED_CANDIDATES = REPO_ROOT / "data" / "campaigns" / "campaign-candidates.jsonl"
+COMMITTED_CONTACTS = REPO_ROOT / "data" / "contacts" / "post-contacts.jsonl"
 COMMITTED_CORPUS = REPO_ROOT / "data" / "corpus" / "corpus.jsonl"
 COMMITTED_NUISANCE = REPO_ROOT / "data" / "corpus" / "nuisance.jsonl"
 COMMITTED_POST_DOMAINS = REPO_ROOT / "data" / "domains" / "post-domains.jsonl"
@@ -93,6 +99,15 @@ def by_accounts(path: Path) -> dict[tuple[str, ...], Row]:
 def domains(path: Path) -> set[str]:
     """Every registration any candidate is joined on."""
     return {text(entry, "domain") for row in rows(path) for entry in records(row, "shared_domains")}
+
+
+def points(path: Path) -> set[str]:
+    """Every Contact Point any candidate is joined on."""
+    return {
+        text(entry, "value")
+        for row in rows(path)
+        for entry in records(row, "shared_contact_points")
+    }
 
 
 def write_corpus(path: Path, items: tuple[CorpusItem, ...]) -> Path:
@@ -314,7 +329,7 @@ def test_the_printed_table_shows_each_candidate_with_the_evidence_for_it(
     assert "cc-01" in printed
 
     heading = next(line for line in printed.splitlines() if line.startswith("candidate "))
-    for column in ("accounts", "posts", "first seen", "shared domains"):
+    for column in ("accounts", "posts", "first seen", "justified by", "shared registrations"):
         assert column in heading
     index_line = next(line for line in printed.splitlines() if line.startswith("cc-01 "))
     assert index_line.rstrip().endswith("signal-harbor.example, vantage-ledger.example")
@@ -331,7 +346,7 @@ def test_the_printed_table_shows_each_candidate_with_the_evidence_for_it(
 
     # The figures the run read, so a candidate can be traced to the bytes behind it.
     assert "data/public-suffix/public_suffix_list.dat" in printed
-    assert "3 accounts in 1 candidate, on 2 registrations" in printed
+    assert "3 accounts in 1 candidate, on 2 registrations and 0 Contact Points" in printed
 
 
 def test_the_output_proposes_each_grouping_and_leaves_the_judgment_to_a_reviewer(
@@ -347,7 +362,7 @@ def test_the_output_proposes_each_grouping_and_leaves_the_judgment_to_a_reviewer
 
     assert "Campaign Candidates" in printed
     assert "Every entry is a proposal" in printed
-    assert "for a reviewer. This output does not make it." in printed
+    assert "reviewer. This output does not make it." in printed
 
 
 # --- the Corpus the project actually ships -------------------------------------
@@ -368,12 +383,31 @@ def test_the_planted_campaigns_come_out_as_candidates_on_their_own_registration(
     claim. What is not done here is opening `truth.jsonl` to find out, which is what
     makes this a test of the pipeline rather than a restatement of the generator. The
     recovery figure the evaluator will publish is ticket #13.
+
+    Alpha's candidate holds a fourth account, `syn_greyloch_6612`, and that is not a
+    mistake this test is written around: the account is a Hard Negative that published
+    the desk's Telegram handle while complaining about it, and the handle is one
+    Contact Point reached by both of them. `test_the_complaint_that_names_the_handle_is_grouped_with_the_desk`
+    takes that case on its own.
     """
     candidates_path, _ = run(tmp_path)
     written = by_accounts(candidates_path)
 
-    alpha = written[("syn_harborlight_5517", "syn_pinecrest_9032", "syn_quantproof_2841")]
-    assert texts(alpha, "posts") == ["syn_p_0001", "syn_p_0002", "syn_p_0003", "syn_p_0004"]
+    alpha = written[
+        (
+            "syn_greyloch_6612",
+            "syn_harborlight_5517",
+            "syn_pinecrest_9032",
+            "syn_quantproof_2841",
+        )
+    ]
+    assert texts(alpha, "posts") == [
+        "syn_p_0001",
+        "syn_p_0002",
+        "syn_p_0003",
+        "syn_p_0004",
+        "syn_p_0021",
+    ]
     assert [
         text(entry, "domain") for entry in records(alpha, "shared_domains")
     ] == ["vantage-ledger.example"]
@@ -385,21 +419,385 @@ def test_the_planted_campaigns_come_out_as_candidates_on_their_own_registration(
     ]
 
 
-def test_an_account_that_reaches_no_registration_is_in_no_candidate(tmp_path: Path) -> None:
+def test_the_complaint_that_names_the_handle_is_grouped_with_the_desk(tmp_path: Path) -> None:
+    """What the second edge costs on this Corpus, named rather than absorbed.
+
+    `syn_greyloch_6612` lost money to the alpha desk and published the desk's Telegram
+    handle while writing the complaint down. ADR-0005 says a shared Contact Point is a
+    grouping edge, and the handle is one value reached by both accounts, so the two are
+    in one candidate — and the Planted Campaign's membership is no longer held alone, so
+    the recovery figure falls rather than rising. Nothing here can tell an operator from
+    a customer: no rule reads a post to work out which one published the handle, and a
+    rule that tried would be the kind of guess ADR-0005 forbids.
+
+    The claim being made here is therefore narrow and checkable: the two accounts are
+    in one candidate, and the shared thing that put them there is named.
+    """
+    written = by_accounts(run(tmp_path)[0])
+    complaint = written[
+        (
+            "syn_greyloch_6612",
+            "syn_harborlight_5517",
+            "syn_pinecrest_9032",
+            "syn_quantproof_2841",
+        )
+    ]
+    shared = records(complaint, "shared_contact_points")
+
+    assert [text(entry, "value") for entry in shared] == ["syn_vantageledger"]
+    assert texts(shared[0], "accounts") == [
+        "syn_greyloch_6612",
+        "syn_harborlight_5517",
+        "syn_pinecrest_9032",
+        "syn_quantproof_2841",
+    ]
+    assert "@Syn_VantageLedger" in texts(shared[0], "spellings")
+
+
+# --- a Contact Point as a grouping edge -----------------------------------------
+
+
+def contact_corpus(tmp_path: Path) -> Path:
+    """A campaign whose registrations move every post and whose reach does not.
+
+    Two accounts, two registrations one character apart, and one Telegram handle
+    published in both posts. Nothing links them except the handle, which is the case
+    the second edge of ADR-0005 exists for: a desk that pays for a domain per post and
+    keeps one contact the whole way through is invisible to a grouping built on
+    registrations alone.
+    """
+    return write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9061",
+                "syn_alpha_0001",
+                "https://spring-1.example/entry",
+                body="questions to @syn_shared_desk",
+            ),
+            post(
+                "syn_p_9062",
+                "syn_beta_0002",
+                "https://spring-2.example/entry",
+                body="questions to @syn_shared_desk",
+            ),
+            post("syn_p_9063", "syn_gamma_0003", "https://spring-3.example/bench"),
+        ),
+    )
+
+
+def test_two_accounts_sharing_a_contact_point_become_one_candidate(tmp_path: Path) -> None:
+    """The hard requirement, with no shared registrable domain anywhere in it.
+
+    Neither of the two accounts reaches the other's registration, and each reaches a
+    registration of its own, so every one of the three is a component of one under the
+    registration rule. The candidate that comes out names the handle, the two accounts
+    that published it, and the two posts they published it in, which is the evidence a
+    reader needs to disagree with it.
+    """
+    candidates_path, _ = run(tmp_path, contact_corpus(tmp_path))
+    written = by_accounts(candidates_path)
+
+    assert list(written) == [("syn_alpha_0001", "syn_beta_0002")]
+    candidate = written[("syn_alpha_0001", "syn_beta_0002")]
+    assert records(candidate, "shared_domains") == []
+    shared = records(candidate, "shared_contact_points")
+    assert [(text(entry, "kind"), text(entry, "value")) for entry in shared] == [
+        ("telegram", "syn_shared_desk")
+    ]
+    assert texts(shared[0], "accounts") == ["syn_alpha_0001", "syn_beta_0002"]
+    assert texts(shared[0], "posts") == ["syn_p_9061", "syn_p_9062"]
+    assert texts(shared[0], "spellings") == ["@syn_shared_desk"]
+
+
+def test_accounts_sharing_neither_a_registration_nor_a_contact_point_are_not_grouped(
+    tmp_path: Path,
+) -> None:
+    """The other half of the same rule, because adding an edge can only ever join more.
+
+    Two accounts paste one advert word for word and each publishes an address of its own
+    under a domain of its own. Nothing they have in common is infrastructure, so the
+    Contact Point edge does not rescue them either — and the third account, which shares
+    nothing at all, is not dragged in with them.
+    """
+    advert = "Remote annotation work, 26 an hour, kit posted out, starts Monday."
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9064",
+                "syn_draycott_5583",
+                "https://anvil-labels.example/apply",
+                body=f"{advert} Write to desk1@anvil-labels.example.",
+            ),
+            post(
+                "syn_p_9065",
+                "syn_underhill_7420",
+                "https://underhilltalent.example/apply",
+                body=f"{advert} Write to desk2@underhilltalent.example.",
+            ),
+            post("syn_p_9066", "syn_mossgavel_2218", body=advert),
+        ),
+    )
+
+    candidates_path, printed = run(tmp_path, corpus)
+
+    assert rows(candidates_path) == []
+    assert "cc-01" not in printed
+
+
+def evidence_corpus(tmp_path: Path) -> Path:
+    """Three candidates, one per shape of evidence and one for the combination.
+
+    Each pair shares one thing and nothing else, and each pair shares a thing no other
+    pair reaches, so a candidate's label is a fact about that pair rather than about the
+    Corpus. The accounts are named so the three pairs sort into a known order, which is
+    what lets the index be read line by line.
+    """
+    return write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9067",
+                "syn_both_a_0001",
+                "https://shared-both.example/entry",
+                body="reach @syn_desk_both",
+            ),
+            post(
+                "syn_p_9068",
+                "syn_both_b_0002",
+                "https://shared-both.example/entry",
+                body="reach @syn_desk_both",
+            ),
+            post("syn_p_9069", "syn_con_a_0003", body="reach @syn_desk_contact"),
+            post("syn_p_9070", "syn_con_b_0004", body="reach @syn_desk_contact"),
+            post("syn_p_9071", "syn_dom_a_0005", "https://shared-dom.example/entry"),
+            post("syn_p_9072", "syn_dom_b_0006", "https://shared-dom.example/entry"),
+        ),
+    )
+
+
+def labels(printed: str) -> dict[str, str]:
+    """The evidence label each candidate prints, read off the console.
+
+    Read out of the table rather than out of the file, because the label is derived
+    from the two evidence lists and the console is where a reader meets it. A candidate
+    holding one edge and a candidate holding both are different claims, and a file
+    carrying one column for them would let the file and the table disagree about which
+    is which.
+    """
+    found: dict[str, str] = {}
+    for line in printed.splitlines():
+        if line.startswith("cc-"):
+            found[line.split()[0]] = ""
+    for index, line in enumerate(printed.splitlines()):
+        if line.strip().startswith("justified by"):
+            evidence = line.split("justified by", 1)[1].strip()
+            found[_candidate_of(printed, index)] = evidence.split(", the weaker")[0]
+    return found
+
+
+def _candidate_of(printed: str, index: int) -> str:
+    """The candidate whose block the line at `index` sits in."""
+    for line in reversed(printed.splitlines()[:index]):
+        if line.startswith("cc-"):
+            return line.split()[0]
+    raise AssertionError(f"line {index} is not inside a candidate block")
+
+
+def labels_of_file(path: Path) -> dict[str, str]:
+    """The label each published candidate would print, worked out from the file.
+
+    The label is not a column of the file: it is read out of the two evidence lists, so
+    the file and the table cannot hold different answers. This reads it back the way a
+    reader would, and it is what holds the published file to the published table.
+    """
+    found: dict[str, str] = {}
+    for row in rows(path):
+        has_domain = bool(records(row, "shared_domains"))
+        has_point = bool(records(row, "shared_contact_points"))
+        key = ",".join(texts(row, "accounts"))
+        if has_domain and has_point:
+            found[key] = "registrations and Contact Points"
+        elif has_point:
+            found[key] = "Contact Points"
+        else:
+            found[key] = "registrations"
+    return found
+
+
+def test_a_candidate_reports_which_evidence_justified_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One line per candidate, three answers, and no fourth answer available.
+
+    ADR-0005 permits exactly two edges, so a candidate is justified by a registration,
+    by a Contact Point, or by both, and there is no third thing the run could have used.
+    Saying which one applies is what lets a reader weigh the candidates against each
+    other: a candidate resting on one handle is not the same claim as one resting on a
+    registration somebody registered.
+    """
+    _, printed = run(tmp_path, evidence_corpus(tmp_path), capsys)
+
+    assert labels(printed) == {
+        "cc-01": "registrations and Contact Points",
+        "cc-02": "Contact Points",
+        "cc-03": "registrations",
+    }
+
+
+def test_a_candidate_joined_on_a_contact_point_alone_is_labelled_as_the_weaker_evidence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The label is not decoration: it says the evidence is the weaker of the two.
+
+    Contact Point extraction has the lower recall of the two readings, and this project
+    measured that rather than promising it — `rfi contact-points` publishes the
+    shortfall row by row against the Labelled Set. A reader is therefore entitled to
+    weigh a candidate justified by a handle differently from one justified by a
+    registration, and the output has to say so where the candidate is rather than in a
+    footer a reader may not reach.
+    """
+    _, printed = run(tmp_path, evidence_corpus(tmp_path), capsys=capsys)
+
+    contact_block = printed.split("cc-02  2 accounts")[1].split("\n\n")[0]
+    assert "justified by  Contact Points" in contact_block
+    assert "weaker of the two readings" in contact_block
+    assert "rfi contact-points" in contact_block
+
+    # The candidate resting on both does not carry the warning: the registration is
+    # there, and the handle is something extra rather than the only thing.
+    both_block = printed.split("cc-01  2 accounts")[1].split("\n\n")[0]
+    assert "justified by  registrations and Contact Points" in both_block
+    assert "weaker of the two readings" not in both_block
+
+
+def test_a_contact_point_at_a_withheld_registration_joins_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The filter reaches the second edge, because its promise is about both of them.
+
+    A paste site's address is a paste site's address: every account that complains into
+    one publishes it, and joining two of them on it would build a candidate out of the
+    one service everybody already uses. The registration is withheld whole, and the
+    Contact Point under it is withheld with it — and named, for the same reason the
+    withheld registrations are named.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9073",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                body="complaints to desk@hopcut.example",
+            ),
+            post(
+                "syn_p_9074",
+                "syn_beta_0002",
+                "https://signal-harbor.example/intake",
+                body="complaints to desk@hopcut.example",
+            ),
+        ),
+    )
+
+    candidates_path, printed = run(tmp_path, corpus, capsys=capsys)
+
+    assert rows(candidates_path) == []
+    withheld = printed.split("withheld Contact Points")[1].split("\n\n")[0]
+    assert "desk@hopcut.example" in withheld
+    assert "2 accounts" in withheld
+
+
+def test_the_desks_the_obfuscated_handles_reach_come_out_as_one_candidate(
+    tmp_path: Path,
+) -> None:
+    """The case this ticket is for, read off the shipped Corpus rather than invented.
+
+    `syn-nuisance-obfuscated-copperlantern` is one desk publishing one Telegram handle
+    three ways: written out with a full stop between its characters, written out with
+    spaces, and with a digit standing in for a letter. Two of the three accounts reach
+    no registration at all and the third reaches one that only it reaches, so before
+    this edge nothing joined them and the desk was invisible. The candidate names the
+    handle and every spelling the Corpus wrote it in, which is what lets a reader see
+    that it is one identifier rather than two that happen to fold together.
+    """
+    candidates_path, _ = run(tmp_path)
+    written = by_accounts(candidates_path)
+    desk = written[("syn_halberdmoor_8823", "syn_thrushmoot_5524", "syn_wintermarch_4417")]
+
+    assert records(desk, "shared_domains") == []
+    shared = records(desk, "shared_contact_points")
+    assert [text(entry, "value") for entry in shared] == ["syn_copperlantern"]
+    assert texts(shared[0], "accounts") == [
+        "syn_halberdmoor_8823",
+        "syn_thrushmoot_5524",
+        "syn_wintermarch_4417",
+    ]
+    assert len(texts(shared[0], "spellings")) > 1, "one spelling is not a fold"
+
+    # And every candidate the shipped Corpus produces says which edge it rests on, so
+    # the file alone tells a reader which claims are the strong kind.
+    assert labels_of_file(candidates_path) == {
+        "syn_greyloch_6612,syn_harborlight_5517,syn_pinecrest_9032,syn_quantproof_2841": (
+            "registrations and Contact Points"
+        ),
+        "syn_halberdmoor_8823,syn_thrushmoot_5524,syn_wintermarch_4417": "Contact Points",
+        "syn_rivermill_4417,syn_rivermill_6620,syn_rivermill_9085": "registrations",
+        "syn_clearpathwork_3184,syn_northwindhire_7736": "registrations and Contact Points",
+    }
+
+
+def test_the_shipped_candidates_are_joinable_on_a_contact_point_or_a_registration(
+    tmp_path: Path,
+) -> None:
+    """Nothing is left over: every candidate names the edge it was joined on.
+
+    Checked against the two committed files the run does not read, so "the same
+    Contact Point" and "the same registration" are checked statements rather than a
+    shared assumption about what the extractor found.
+    """
+    published = {
+        text(entry, "value")
+        for row in rows(COMMITTED_CONTACTS)
+        for entry in records(row, "matches")
+    }
+    candidates_path, _ = run(tmp_path)
+
+    assert published
+    for value in points(candidates_path):
+        assert value in published
+
+
+def test_an_account_that_reaches_no_registration_and_no_contact_point_is_in_no_candidate(
+    tmp_path: Path,
+) -> None:
     """The floor of the case, read off the committed resolved links rather than a list.
 
-    An account whose links name no registration registers nothing, so nothing can
-    join it. The Corpus plants two: one that links nothing, and satire that recites a
-    planted pitch word for word and still links nothing. Any candidate holding either
-    of them was reached on text, which ADR-0005 forbids.
+    An account whose posts name neither a registration nor a Contact Point publishes
+    nothing that could join it. The Corpus plants two: one that links nothing, and
+    satire that recites a planted pitch word for word and still publishes nothing. Any
+    candidate holding either of them was reached on text, which ADR-0005 forbids.
+
+    Both halves of the floor are named, because one edge on its own is not the floor
+    any more: two of the accounts the Corpus leaves with no registration publish a
+    Contact Point, and one desk publishes nothing at all. Decided per account rather
+    than per post, because an account that publishes a handle in one post and nothing in
+    another has published a handle.
     """
-    unreachable = {
-        text(row, "account") for row in rows(COMMITTED_POST_DOMAINS) if not texts(row, "domains")
+    published_by_post = {
+        text(row, "post_id"): texts(row, "contact_points")
+        for row in rows(COMMITTED_CONTACTS)
     }
+    reaching: set[str] = set()
+    for row in rows(COMMITTED_POST_DOMAINS):
+        if texts(row, "domains") or published_by_post[text(row, "post_id")]:
+            reaching.add(text(row, "account"))
+    unreachable = {text(row, "account") for row in rows(COMMITTED_POST_DOMAINS)} - reaching
     candidates_path, _ = run(tmp_path)
     grouped = {account for row in rows(candidates_path) for account in texts(row, "accounts")}
 
-    assert unreachable, "the Corpus has accounts that reach no registration"
+    assert unreachable, "the Corpus has accounts that reach nothing at all"
     assert not unreachable & grouped
 
 
@@ -416,10 +814,15 @@ def test_the_four_account_figures_partition_the_corpus(
     would stop describing every account in the Corpus.
 
     `silenced` is its own line rather than folded into `alone`, because the two are
-    different claims: an account with a shortener and a site of its own has a
-    registration nobody else reaches, and one with nothing but a shortener reaches
-    nothing a candidate could ever be built on. Reading them as one number would let
-    the filter claim credit for an account it never touched.
+    different claims: an account with a shortener and a site of its own has something
+    nobody else reaches, and one with nothing but a shortener reaches nothing a
+    candidate could ever be built on. Reading them as one number would let the filter
+    claim credit for an account it never touched.
+
+    The two handles here reach nothing but each other, so both accounts are grouped
+    without either of them ever naming a registration. That is the case that would
+    break a partition still counted over registrations: an account can be grouped by
+    the Contact Point edge and still reach nothing a domain-based count can see.
     """
     corpus = write_corpus(
         tmp_path / "corpus.jsonl",
@@ -435,19 +838,26 @@ def test_the_four_account_figures_partition_the_corpus(
             # The shortener and nothing else, so the filter is the only reason this
             # account is in no candidate.
             post("syn_p_9056", "syn_shortonly_9056", "https://hopcut.example/q4k"),
+            # One handle between them and no registration at all, so both are grouped
+            # by the second edge.
+            post("syn_p_9057", "syn_handle_9057", body="reach @syn_shared_desk"),
+            post("syn_p_9058", "syn_handle_9058", body="reach @syn_shared_desk"),
         ),
     )
 
     _, printed = run(tmp_path, corpus, capsys=capsys)
 
-    assert "5 accounts" in printed
-    assert "grouped       2 accounts in 1 candidate, on 1 registration" in printed
-    assert "alone         1 account with a registration nobody else reaches" in printed
+    assert "7 accounts" in printed
+    assert (
+        "grouped       4 accounts in 2 candidates, on 1 registration and 1 Contact Point"
+        in printed
+    )
+    assert "alone         1 account reaching something nobody else reaches" in printed
     assert (
         "silenced      1 account reaching nothing but known-shared infrastructure"
         in printed
     )
-    assert "unreachable   1 account with no registration" in printed
+    assert "unreachable   1 account reaching nothing this grouping can use" in printed
 
 
 def test_a_registration_one_character_from_a_planted_one_reaches_no_candidate(
@@ -627,6 +1037,12 @@ def test_the_hard_negatives_on_shared_infrastructure_are_not_grouped(
     none is reported. Read from the manifest and the resolved links rather than
     written out here, because a transcribed list of who uses a shortener is a list that
     goes stale at the next seed.
+
+    One of them is now grouped, and it is grouped by no shared host: `syn_greyloch_6612`
+    published a Planted Campaign's Telegram handle while complaining about the campaign,
+    so it is in a candidate on the second edge rather than on the filter's. The filter's
+    own claim is the one under test, so the accounts reaching a shared host *and*
+    publishing nothing anybody else publishes are the ones checked.
     """
     published = {text(row, "host") for row in rows(COMMITTED_SHARED_HOSTS)}
     hard_negatives = {
@@ -634,6 +1050,18 @@ def test_the_hard_negatives_on_shared_infrastructure_are_not_grouped(
         for record in rows(COMMITTED_NUISANCE)
         if text(record, "kind") == "hard_negative"
         for account in texts(record, "accounts")
+    }
+    publishing = {
+        text(row, "account")
+        for row in rows(COMMITTED_CONTACTS)
+        if texts(row, "contact_points")
+    }
+    silent = {
+        account
+        for record in rows(COMMITTED_NUISANCE)
+        if text(record, "kind") == "hard_negative"
+        for account in texts(record, "accounts")
+        if account not in publishing
     }
     touching = {
         text(row, "account")
@@ -646,8 +1074,8 @@ def test_the_hard_negatives_on_shared_infrastructure_are_not_grouped(
     grouped = {account for row in written for account in texts(row, "accounts")}
 
     assert hard_negatives & touching, "the Corpus plants no Hard Negative on a shared host"
-    assert not touching & grouped, (
-        f"{sorted(touching & grouped)} reached nothing but a known-shared service"
+    assert not touching & silent & grouped, (
+        f"{sorted(touching & silent & grouped)} reached nothing but a known-shared service"
     )
     assert not published & {
         text(entry, "domain") for row in written for entry in records(row, "shared_domains")
@@ -656,22 +1084,29 @@ def test_the_hard_negatives_on_shared_infrastructure_are_not_grouped(
     assert "withheld" in printed
 
 
-def test_the_filtered_groupings_are_the_planted_campaigns_and_the_shop_that_is_not(
+def test_the_filtered_groupings_are_the_two_planted_campaigns_the_shop_and_the_obfuscated_desk(
     tmp_path: Path,
 ) -> None:
-    """What is left, read off the output: two Planted Campaigns and the shop decoy.
+    """What is left, read off the output: two Planted Campaigns and two desks that are not.
 
-    Both Planted Campaigns come out on their own registrations, and the three accounts
-    of one shop come out on the shop's domain — which is a correct grouping that must
-    never be counted as recovery (ADR-0004). Nothing else groups, so the recovery
-    figure the evaluator publishes is measured against a list this small that a reader
-    can check by hand.
+    Both Planted Campaigns come out on their own registrations, the three accounts of one
+    shop come out on the shop's domain — which is a correct grouping that must never be
+    counted as recovery (ADR-0004) — and the desk behind the obfuscated Telegram handles
+    comes out on the handle alone. Nothing else groups, so the recovery figure the
+    evaluator publishes is measured against a list this small that a reader can check by
+    hand.
     """
     candidates_path, _ = run(tmp_path)
     written = by_accounts(candidates_path)
 
     assert list(written) == [
-        ("syn_harborlight_5517", "syn_pinecrest_9032", "syn_quantproof_2841"),
+        (
+            "syn_greyloch_6612",
+            "syn_harborlight_5517",
+            "syn_pinecrest_9032",
+            "syn_quantproof_2841",
+        ),
+        ("syn_halberdmoor_8823", "syn_thrushmoot_5524", "syn_wintermarch_4417"),
         ("syn_rivermill_4417", "syn_rivermill_6620", "syn_rivermill_9085"),
         ("syn_clearpathwork_3184", "syn_northwindhire_7736"),
     ]
@@ -716,12 +1151,12 @@ def test_adding_a_host_to_the_published_list_changes_the_grouping_and_nothing_el
 ) -> None:
     """The list decides which registrations are shared; the query only reads it.
 
-    Three runs over one Corpus. The committed list keeps the alpha Planted Campaign,
-    because its registration is not on the list. Adding `vantage-ledger.example` to a
-    copy of the list — a host nobody has to write any code for — takes that candidate
-    away. An empty list takes the filter out of the run altogether and every component
-    it removed comes back, which is what makes the difference measurable rather than
-    merely asserted.
+    Three runs over one Corpus. The committed list keeps the shop, because its domain
+    is not on the list. Adding `rivermill-bikes.example` to a copy of the list — a host
+    nobody has to write any code for — takes that candidate away, because it is the one
+    candidate in this Corpus resting on a registration alone. An empty list takes the
+    filter out of the run altogether and every component it removed comes back, which is
+    what makes the difference measurable rather than merely asserted.
     """
     kept_path, kept_printed = run(tmp_path / "kept", capsys=capsys)
     added = write_shared_hosts(
@@ -730,7 +1165,7 @@ def test_adding_a_host_to_the_published_list_changes_the_grouping_and_nothing_el
             *rows(COMMITTED_SHARED_HOSTS),
             {
                 "added": "2026-10-01",
-                "host": "vantage-ledger.example",
+                "host": "rivermill-bikes.example",
                 "kind": "paste_site",
                 "provenance": "Added by this test, to show the list decides.",
             },
@@ -742,16 +1177,65 @@ def test_adding_a_host_to_the_published_list_changes_the_grouping_and_nothing_el
     empty = write_shared_hosts(tmp_path / "empty.jsonl", ())
     empty_path, empty_printed = run(tmp_path / "empty", capsys=capsys, shared=empty)
 
-    alpha = ("syn_harborlight_5517", "syn_pinecrest_9032", "syn_quantproof_2841")
-    assert alpha in by_accounts(kept_path)
-    assert "3 of 16 registrations withheld, removing 2 of 5 components" in kept_printed
+    shop = ("syn_rivermill_4417", "syn_rivermill_6620", "syn_rivermill_9085")
+    assert shop in by_accounts(kept_path)
+    assert (
+        "3 of 16 registrations and 0 of 6 Contact Points withheld, removing 2 of 5 components"
+        in kept_printed
+    )
 
-    assert alpha not in by_accounts(withheld_path)
-    assert "4 of 16 registrations withheld, removing 3 of 5 components" in withheld_printed
+    assert shop not in by_accounts(withheld_path)
+    assert (
+        "4 of 16 registrations and 0 of 6 Contact Points withheld, removing 3 of 5 components"
+        in withheld_printed
+    )
 
     assert len(rows(empty_path)) == 5
-    assert "0 of 16 registrations withheld, removing 0 of 5 components" in empty_printed
+    assert (
+        "0 of 16 registrations and 0 of 6 Contact Points withheld, removing 0 of 5 components"
+        in empty_printed
+    )
     assert "hopcut.example" in domains(empty_path)
+
+
+def test_withholding_a_registration_leaves_a_candidate_on_its_contact_point_alone(
+    tmp_path: Path,
+) -> None:
+    """What the second edge is worth, read as the difference it makes under the filter.
+
+    Putting a Planted Campaign's own registration on the known-shared list takes its
+    registration away, and a run built on registrations alone loses the campaign with
+    it. The campaign here survives, on the one handle its three accounts all publish —
+    which is also why the evidence label matters: the candidate that comes out is
+    justified by the weaker of the two readings, and the output says so rather than
+    leaving the campaign's recovery to look as strong as it was.
+    """
+    membership = ("syn_harborlight_5517", "syn_pinecrest_9032", "syn_quantproof_2841")
+    candidate = tuple(
+    sorted((membership[0], "syn_greyloch_6612", *membership[1:]))
+)
+    added = write_shared_hosts(
+        tmp_path / "added.jsonl",
+        (
+            *rows(COMMITTED_SHARED_HOSTS),
+            {
+                "added": "2026-10-01",
+                "host": "vantage-ledger.example",
+                "kind": "paste_site",
+                "provenance": "Added by this test, to show the second edge carries it.",
+            },
+        ),
+    )
+
+    candidates_path, _ = run(tmp_path, corpus=DEFAULT_CORPUS_PATH, shared=added)
+    written = by_accounts(candidates_path)
+
+    assert candidate in written
+    assert records(written[candidate], "shared_domains") == []
+    assert [text(entry, "value") for entry in records(written[candidate], "shared_contact_points")] == [
+        "syn_vantageledger"
+    ]
+    assert labels_of_file(candidates_path)[",".join(candidate)] == "Contact Points"
 
 
 def test_the_output_reports_what_the_filter_removed(
@@ -767,7 +1251,7 @@ def test_the_output_reports_what_the_filter_removed(
     """
     _, printed = run(tmp_path, capsys=capsys)
 
-    assert "filtered      3 of 16 registrations withheld, removing 2 of 5 components" in printed
+    assert "filtered      3 of 16 registrations and 0 of 6 Contact Points withheld, removing 2 of 5 components" in printed
 
     withheld = printed.split("withheld  ")[1].split("\n\n")[0]
     heading, *lines = withheld.splitlines()

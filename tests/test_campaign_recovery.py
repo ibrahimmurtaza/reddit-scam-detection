@@ -184,16 +184,36 @@ def campaign(campaign_id: str, accounts: Iterable[str], posts: Iterable[str]) ->
 
 
 def candidate(
-    candidate_id: str, accounts: Iterable[str], posts: Iterable[str], *domains: str
+    candidate_id: str,
+    accounts: Iterable[str],
+    posts: Iterable[str],
+    *domains: str,
+    points: Iterable[str] = (),
 ) -> Row:
+    """One row of `campaign-candidates.jsonl`, hand-written.
+
+    `domains` and `points` are the two edges ADR-0005 allows and the reader refuses a
+    row with neither, so a test that wanted a candidate resting on nothing would have to
+    say so in the source rather than leave a row the command turns down.
+    """
     accounts = sorted(accounts)
+    posts = sorted(posts)
     return {
         "candidate_id": candidate_id,
         "accounts": accounts,
-        "posts": sorted(posts),
+        "posts": posts,
         "shared_domains": [
-            {"domain": domain, "accounts": accounts, "posts": sorted(posts)}
-            for domain in domains
+            {"domain": domain, "accounts": accounts, "posts": posts} for domain in domains
+        ],
+        "shared_contact_points": [
+            {
+                "kind": "telegram",
+                "value": value,
+                "accounts": accounts,
+                "posts": posts,
+                "spellings": [f"@{value}"],
+            }
+            for value in points
         ],
         "first_seen": "2026-01-05T09:00:00Z",
     }
@@ -522,6 +542,190 @@ def test_the_three_outcomes_partition_the_planted_campaigns(
     assert figure(printed) == "1 of 3 Planted Campaigns"
 
 
+# --- the recall bound --------------------------------------------------------------
+
+
+def bound(printed: str) -> str:
+    """The bound line of the figures block, without its label or the block's padding."""
+    line = next(line for line in printed.splitlines() if line.strip().startswith("bound"))
+    return line.split(maxsplit=1)[1].strip()
+
+
+def rotator(
+    tmp_path: Path,
+    *,
+    points: Iterable[str] = (),
+) -> tuple[Path, Path, Path]:
+    """Two campaigns, one of which shares nothing with itself and cannot be reached.
+
+    `syn-campaign-shared` is a candidate holding two accounts on one registration or on
+    one Contact Point; `syn-campaign-rotor` is two accounts that share neither, so no
+    edge this method rests on joins them however hard the grouping tries. Written out
+    rather than generated because the point of the test is the shape of the bound and a
+    generator would be the wrong place to plant it.
+    """
+    corpus = corpus_of(
+        tmp_path,
+        post("syn_p_0001", "syn_alpha_0001"),
+        post("syn_p_0002", "syn_beta_0002"),
+        post("syn_p_0003", "syn_gamma_0003"),
+        post("syn_p_0004", "syn_delta_0004"),
+    )
+    candidates = write_rows(
+        tmp_path / "campaign-candidates.jsonl",
+        [
+            candidate(
+                "cc-01",
+                ("syn_alpha_0001", "syn_beta_0002"),
+                ("syn_p_0001", "syn_p_0002"),
+                "rotator-free.example",
+                points=points,
+            )
+        ],
+    )
+    truth = write_rows(
+        tmp_path / "truth.jsonl",
+        [
+            campaign(
+                "syn-campaign-shared",
+                ("syn_alpha_0001", "syn_beta_0002"),
+                ("syn_p_0001", "syn_p_0002"),
+            ),
+            campaign(
+                "syn-campaign-rotor",
+                ("syn_gamma_0003", "syn_delta_0004"),
+                ("syn_p_0003", "syn_p_0004"),
+            ),
+        ],
+    )
+    nuisance_path = write_rows(
+        tmp_path / "nuisance.jsonl",
+        [nuisance("syn-nuisance-single", NuisanceKind.SINGLE_ACCOUNT_DOMAIN)],
+    )
+    return corpus, candidates, nuisance_path
+
+
+def test_a_campaign_whose_accounts_share_nothing_is_in_the_recall_bound(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The bound is a count of campaigns, and it names the campaign it counts.
+
+    `syn-campaign-rotor` rotates its registrations and publishes no Contact Point, so
+    nothing about it appears in the candidates file at all — which is what makes it the
+    floor rather than a miss the grouping could have caught. The figure beside it is a
+    bound on what any method resting on these two edges could have recovered, so a
+    reader can tell the difference between "the grouping was nearly right" and "no
+    grouping of this shape could ever have reached it".
+    """
+    corpus, candidates, nuisance_path = rotator(tmp_path)
+
+    _, report, printed = run(
+        tmp_path / "out",
+        corpus=corpus,
+        candidates=candidates,
+        truth=tmp_path / "truth.jsonl",
+        nuisance=nuisance_path,
+        capsys=capsys,
+    )
+    page = report.read_text(encoding="utf-8")
+
+    assert figure(printed) == "1 of 2 Planted Campaigns"
+    assert bound(printed) == (
+        "1 of 2 Planted Campaigns have nothing inside them reaching a candidate"
+    )
+    assert "syn-campaign-rotor" in printed
+    assert "syn-campaign-shared" in printed
+    assert "syn-campaign-rotor" in page
+    assert "recall bound" in page
+    assert "recall bound" in printed
+    assert "ceiling of 1 of 2" in " ".join(printed.split())
+
+
+def test_a_campaign_shared_on_a_contact_point_alone_is_outside_the_bound(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The bound counts what neither edge reaches, so one edge is enough to escape it.
+
+    The same Corpus with the shared campaign resting on a Telegram handle rather than on
+    a registration. Nothing about the bound changes: the campaign is still reachable, and
+    the point of the test is that a reader checking the bound is not asked to know which
+    edge did the work.
+    """
+    corpus, candidates, nuisance_path = rotator(tmp_path, points=("syn_shared_desk",))
+
+    _, _, printed = run(
+        tmp_path / "out",
+        corpus=corpus,
+        candidates=candidates,
+        truth=tmp_path / "truth.jsonl",
+        nuisance=nuisance_path,
+        capsys=capsys,
+    )
+
+    assert figure(printed) == "1 of 2 Planted Campaigns"
+    assert bound(printed) == (
+        "1 of 2 Planted Campaigns have nothing inside them reaching a candidate"
+    )
+
+
+def test_the_bound_is_stated_as_a_bound_rather_than_as_a_rate_of_fraud_found(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AC5: the ceiling is named as a ceiling, in both views.
+
+    A recovery rate read as an estimate of how much fraud a system finds in the world
+    would be a much larger claim than the number is. The bound is the honest form of it:
+    however good the grouping gets, these campaigns cannot be recovered by this method,
+    and the figure says how many they are rather than leaving a reader to infer the
+    ceiling.
+    """
+    corpus, candidates, nuisance_path = rotator(tmp_path)
+
+    _, report, printed = run(
+        tmp_path / "out",
+        corpus=corpus,
+        candidates=candidates,
+        truth=tmp_path / "truth.jsonl",
+        nuisance=nuisance_path,
+        capsys=capsys,
+    )
+    page = report.read_text(encoding="utf-8")
+
+    for view in (page, printed):
+        flat = " ".join(view.split())
+        assert "not an estimate of fraud found in the world" in flat
+        assert "a limit on the method rather than a prediction of the run" in flat
+    assert "ceiling of 1 of 2" in " ".join(printed.split())
+    assert "ceiling of 1 of 2" in page
+
+
+def test_no_campaign_in_the_committed_corpus_is_beyond_the_method(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The shipped figure, with the bound beside it and every campaign named.
+
+    Zero of two: both Planted Campaigns share a registration and a Contact Point among
+    their own accounts, so nothing in this Corpus is out of the method's reach by
+    construction. The bound is printed even at zero, because a figure that appears only
+    when it is bad is a figure a reader cannot tell apart from a missing one.
+    """
+    recovery, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    assert bound(printed) == (
+        "0 of 2 Planted Campaigns have nothing inside them reaching a candidate"
+    )
+    assert "vantage-ledger.example" in printed
+    assert "signal-harbor.example" in printed
+    assert "syn_vantageledger" in printed
+    assert "syn_northwindhire" in printed
+    assert "0 of the 2 Planted Campaigns have nothing inside" in " ".join(page.split())
+    assert {text(row, "campaign_id") for row in rows(recovery)} == {
+        "syn-campaign-alpha",
+        "syn-campaign-beta",
+    }
+
+
 # --- what the report says ---------------------------------------------------------
 
 
@@ -779,35 +983,74 @@ def test_the_run_needs_no_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 # --- the Corpus the project actually ships ---------------------------------------
 
 
-def test_the_two_planted_campaigns_are_recovered_and_the_shop_is_not(
+def test_the_two_planted_campaigns_come_out_and_one_of_them_is_no_longer_a_recovery(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The shipped figure, which a reader can check against three candidates by hand.
+    """The shipped figure, which a reader can check against four candidates by hand.
 
-    `cc-01` holds all of alpha's three accounts and `cc-03` all of beta's two, so the
-    figure is 2 of 2. `cc-02` is three accounts of one shop sharing one domain: ADR-0005
-    says they group, the grouping is right to produce them, and they are not planted, so
-    they are printed as a candidate holding no Planted Campaign rather than counted
-    against N — which would be the system's correct behaviour reported as a failure.
+    `cc-04` holds all of beta's two accounts, so beta is recovered. `cc-01` holds alpha's
+    three accounts and one more: `syn_greyloch_6612`, a Hard Negative that published the
+    desk's Telegram handle while complaining about the desk. ADR-0005 makes a shared
+    Contact Point a grouping edge and nothing in this project can tell an operator from
+    a customer, so the candidate holds four accounts, the membership is no longer held
+    alone, and alpha is reported as `partial` rather than counted as a recovery. The
+    figure falls from what it was, and the extra account is named beside the figure so a
+    reader can see exactly which claim cost it.
+
+    `cc-03` is three accounts of one shop sharing one domain: ADR-0005 says they group,
+    the grouping is right to produce them, and they are not planted, so they are printed
+    as a candidate holding no Planted Campaign rather than counted against N.
     """
     recovery, report, printed = run(tmp_path, capsys=capsys)
     recovered = rows(recovery)
     page = report.read_text(encoding="utf-8")
 
-    assert figure(printed) == "2 of 2 Planted Campaigns"
+    assert figure(printed) == "1 of 2 Planted Campaigns"
     assert [text(row, "campaign_id") for row in recovered] == [
         "syn-campaign-alpha",
         "syn-campaign-beta",
     ]
-    assert {text(row, "outcome") for row in recovered} == {"recovered"}
+    assert [text(row, "outcome") for row in recovered] == ["partial", "recovered"]
     assert [
         text(records(row, "candidates")[0], "candidate_id") for row in recovered
-    ] == ["cc-01", "cc-03"]
+    ] == ["cc-01", "cc-04"]
+    assert texts(records(recovered[0], "candidates")[0], "extra") == ["syn_greyloch_6612"]
+    assert texts(records(recovered[1], "candidates")[0], "extra") == []
 
-    assert "1 of 3 candidates" in printed
-    assert "cc-02" in printed
+    assert "1 of 4 candidates" in printed
+    assert "cc-03" in printed
     assert "rivermill-bikes.example" in page
-    assert "2 of 2 Planted Campaigns" in page
+    assert "1 of 2 Planted Campaigns" in page
+    assert "syn_greyloch_6612" in printed and "syn_greyloch_6612" in page
+
+
+def test_the_corpus_holds_a_desk_the_second_edge_finds_and_the_first_could_not(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What the ticket is for, asked of the shipped Corpus rather than of a fixture.
+
+    `syn-nuisance-obfuscated-copperlantern` is one desk publishing one Telegram handle
+    three ways. Two of its three accounts reach no registration at all and the third
+    reaches one only it reaches, so nothing about the desk is in the resolved links. The
+    candidate names the handle and every spelling the Corpus wrote it in, which is what
+    lets a reader see that this is one identifier rather than two that happen to fold
+    together — and it rests on the Contact Point edge alone, so the output says so.
+
+    It is not a Planted Campaign, so it is counted as a false grouping under the
+    definition in ADR-0022: accounts of no campaign, grouped correctly, never a recovery.
+    """
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    assert "syn_copperlantern" in printed
+    assert "cc-02" in printed
+    assert "3 of 4 Campaign Candidates" in page
+    assert "syn_copperlantern" in page
+    # The edge is named beside the value in both views, because a Contact Point and a
+    # Registrable Domain are the same shape and a different kind of claim.
+    assert "Contact Points: `syn_copperlantern`" in page
+    assert "Contact Points: syn_copperlantern" in printed
+    assert "weaker of the two readings" in page
 
 
 def test_the_figure_is_reproducible_from_the_seed_the_report_names(
@@ -969,16 +1212,19 @@ def test_the_false_grouping_rate_is_reported_against_the_nuisance_structure(
 ) -> None:
     """The rate has to be said, and said against the manifest.
 
-    On the committed Corpus the figure is one false grouping of three
-    candidates: `cc-02`, the shop's accounts, grouped because ADR-0005 puts
-    them together and counted as false because they belong to no Planted
-    Campaign. `cc-01` and `cc-03` recover whole memberships and are not false.
+    On the committed Corpus the figure is three false groupings of four candidates:
+    `cc-01`, which holds the alpha Planted Campaign and the Hard Negative that named its
+    handle; `cc-02`, the desk behind the obfuscated Telegram handles, which belongs to no
+    campaign at all; and `cc-03`, the shop's accounts, grouped because ADR-0005 puts them
+    together and counted as false because they belong to no Planted Campaign. `cc-04`
+    recovers beta's whole membership and is not false.
     """
     _, report, printed = run(tmp_path, capsys=capsys)
     page = report.read_text(encoding="utf-8")
 
-    assert "1 of 3 Campaign Candidates" in page
-    assert "cc-02" in page and "cc-02" in printed
+    assert "3 of 4 Campaign Candidates" in page
+    for candidate_id in ("cc-01", "cc-02", "cc-03"):
+        assert candidate_id in page and candidate_id in printed
     assert "no Planted Campaign" in page
     # The rate is named beside the Nuisance Structure it was measured against.
     assert "data/corpus/nuisance.jsonl" in page
@@ -1101,8 +1347,9 @@ def test_recovery_and_the_false_grouping_rate_are_in_the_same_report(
     page = report.read_text(encoding="utf-8")
 
     for view in (page, printed):
-        assert "2 of 2 Planted Campaigns" in view
-        assert "1 of 3 Campaign Candidates" in view
+        assert "1 of 2 Planted Campaigns" in view
+        assert "3 of 4 Campaign Candidates" in view
+        assert "recall bound" in view
 
 
 # --- the shape of the output ------------------------------------------------------

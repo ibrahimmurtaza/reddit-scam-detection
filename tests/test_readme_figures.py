@@ -13,15 +13,17 @@ the command worked out, then rebuilt into the shape the README prints it in. Whe
 Corpus changes and the reports move, this test names the line of the README that is now
 wrong instead of leaving the README quietly behind.
 
-Two things are deliberately not checked. An aggregate the README works out from a report
+two kinds are deliberately not checked. An aggregate the README works out from a report
 rather than copies — the share of real reports landing in classes this Corpus has nothing
 to say about — is out, because summing the report's rounded percentages gives a different
 figure from the report's own arithmetic and a test over it would fail on rounding rather
 than on drift. And the console blocks `rfi campaign-candidates` prints, which have no
 committed report, are out except where the number they count is published elsewhere: the
-README quotes "3 of 16 registrations withheld" from the console, and the 16 is the
-distinct registration count `data/domains/post-domains.jsonl` holds, so that one is
-checked against the data rather than against a report that would move with it.
+README quotes "3 of 16 registrations and 0 of 6 Contact Points withheld" from the
+console, and the 16 and the 6 are the distinct registration count
+`data/domains/post-domains.jsonl` holds and the distinct Contact Point count
+`data/contacts/post-contacts.jsonl` holds, so that line is checked against the data
+rather than against a report that would move with it.
 
 The assertions are patterns rather than whole blocks. The README aligns its columns by hand
 and a generated report may be reflowed; what has to hold is the figure, not the whitespace
@@ -190,16 +192,34 @@ def categories_the_readme_mirrors() -> list[str]:
 
 
 def test_the_registrations_the_readme_reports_withheld_are_the_ones_the_corpus_resolves() -> None:
+    """Both edges of the filter, counted against the two committed files behind them.
+
+    The console line the README quotes names the registrations withheld out of the ones
+    the Corpus resolves, and the Contact Points withheld out of the ones the Corpus
+    publishes. Both totals are derived from committed data rather than transcribed, so a
+    README that quoted only one edge — or neither — would fail here.
+    """
     withheld = len(records_of(SHARED_HOSTS))
     resolved = {
         domain
         for record in records_of(DOMAINS)
         for domain in texts(record, "domains")
     }
+    published = {
+        text(match, "value")
+        for record in records_of(CONTACTS)
+        for match in nested(record, "matches")
+    }
+    hosts = {str(row["host"]) for row in records_of(SHARED_HOSTS)}
+    at_withheld = sum(1 for value in published if value.rpartition("@")[2] in hosts)
 
     assert found(
-        rf"\b{withheld} of {len(resolved)} registrations withheld\b"
-    ), f"README.md does not report {withheld} of {len(resolved)} registrations withheld"
+        rf"\b{withheld} of {len(resolved)} registrations and {at_withheld} of "
+        rf"{len(published)} Contact Points withheld\b"
+    ), (
+        f"README.md does not report {withheld} of {len(resolved)} registrations and "
+        f"{at_withheld} of {len(published)} Contact Points withheld"
+    )
 
 
 def test_the_nuisance_baseline_the_readme_quotes_is_the_baseline_the_figure_sits_on() -> None:

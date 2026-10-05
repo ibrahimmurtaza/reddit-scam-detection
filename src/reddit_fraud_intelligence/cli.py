@@ -436,9 +436,10 @@ def _parser() -> argparse.ArgumentParser:
             "positive here is not a wrong severity figure as a Signal can be, it is a "
             "shared identifier between two accounts that share nothing. Sharing is "
             "counted over accounts rather than over posts, every spelling of every value "
-            "is printed beside it, and nothing is grouped on any of it yet — the shared "
-            "list is the evidence ticket #20 needs, and an unmeasured grouping edge "
-            "would put an unmeasured input into the recovery figure. Reads no network."
+            "is printed beside it, and nothing is grouped on any of it here — the shared "
+            "list is what `rfi campaign-candidates` groups on, and the recall printed "
+            "beside it is what keeps that edge from being an unmeasured input into the "
+            "recovery figure. Reads no network."
         ),
     )
     contacts.add_argument(

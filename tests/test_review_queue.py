@@ -295,9 +295,15 @@ def candidate_row(
     accounts: Sequence[str],
     posts: Sequence[str],
     *domains: str,
+    points: Sequence[str] = (),
     first_seen: str = "2026-01-05T09:00:00Z",
 ) -> Row:
-    """One row of `campaign-candidates.jsonl`, hand-written."""
+    """One row of `campaign-candidates.jsonl`, hand-written.
+
+    Both evidence lists are written out because the reader refuses a row holding a field it
+    does not know, and refuses nothing about a field it does: a candidate resting on one
+    edge carries an empty list for the other.
+    """
     return {
         "candidate_id": candidate_id,
         "accounts": list(accounts),
@@ -305,6 +311,16 @@ def candidate_row(
         "shared_domains": [
             {"domain": domain, "accounts": list(accounts), "posts": list(posts)}
             for domain in domains
+        ],
+        "shared_contact_points": [
+            {
+                "kind": "telegram",
+                "value": value,
+                "accounts": list(accounts),
+                "posts": list(posts),
+                "spellings": [f"@{value}"],
+            }
+            for value in points
         ],
         "first_seen": first_seen,
     }
@@ -634,7 +650,7 @@ def test_every_entry_names_the_campaign_candidates_it_sits_in(
     """A candidate id on its own means nothing to a reviewer who has not opened the file.
 
     Two candidates hold this post and both are named, each with how many accounts it holds
-    and the registration it is joined on, which is the one fact that says whether the
+    and the shared thing it is joined on, which is the one fact that says whether the
     grouping is worth a look. Naming one of the two would leave a reader unable to tell a
     post in one candidate from a post in two, and the index column carries the same list
     so the two views of the queue cannot disagree about it.
@@ -669,6 +685,65 @@ def test_every_entry_names_the_campaign_candidates_it_sits_in(
     assert "2 accounts" in named[0], named[0]
     cell = next(cells for cells in index(printed) if cells[1] == "syn_p_0001")
     assert " ".join(cell[5:]) == "syn_c_001, syn_c_002", cell
+
+
+def test_a_candidate_joined_on_a_contact_point_names_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A candidate resting on a Contact Point has to name both the value and the edge.
+
+    ADR-0005 lets two accounts reach one candidate on a shared Contact Point as well as
+    on a shared registration, so the queue cannot print only registrations: a candidate
+    resting on one Telegram Contact Point would come out with nothing after `joined on`,
+    and a reader would take that as a candidate with no reason behind it rather than as
+    the weaker of the two kinds of evidence. The wording comes from the grouping rather
+    than from here, so a reader meeting the same candidate in both views is shown the
+    same claim.
+    """
+    scores_path, candidates_path = published(
+        tmp_path,
+        score_row("syn_p_0001", "syn_c_0001", ("domain_frequency", PUBLISHED["domain_frequency"])),
+        score_row("syn_p_0002", "syn_c_0002", ("payment_request", PUBLISHED["payment_request"])),
+        candidates=(
+            candidate_row(
+                "syn_c_001",
+                ("syn_c_0001", "syn_c_0002"),
+                ("syn_p_0001",),
+                points=("syn_shared_desk",),
+            ),
+        ),
+    )
+
+    printed = run(scores_path, candidates_path, capsys, depth=50)
+
+    named = next(
+        line for line in block(printed, "syn_p_0001") if line.strip().startswith("candidates")
+    )
+    assert "Contact Points: syn_shared_desk" in named, named
+    assert "nothing this file names" not in named, named
+    # Naming both edges makes this the longest line the command prints, so the queue's
+    # own claim about wrapping is asserted here rather than only on a short candidate.
+    assert max(len(line) for line in block(printed, "syn_p_0001")) <= 100, block(
+        printed, "syn_p_0001"
+    )
+
+    # And the registration edge keeps its own label, so the two are not one list.
+    with_domain = candidate_row(
+        "syn_c_001",
+        ("syn_c_0001", "syn_c_0002"),
+        ("syn_p_0001",),
+        "signal-harbor.example",
+    )
+    scores_path, candidates_path = published(
+        tmp_path / "second",
+        score_row("syn_p_0001", "syn_c_0001", ("domain_frequency", PUBLISHED["domain_frequency"])),
+        candidates=(with_domain,),
+    )
+    printed = run(scores_path, candidates_path, capsys, depth=50)
+    named = next(
+        line for line in block(printed, "syn_p_0001") if line.strip().startswith("candidates")
+    )
+    assert "registrations: signal-harbor.example" in named, named
 
 
 def test_a_post_no_candidate_holds_says_so(
