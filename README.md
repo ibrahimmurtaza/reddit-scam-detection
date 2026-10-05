@@ -21,13 +21,14 @@ the Corpus's own distribution against those base rates. The pipeline itself: the
 Registrable Domain of every link, then the Contact Points every post names, then
 the Campaign Candidates those registrations and Contact Points produce, with
 known-shared infrastructure filtered out as published data, then the Policy Score those
-same links and posts add up to, with the arithmetic printed beside it. And the
+same links and posts add up to, with the arithmetic printed beside it, then the Content
+Embeddings every post is stored with under a similarity index. And the
 measurement: how many of the two Planted Campaigns that grouping recovered, as X of N,
 joined by a command that runs after it rather than inside it, with the method's recall
 bound stated as a count beside it. The Review Queue those scores are ordered into, at a
 stated depth. The false-grouping rate beside that recovery figure, and the Review
-Queue's precision at several depths, are measured by the same evaluator. The
-Confidence, the corroborated grouping tier, and the graph report are not built yet.
+Queue's precision at several depths, are measured by the same evaluator.
+The Confidence, the corroborated grouping tier, and the graph report are not built yet.
 Their tickets are numbered #25 to #28 in the tracker; this README is updated as
 they land.
 
@@ -40,6 +41,12 @@ wheels). [uv](https://docs.astral.sh/uv/) manages the environment.
 uv sync
 uv run rfi generate-corpus
 ```
+
+One step needs a database: `rfi content-embeddings` stores its vectors in Postgres
+through pgvector, so `pgvector` has to be built and activated first — see
+`docs/pgvector.md`, which holds the build and the activation step. The connection
+comes from the environment (`RFI_DATABASE_URL`, or the `PG*` variables libpq
+reads), never from an argument.
 
 That writes four files; the other three in the table below are written by later
 steps, which are named against each row. Every file has one reader:
@@ -59,6 +66,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, and the recovery report beside it |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
+| `data/embeddings/content-embeddings.jsonl` | Which post, which model, how wide, under which recipe, and the digest of the text each stored vector was computed from. No vector, and no account. | the reuse rule, and a reader recomputing the digests |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -750,6 +758,124 @@ because publishing the input measures anything. The words that would name such a
 appear nowhere in the queue's own prose, which `tests/test_review_queue.py` asserts rather
 than trusting this paragraph.
 
+## The Content Embeddings
+
+**This is the substrate ticket.** One sentence embedding per post, in a `vector` column in
+Postgres under a cosine index, so a similarity query can be asked of it. It groups nothing,
+corroborates nothing and decides nothing — ticket #24 is the first thing to read these
+vectors — and its whole acceptance is that the reading is *possible later*.
+
+```
+uv run rfi content-embeddings   # reads the Corpus, needs a database, writes one file
+```
+
+| File | Holds |
+| --- | --- |
+| `data/embeddings/content-embeddings.jsonl` | One line per post: `post_id`, `model`, `dimensions`, `recipe`, and the SHA-256 of the text its stored vector was computed from. |
+
+There is no report beside it and that is deliberate: every figure this command produces is in
+its console output and quoted here, the reasoning is in ADR-0024, and the file is five fields
+per post. What is published is the record and not the vectors — 34 posts of 256 numbers is
+about 100 kB of `0.10000000149011612`, which is a file a reader has to take on trust, and the
+values are in the database the ticket asked for them to be in. What the record buys is the
+reuse rule in the open: a reader recomputes every digest from the Corpus and sees which text
+each stored vector belongs to.
+
+**The connection comes from the environment and there is no `--dsn`.** `RFI_DATABASE_URL`, or
+the `PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE` and `PGPASSWORD` variables libpq reads. With
+none of them set the command refuses rather than accepting whatever database libpq would have
+picked for itself, and an argument is a place a password ends up in a shell history.
+`CREATE EXTENSION vector` is per database and is not run here: `docs/pgvector.md` has the
+activation step, and a database without it is refused with the statement to run.
+
+**The index is HNSW, chosen over IVFFlat, and the run says what the planner did with it.**
+IVFFlat will not answer a single query until it has been given training data and its `lists`
+parameter is a guess to be revisited as a corpus grows; HNSW answers from the moment it is
+built. At this Corpus's size the index is 56 kB over 34 rows and the planner will not use it,
+so the command runs `EXPLAIN` on the query it actually issues and prints what came back
+(`56 kB` is this project's own PostgreSQL 18.1 build, so `tests/test_embedding_store.py`
+holds it whenever a database is configured, and a different build will print a different
+figure):
+
+```
+  table     content_embedding (34 rows)
+  index     content_embedding_hnsw
+  indexed   hnsw on embedding vector_cosine_ops, 56.0 kB over 34 rows
+  stored    34 Content Items: 0 computed, 34 reused, 0 removed
+  plan      Seq Scan, not the HNSW index; see the footer for why that is the right answer here
+```
+
+A run that claimed its index was at work over 34 rows would be claiming something no
+`EXPLAIN` agrees with, and the first Corpus to grow past the planner's threshold would
+inherit the claim. The footer says it in as many words, and names what would flip the line.
+`tests/test_embedding_store.py` reads the access method back out of the catalogue rather than
+out of the run's own word for it, and refuses a table carrying an index of another method
+under the name this one would use — `CREATE INDEX IF NOT EXISTS` is satisfied by a *name*, so
+somebody else's B-tree would otherwise be left in place under every figure printed beside it.
+
+**The memory characteristics differ between the free tier and a large corpus, which is the
+reason the type was chosen rather than defaulted.** HNSW builds a multilayer graph, reads it on
+every query, and gets roughly `rows × m` edges, so its cost grows with the Corpus — here 56 kB,
+and on a constrained instance the largest single object a query touches is what decides how
+large a Corpus can be indexed at all. IVFFlat holds `lists` centroids and nothing else, so its
+memory does not grow with the table and neither does it answer: pgvector's own guidance is to
+create that index only after the table has some data, and it suggests about `rows / 1000`
+lists, so at 34 rows the index is one or two partitions holding a handful of vectors each. So
+it is not that HNSW is smaller. It is that HNSW's memory grows with the Corpus and IVFFlat's
+recall collapses, and a Corpus this project can hold in one table is not yet the size at which
+that trade turns. ADR-0024 has the argument, and `halfvec` — which halves the same growing
+quantity — is recorded there as the one to revisit at the size where the graph stops fitting.
+
+**A vector is computed once and reused, decided before any embedding happens.** Every row
+carries the digest of the text it came from, so a rerun over an unchanged Corpus digests each
+post, embeds nothing, and prints `0 computed, 34 reused`. An implementation that embedded
+first and skipped the write would satisfy the rule at the writer rather than at the work. One
+edited post costs one embedding and not thirty-four, and rows for posts the Corpus no longer
+holds are removed rather than left behind to come out of every query as though they were
+posts somebody could read.
+
+**The model is this project's own, and it is published.** `hashed-word-ngrams-v1`, 256
+dimensions, and the digest of the recipe — three facts a reader needs before a stored vector
+means anything, because two models' numbers have no common distance. A feature is each word
+and each pair of adjacent words inside one field; a count is damped as `1 + ln(count)`; each
+feature lands in one of 256 buckets with its sign taken from the same `blake2b` digest; the
+vector is scaled to unit length. `blake2b` rather than Python's built-in `hash()` because that
+one is salted per process and a model producing a different Corpus on every run could not have
+its output committed and held to its bytes.
+
+The recipe digest is in the file and in the column rather than only in the output, because a
+version number is a promise somebody has to keep and the digest is the promise checked:
+editing the recipe without bumping `hashed-word-ngrams-v1` stops the run rather than quietly
+reusing vectors the new recipe would not have produced. Nothing else would notice — the name
+would match, the width would match, and the digests beside the rows would match the text.
+
+**No account is embedded, and that is structural rather than promised.** The Corpus boundary
+exists so the pipeline cannot see Planted Campaign membership (ADR-0008), and a vector built
+out of who posted would put that back through a side door. `tests/test_content_embeddings.py`
+re-reads the whole Corpus with every account renamed, every subreddit swapped and every
+timestamp moved, and requires the vectors and the digests to come back identical; the
+published record holds no account field for one to go in. The command reads the Corpus, the
+database, and nothing else — no membership, no Nuisance Structure, no Public Suffix List —
+which `tests/test_embedding_store.py` checks by watching which files the run opens.
+
+**What the model is and is not, in its own words.** It reads shared vocabulary and nothing
+else, so the closest pair on this Corpus is `syn_p_0012` and `syn_p_0013` at a distance of
+`0.1504` — one Planted Campaign's staggered paraphrase of a single offer, found by vocabulary
+alone, with `syn_p_0014` at `0.2091` from the first of them — and it does not read meaning:
+two posts making the same pitch in different words can come out far apart. That distance is
+only legible against a baseline, and this command does not publish one, because a baseline
+over every pair is quadratic in the database and the figure belongs to the step that uses it.
+Ticket #24 measures it and states its threshold beside it.
+
+**And the links are part of what is embedded, which is a limit rather than a detail.** Two
+posts sharing nothing but a link shortener share the words of that host whichever pitch they
+are making, so a similarity over these vectors is partly a similarity of the hosts two posts
+link, and ADR-0005's own edge is reached again here through the text. It is not independent
+of the edge the grouping already has, which is the concrete reason a similarity may
+corroborate a Campaign Candidate and never establish one.
+`tests/test_content_embeddings.py` demonstrates it with two posts whose only shared vocabulary
+is one host.
+
 ## The base rates
 
 `docs/cafc-base-rates.md` is the report: the base rate of every one of the
@@ -921,8 +1047,18 @@ It ends by checking that the working tree is still clean, which is the check
 that would catch a test writing a generated file instead of comparing it —
 every generated file here is committed, and every one is held to its bytes.
 
+The workflow runs a `pgvector/pgvector:0.8.6-pg18` service container, which is
+the exact extension version `docs/pgvector.md` records for the local install, so
+a run there and a run here are the same extension on the same major version. Its
+`PG*` variables are set for the job, so `tests/test_embedding_store.py` runs
+rather than skipping. With no `PG*` variable and no `RFI_DATABASE_URL` set those
+tests skip, and they say why: a machine with no server still runs the whole
+offline suite, `tests/test_content_embeddings.py`, which holds the model and the
+published file to their bytes without a database anywhere near it.
+
 The suite needs no network: the tests that exercise the two fetching commands
-patch `urllib.request.urlopen` to refuse.
+patch `urllib.request.urlopen` to refuse, and the embedding command reaches the
+network for nothing at all.
 
 ## Where things are decided
 
@@ -960,4 +1096,8 @@ patch `urllib.request.urlopen` to refuse.
   0022 (recovery, the false-grouping rate and queue precision are measured together by
   one command), and 0023 (a Contact Point joins two accounts on the same footing as a
   shared registration, every candidate is labelled with the edge that justified it, and
-  the method's recall bound is published as a count rather than described).
+  the method's recall bound is published as a count rather than described), and 0024 (a
+  Content Embedding is a published lexical model over a post's own text and links and
+  nothing about its account, stored in an HNSW-indexed vector column, reused by the
+  digest of the text behind it, and reported with the plan the planner actually chose
+  rather than the index the project would have liked it to choose).

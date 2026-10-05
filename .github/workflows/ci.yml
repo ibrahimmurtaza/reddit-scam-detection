@@ -20,8 +20,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # The pgvector half of the suite needs a Postgres with the extension activated in it.
+    # `0.8.6-pg18` is the exact version `docs/pgvector.md` records for the local install, so a
+    # run here and a run there are the same extension on the same major version rather than
+    # two things that mostly agree. Without this service container the database tests skip,
+    # which is a green run that checked nothing about the column they are named after.
+    #
+    # The password is written down rather than held in a secret, and this is the one place in
+    # this repository where that is the right answer. It is a throwaway container that lives
+    # for the length of the job and holds nothing but what the run itself writes; a secret
+    # here would have to be configured separately from the repository, and a secret that
+    # nobody has configured fails the whole workflow in a way that looks like something else
+    # went wrong. Every other credential in this project is in the environment.
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg18
+        env:
+          POSTGRES_PASSWORD: ci-throwaway
+          POSTGRES_DB: rfi
+        ports:
+          # Host 5433 to container 5432: the image is `FROM postgres`, so the server inside
+          # listens on the upstream default and 5433 is only the port this workflow publishes
+          # it on. Mapping 5433 to 5433 looks right, is not, and fails every database test
+          # with a connection refused rather than with anything about pgvector.
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d rfi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5433"
+      PGUSER: postgres
+      PGDATABASE: rfi
+      PGPASSWORD: ci-throwaway
+
     steps:
       - uses: actions/checkout@v7
+
+      # The extension is per database and the image does not activate it for you: it is a
+      # plain Postgres image with pgvector's files in it, so `CREATE EXTENSION` is this
+      # workflow's job. One statement, asserted rather than assumed — a run over a database
+      # without the extension would stop with a refusal, and the tests would then fail on
+      # that refusal rather than on anything about the column.
+      - name: Activate pgvector
+        run: |
+          psql -c 'CREATE EXTENSION IF NOT EXISTS vector;' -d rfi
+          psql -tAc "SELECT extversion FROM pg_extension WHERE extname = 'vector'" -d rfi
 
       # 3.13 is pinned in pyproject.toml, and this states it again so the runner
       # cannot quietly satisfy requires-python with something else. uv installs it;

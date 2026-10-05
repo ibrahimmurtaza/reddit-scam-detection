@@ -139,6 +139,20 @@ How many entries of the Review Queue a run prints. Stated in the output header,
 because a queue without its depth says nothing about what was left below it.
 _Avoid_: Limit, cap, cutoff, top-k
 
+**Content Embedding**:
+One fixed-width numeric vector computed from a Content Item's own title, its own
+body and its links, and stored in a `vector` column so a similarity query can be
+asked of it. What it reads is text and links and nothing else — no account, no
+subreddit, no timestamp — because a vector built out of who posted would put
+Planted Campaign membership back into the pipeline through a side door
+(ADR-0008). The model that produced it, its width, and a digest of the recipe
+travel with it, because two models' vectors have no common distance. It is a
+reading of vocabulary, not of meaning, and a distance between two of them is a
+statement about shared words.
+_Avoid_: Vector store (that is the table, not the reading), fingerprint, vector
+hash (the hashing is how features are placed in buckets, and the digest beside a
+stored vector is of the text it came from, not of the vector)
+
 **Policy Score**:
 The additive 0-100 severity shown to a reviewer, computed from weighted Signals
 with weights chosen and published by this project. The weights of the Signals a post
