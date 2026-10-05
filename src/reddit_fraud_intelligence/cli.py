@@ -41,6 +41,7 @@ from reddit_fraud_intelligence.domains import (
     write_post_domains,
 )
 from reddit_fraud_intelligence.evaluation import (
+    DEFAULT_DEPTHS,
     RECOVERY_PATH,
     recover,
     render_report as render_recovery_report,
@@ -104,6 +105,18 @@ DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
 DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
 DEFAULT_REVIEW_DEPTH = 50
+DEFAULT_PRECISION_DEPTHS = ",".join(str(depth) for depth in DEFAULT_DEPTHS)
+
+
+def _parse_depths(value: str) -> tuple[int, ...]:
+    """The review depths, comma-separated, each one named in the report."""
+    try:
+        depths = tuple(int(part.strip()) for part in str(value).split(","))
+    except ValueError:
+        raise SystemExit(f"--depths is a comma-separated list of whole numbers, is {value!r}")
+    if not depths or any(depth < 1 for depth in depths):
+        raise SystemExit(f"--depths has to hold whole numbers of one or more, is {value!r}")
+    return depths
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -178,6 +191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 candidates_path=Path(str(args.candidates)),
                 truth_path=Path(str(args.truth)),
                 nuisance_path=Path(str(args.nuisance)),
+                scores_path=Path(str(args.scores)),
+                depths=_parse_depths(args.depths),
                 recovery_path=Path(str(args.recovery)),
                 report_path=Path(str(args.report)),
             )
@@ -555,9 +570,10 @@ def _parser() -> argparse.ArgumentParser:
             "grouping the system is right to produce and is not a miss against N. "
             "The Nuisance Structure the figure was measured against is read and "
             "printed, because a recovery rate with no nuisance baseline beside it is "
-            "uninterpretable; the rate at which the grouping is wrong is not measured "
-            "yet, and this command says so rather than leaving the figure "
-            "unaccompanied. No person reviewed any of it and no "
+            "uninterpretable; the rate at which the grouping is wrong is measured "
+            "against the same manifest and reported together with the recovery, and "
+            "the Review Queue's precision is measured at several depths beside "
+            "them. No person reviewed any of it and no "
             "figure over the whole Corpus is published (ADR-0004). Reads no network."
         ),
     )
@@ -589,6 +605,24 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "the Nuisance Structure the figure was measured against "
             f"(default: {DEFAULT_NUISANCE_PATH})"
+        ),
+    )
+    recovery.add_argument(
+        "--scores",
+        type=Path,
+        default=DEFAULT_SCORES_PATH,
+        help=(
+            "the Policy Scores the queue precision is measured over "
+            f"(default: {DEFAULT_SCORES_PATH})"
+        ),
+    )
+    recovery.add_argument(
+        "--depths",
+        type=str,
+        default=DEFAULT_PRECISION_DEPTHS,
+        help=(
+            "comma-separated review depths the queue precision is measured at "
+            f"(default: {DEFAULT_PRECISION_DEPTHS})"
         ),
     )
     recovery.add_argument(
@@ -1102,6 +1136,8 @@ def _campaign_recovery(
     candidates_path: Path,
     truth_path: Path,
     nuisance_path: Path,
+    scores_path: Path,
+    depths: Sequence[int],
     recovery_path: Path,
     report_path: Path,
 ) -> int:
@@ -1119,6 +1155,7 @@ def _campaign_recovery(
             "the candidates": candidates_path,
             "the membership": truth_path,
             "the Nuisance Structure": nuisance_path,
+            "the Policy Scores": scores_path,
             "the join": recovery_path,
             "the report": report_path,
         }
@@ -1129,13 +1166,22 @@ def _campaign_recovery(
             "the Campaign Candidates": candidates_path,
             "the Planted Campaign membership": truth_path,
             "the Nuisance Structure": nuisance_path,
+            "the Policy Scores": scores_path,
         },
-        "Run `rfi generate-corpus` and then `rfi campaign-candidates` first; this "
-        "command measures what the grouping published.",
+        "Run `rfi generate-corpus`, then `rfi campaign-candidates`, then "
+        "`rfi policy-score` first; this command measures what the grouping published.",
     )
 
     try:
-        measured = recover(corpus_path, candidates_path, truth_path, nuisance_path, DEFAULT_SEED)
+        measured = recover(
+            corpus_path,
+            candidates_path,
+            truth_path,
+            nuisance_path,
+            DEFAULT_SEED,
+            scores_path,
+            depths,
+        )
     except ValueError as refusal:
         raise SystemExit(refusal) from refusal
     write_recovery(recovery_path, measured.recoveries)

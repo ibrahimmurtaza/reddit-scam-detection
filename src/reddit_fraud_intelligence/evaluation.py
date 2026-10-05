@@ -10,18 +10,22 @@ held, missing, and unexpected named, so `X of N` is a number a reader can take a
 rather than take on trust (ADR-0004).
 
 The two steps are separate commands with a committed file between them. This one reads
-the Corpus, the Planted Campaign membership, the Nuisance Structure manifest, and
-`data/campaigns/campaign-candidates.jsonl`, which `rfi campaign-candidates` wrote; it
-never imports, calls, or re-runs the grouping, and nothing in the grouping path opens
-the membership or the manifest. The boundary is the file, so a reader can check it: run
-the grouping over the Corpus and grep for the membership, and run this command and watch
-it open the file the grouping published (ADR-0018).
+the Corpus, the Planted Campaign membership, the Nuisance Structure manifest,
+`data/campaigns/campaign-candidates.jsonl`, which `rfi campaign-candidates` wrote, and
+`data/signals/policy-scores.jsonl`, which `rfi policy-score` wrote; it never imports,
+calls, or re-runs the grouping, and nothing in the grouping path opens the membership
+or the manifest. The boundary is the file, so a reader can check it: run the grouping
+over the Corpus and grep for the membership, and run this command and watch it open the
+file the grouping published (ADR-0018).
 
 The report names the Nuisance Structure the figure was measured against, because X of N
 over a Corpus that held nothing else would be a figure about a generator that planted two
-campaigns and said so nowhere. The rate at which the grouping is wrong — the other half
-of the claim, and the reason the manifest exists — is not measured here yet, and this
-report says so rather than implying there is no companion to the figure.
+campaigns and said so nowhere. The rate at which the grouping is wrong is measured here
+too, against the same manifest: recovery and false-grouping are reported together, and
+neither appears alone. The Review Queue's precision at several depths is measured here as
+well, because a recovery number without the queue's hit rate beside it is a claim without
+its shape. All three are measured here rather than in a second evaluator command, so the
+membership has one reader (ADR-0022).
 
 It also says what the figure is not. Every label in this Corpus was assigned by the
 generator that wrote the posts, so a share of the posts called right or wrong would
@@ -47,6 +51,7 @@ from reddit_fraud_intelligence.nuisance import (
     NuisanceRecord,
     read_nuisance,
 )
+from reddit_fraud_intelligence.review_queue import QueueEntry, build_queue
 from reddit_fraud_intelligence.truth import PlantedCampaign, read_truth
 
 _HEADING = "Campaign recovery"
@@ -62,6 +67,12 @@ and anything less is reported beside the figure rather than counted into it."""
 # uses; this is the name the report gives it, which is what `composition.py` does with
 # the placements beside `docs/corpus-composition.md`.
 RECOVERY_PATH = "data/evaluation/recovery.jsonl"
+
+# The depths the Review Queue's precision is measured at by default. Named once, in
+# the evaluator that prints them, because a figure carrying a depth and a default
+# that named another one would be a quiet disagreement between the command and the
+# report.
+DEFAULT_DEPTHS: tuple[int, ...] = (5, 10, 20, 50)
 
 # The widest kind name in the enum, so the nuisance table's labels line up whatever a
 # future kind is called rather than reflowing under it.
@@ -174,6 +185,48 @@ class Unmatched:
 
 
 @dataclass(frozen=True, slots=True)
+class FalseGrouping:
+    """One Campaign Candidate that is a false grouping, spelled out.
+
+    The two name lists are the definition made visible: `campaigns` is every
+    Planted Campaign one of its accounts belongs to, and `outside` is every
+    account that belongs to no one. A candidate is false when `campaigns`
+    holds two or more, or `outside` holds anything. `nuisance` is the
+    Nuisance Structure records its accounts appear in, because the rate is
+    only readable against that manifest.
+    """
+
+    candidate_id: str
+    accounts: tuple[str, ...]
+    campaigns: tuple[str, ...]
+    outside: tuple[str, ...]
+    nuisance: tuple[tuple[str, str], ...]  # each as (record_id, kind)
+
+    def why(self) -> str:
+        """The reason a reader can check against the definition."""
+        reasons = []
+        if len(self.campaigns) > 1:
+            reasons.append("holds accounts of more than one Planted Campaign")
+        if self.outside:
+            reasons.append("holds accounts that belong to no Planted Campaign")
+        return "; ".join(reasons)
+
+
+@dataclass(frozen=True, slots=True)
+class QueuePrecision:
+    """Precision at one review depth.
+
+    `true` of the top `of` entries of the Review Queue hold an account of a
+    Planted Campaign. The depth is carried with the figure rather than
+    implied, because a precision number without its depth is not reported.
+    """
+
+    depth: int
+    true: int
+    of: int
+
+
+@dataclass(frozen=True, slots=True)
 class NuisanceCount:
     """One kind of Nuisance Structure, and how much of the Corpus it covers.
 
@@ -210,7 +263,7 @@ class NuisanceBaseline:
 
 @dataclass(frozen=True, slots=True)
 class RecoveryFacts:
-    """What reading the four files establishes, as claims about bytes.
+    """What reading the five files establishes, as claims about bytes.
 
     Every figure the table prints lives here rather than being worked out again where it
     is printed, so the figures block reads one object and the two views cannot disagree
@@ -235,6 +288,8 @@ class RecoveryFacts:
     nuisance_sha256: str
     posts: int
     seed: int
+    scores_path: str
+    scores_sha256: str
     truth_path: str
     truth_sha256: str
 
@@ -254,6 +309,9 @@ class Recovery:
     joined: frozenset[str]
     unmatched: tuple[Unmatched, ...]
     nuisance: NuisanceBaseline
+    false_groupings: tuple[FalseGrouping, ...]
+    precision: tuple[QueuePrecision, ...]
+    depths: tuple[int, ...]
 
     def count(self, outcome: Outcome) -> int:
         return sum(1 for recovery in self.recoveries if recovery.outcome is outcome)
@@ -297,11 +355,13 @@ def recover(
     truth_path: Path,
     nuisance_path: Path,
     seed: int,
+    scores_path: Path,
+    depths: Sequence[int] = DEFAULT_DEPTHS,
 ) -> Recovery:
-    """Read the four files and join the membership against the published candidates.
+    """Read the five files and join the membership against the published candidates.
 
     One call, for the same reason the grouping is one call: the figures, the join, and
-    the evidence the join is read out of are three views of one pass over four files,
+    the evidence the join is read out of are three views of one pass over five files,
     and a caller that read them twice could end up printing one run's figures over
     another's join.
 
@@ -329,6 +389,15 @@ def recover(
         for recovery in recoveries
         for candidate_id in recovery.candidate_ids
     }
+    if not depths:
+        raise ValueError("precision needs at least one review depth to be measured at")
+    for depth in depths:
+        if depth < 1:
+            raise ValueError(
+                f"a review depth of {depth} orders nothing, and an empty queue reads "
+                "like a Corpus with nothing in it worth reviewing"
+            )
+    queue = build_queue(scores_path, candidates_path, max(depths))
     return Recovery(
         facts=_facts(
             corpus_path,
@@ -340,6 +409,7 @@ def recover(
             campaigns,
             manifest,
             seed,
+            scores_path,
         ),
         recoveries=recoveries,
         joined=frozenset(joined),
@@ -349,6 +419,9 @@ def recover(
             if candidate.candidate_id not in joined
         ),
         nuisance=_baseline(nuisance_path, manifest),
+        false_groupings=_false_groupings(candidates, campaigns, manifest),
+        precision=_precision(queue.entries, campaigns, depths),
+        depths=tuple(depths),
     )
 
 
@@ -442,6 +515,82 @@ def _recovery(
     )
 
 
+def _false_groupings(
+    candidates: Sequence[CampaignCandidate],
+    campaigns: Sequence[PlantedCampaign],
+    manifest: Sequence[NuisanceRecord],
+) -> tuple[FalseGrouping, ...]:
+    """Every candidate that is a false grouping, in candidate order.
+
+    The rule, stated plainly: a grouping is false when its accounts belong to
+    more than one Planted Campaign, or when any of them belongs to none. The
+    two cases together cover accounts grouped together that belong to
+    different Planted Campaigns, or to none — the definition this report
+    states in its own words — and a candidate whose accounts all sit in one
+    campaign is a true grouping whatever the membership looks like.
+    """
+    owner: dict[str, set[str]] = {}
+    for campaign in campaigns:
+        for account in campaign.accounts:
+            owner.setdefault(account, set()).add(campaign.campaign_id)
+    nuisance_of: dict[str, set[tuple[str, str]]] = {}
+    for record in manifest:
+        for account in record.accounts:
+            nuisance_of.setdefault(account, set()).add(
+                (record.nuisance_id, record.kind.value)
+            )
+
+    false = []
+    for candidate in candidates:
+        campaign_ids = sorted(
+            {
+                campaign_id
+                for account in candidate.accounts
+                if account in owner
+                for campaign_id in owner[account]
+            }
+        )
+        outside = sorted(account for account in candidate.accounts if account not in owner)
+        if len(campaign_ids) > 1 or outside:
+            false.append(
+                FalseGrouping(
+                    candidate_id=candidate.candidate_id,
+                    accounts=tuple(sorted(candidate.accounts)),
+                    campaigns=tuple(campaign_ids),
+                    outside=tuple(outside),
+                    nuisance=tuple(
+                        sorted(
+                            {
+                                held
+                                for account in candidate.accounts
+                                for held in nuisance_of.get(account, ())
+                            }
+                        )
+                    ),
+                )
+            )
+    return tuple(false)
+
+
+def _precision(
+    entries: Sequence[QueueEntry], campaigns: Sequence[PlantedCampaign], depths: Sequence[int]
+) -> tuple[QueuePrecision, ...]:
+    """True findings of the top entries, per depth, of the published queue order."""
+    campaign_accounts = {account for campaign in campaigns for account in campaign.accounts}
+    return tuple(
+        QueuePrecision(
+            depth=depth,
+            true=sum(
+                1
+                for entry in entries[:depth]
+                if entry.score.account in campaign_accounts
+            ),
+            of=len(entries[:depth]),
+        )
+        for depth in depths
+    )
+
+
 def _unmatched(candidate: CampaignCandidate) -> Unmatched:
     return Unmatched(
         candidate_id=candidate.candidate_id,
@@ -509,8 +658,9 @@ def _facts(
     campaigns: Sequence[PlantedCampaign],
     manifest: Sequence[NuisanceRecord],
     seed: int,
+    scores_path: Path,
 ) -> RecoveryFacts:
-    """Every figure about the four files the table prints, computed rather than
+    """Every figure about the five files the table prints, computed rather than
     transcribed, so a figure and the bytes behind it cannot drift apart."""
     return RecoveryFacts(
         accounts=len({item.account for item in items}),
@@ -530,6 +680,8 @@ def _facts(
         nuisance_sha256=hashlib.sha256(nuisance_path.read_bytes()).hexdigest(),
         posts=len(items),
         seed=seed,
+        scores_path=scores_path.as_posix(),
+        scores_sha256=hashlib.sha256(scores_path.read_bytes()).hexdigest(),
         truth_path=truth_path.as_posix(),
         truth_sha256=hashlib.sha256(truth_path.read_bytes()).hexdigest(),
     )
@@ -583,6 +735,8 @@ def render_table(recovery: Recovery) -> str:
         _figures(recovery),
         _campaigns_table(recovery),
         _unmatched_table(recovery),
+        _false_groupings_table(recovery),
+        _precision_table(recovery),
         _nuisance_table(recovery),
         _footer(recovery),
     )
@@ -629,6 +783,15 @@ def _figures(recovery: Recovery) -> str:
         ),
         ("missed", f"{recovery.missed} Planted Campaigns"),
         (
+            "false groupings",
+            f"{len(recovery.false_groupings)} of {facts.candidates} Campaign Candidates, "
+            "named below with what joins them",
+        ),
+        (
+            "precision",
+            f"the Review Queue's entries at depths {_depths(recovery)}, below",
+        ),
+        (
             "unmatched",
             f"{len(recovery.unmatched)} of {recovery.facts.candidates} candidates, none of "
             f"them a Planted Campaign, "
@@ -638,6 +801,38 @@ def _figures(recovery: Recovery) -> str:
     )
     width = max(len(name) for name, _ in fields_out)
     return "\n".join(f"  {name.ljust(width)}  {value}" for name, value in fields_out)
+
+
+def _false_groupings_table(recovery: Recovery) -> str:
+    """Every Campaign Candidate that is a false grouping, and what joins it.
+
+    The rate beside the figure is only checkable if each one is named with the
+    accounts and the Nuisance Structure records that make it one, because the
+    definition is a rule about accounts rather than about candidates.
+    """
+    if not recovery.false_groupings:
+        return (
+            "false groupings  no Campaign Candidate; every grouping holds the\n"
+            "accounts of one Planted Campaign and no other"
+        )
+    lines = [
+        f"false groupings  {len(recovery.false_groupings)} of "
+        f"{recovery.facts.candidates} Campaign Candidates hold accounts that belong to",
+        "  different Planted Campaigns, or to none.",
+    ]
+    for grouping in recovery.false_groupings:
+        lines.append(
+            f"  {grouping.candidate_id}  {_count(len(grouping.accounts), 'account')}  "
+            f"{grouping.why()}"
+        )
+        for record_id, kind in grouping.nuisance:
+            lines.append(f"    {record_id} ({kind})")
+    return "\n".join(lines)
+
+
+def _depths(recovery: Recovery) -> str:
+    """The depths the precision figures were measured at, named in the header."""
+    return ", ".join(str(depth) for depth in recovery.depths)
 
 
 def _count(number: int, noun: str) -> str:
@@ -741,6 +936,20 @@ def _unmatched_table(recovery: Recovery) -> str:
     return "\n".join(lines)
 
 
+def _precision_table(recovery: Recovery) -> str:
+    """Precision at each depth, one row per depth, so the shape shows."""
+    rows = [
+        (str(measure.depth), str(measure.true), str(measure.of))
+        for measure in recovery.precision
+    ]
+    table = _table(("depth", "true", "of"), rows)
+    return (
+        "precision in the Review Queue, at several depths\n\n"
+        "True findings of the top entries. A precision number is not printed\n"
+        "without its depth.\n\n" + table
+    )
+
+
 def _nuisance_table(recovery: Recovery) -> str:
     """The Nuisance Structure the figure was measured against, counted by kind.
 
@@ -809,9 +1018,11 @@ statement about planted structure in a synthetic Corpus, and it is a lower bound
 The Nuisance Structure above is the other half of the claim.
 {records_line}
 {candidates_line}
-The rate at which the grouping is wrong is the companion figure this one is missing, and
-it is not in this output yet, which is why the baseline is printed here rather than left
-to be found.
+The false-grouping rate above is measured against the same Nuisance Structure, and both
+of those numbers are why the baseline is printed here rather than left to be found. Of
+the two rates on this page, recovery and precision, the lower of the two numbers is the
+more trustworthy, and this is deliberate: either one can flatter the system while the
+other quietly fails.
 
 Nothing in this command reads anything the grouping reads, and nothing in the grouping
 reads the membership or the manifest: this is a separate command over the candidates file
@@ -819,7 +1030,7 @@ named above, which `rfi campaign-candidates` wrote (ADR-0018). The digests above
 a reader would check those files against."""
 
 def render_report(recovery: Recovery) -> str:
-    """The reader-facing page, generated from the four files the run read.
+    """The reader-facing page, generated from the five files the run read.
 
     Written for a reader who has to see the join rather than the total: every campaign
     gets a row with its outcome, every outcome that is not a recovery gets its join
@@ -829,7 +1040,7 @@ def render_report(recovery: Recovery) -> str:
     from the files — nothing about which campaign was recovered is written by hand,
     because the page is generated and a sentence that was true of one Corpus would
     quietly be untrue of the next. The join is named by the path the command writes by
-    default, so two runs over the same four files produce the same bytes whichever
+    default, so two runs over the same five files produce the same bytes whichever
     directory they write to.
     """
     facts = recovery.facts
@@ -866,13 +1077,24 @@ def render_report(recovery: Recovery) -> str:
         f"The largest piece of it is `{widest.kind.value}`, holding "
         f"{len(widest.accounts)} accounts across {_count(widest.records, 'record')}."
     )
+    false_count = len(recovery.false_groupings)
+    false_rows = "\n".join(
+        f"| `{grouping.candidate_id}` | {len(grouping.accounts)} | {grouping.why()} | "
+        f"{', '.join(f'{record_id} ({kind})' for record_id, kind in grouping.nuisance) or '—'} |"
+        for grouping in recovery.false_groupings
+    ) or "| — | — | — | — |"
+    precision_rows = "\n".join(
+        f"| {measure.depth} | {measure.true} | {measure.of} |"
+        for measure in recovery.precision
+    )
 
     return f"""# Recovery of Planted Campaigns
 
 Generated by `rfi campaign-recovery` from the committed Corpus, the candidates
-`rfi campaign-candidates` published, the Planted Campaign membership, and the Nuisance
-Structure manifest. Do not edit it by hand — a test holds this file to what the command
-produces, and re-running the command rewrites it byte for byte.
+`rfi campaign-candidates` published, the Planted Campaign membership, the Nuisance
+Structure manifest, and the Policy Scores `rfi policy-score` published. Do not edit it
+by hand — a test holds this file to what the command produces, and re-running the
+command rewrites it byte for byte.
 
 ## The figure
 
@@ -908,9 +1130,40 @@ puts accounts in a Campaign Candidate when they share a registrable domain, and 
 business whose three accounts share its own domain is a grouping the system is *right*
 to produce — the Corpus plants exactly that as a decoy account cluster. Counting it
 against N would report correct behaviour as a failure and would put N above the number
-of things that were planted. The rate at which the grouping is wrong is measured against
-the same manifest, and it is not in this page: it is the companion figure this one is
-missing.
+of things that were planted. The rate at which the grouping is wrong is reported below:
+it is counted against the same manifest these candidates were measured against.
+
+## False groupings
+
+A false grouping is a Campaign Candidate whose accounts belong to different Planted
+Campaigns, or to none. Stated as a rule rather than left to be inferred from the
+figure, so a reader can check the number against the sentence rather than the other
+way round.
+
+**{false_count} of {facts.candidates} Campaign Candidates are false groupings.**
+Measured against the Nuisance Structure in `{facts.nuisance_path}`, because a
+false-grouping rate over a clean sweep is a number nobody can falsify (ADR-0022).
+
+| Candidate | Accounts | Why it is a false grouping | Nuisance records |
+| --- | ---: | --- | --- |
+{false_rows}
+
+## Precision in the Review Queue at several depths
+
+Precision at a depth is the share of the top entries of the Review Queue whose posts
+hold an account of a Planted Campaign. Several depths rather than one, so the shape
+of the trade-off is visible rather than a single number.
+
+| Depth | True findings | Entries |
+| ---: | ---: | ---: |
+{precision_rows}
+
+Measured at depths {_depths(recovery)}, against the Planted Campaign membership by
+this command, not by a person reviewing the queue (ADR-0022). Of the two rates on this
+page — recovery and precision — the lower of the two numbers is the more trustworthy,
+and this is deliberate: either one can flatter the system while the other quietly
+fails. Recovery and the false-grouping rate are reported together on this page;
+neither number appears alone.
 
 ## What it was measured against
 
@@ -942,10 +1195,11 @@ finding. What was measured is what the generator planted, which is membership by
 construction rather than a judgement anybody made about the content.
 
 The measurement is a separate command over a separate file. This one reads
-`{facts.candidates_path}`, which `rfi campaign-candidates` wrote, and opens neither the
-Public Suffix List nor the shared-infrastructure list because it does no grouping of its
-own. Nothing in the grouping path reads the membership or the manifest, so the two steps
-cannot be reordered into one process that has both (ADR-0008, ADR-0018).
+`{facts.candidates_path}`, which `rfi campaign-candidates` wrote, and the Policy
+Scores `{facts.scores_path}`, and opens neither the Public Suffix List nor the
+shared-infrastructure list because it does no grouping of its own. Nothing in the
+grouping path reads the membership or the manifest, so the two steps cannot be
+reordered into one process that has both (ADR-0008, ADR-0018).
 
 ## What this number cannot say
 
@@ -963,21 +1217,22 @@ construction, since nothing links its accounts but the registrations they share.
 measured this way is a statement about planted structure in a synthetic Corpus, and it is
 not an estimate of fraud found in the world.
 
-**The figure has no companion yet.** Recovery alone can be produced by a grouping that
-also merges unrelated accounts, so it is only half the claim: the rate of groupings that
-are not recoveries, measured against the manifest above, is not in this page, and a
-reader should treat this number as uninterpretable until it is.
+**Recovery and the false-grouping rate are measured together.** Recovery alone can be
+produced by a grouping that also merges unrelated accounts, so the rate of false
+groupings above is the companion this figure has always needed: the two numbers are
+reported together, and neither appears alone.
 
 ## Reproducing it
 
 `uv run rfi generate-corpus --seed {facts.seed}` writes `{facts.corpus_path}`,
 `{facts.truth_path}`, `{facts.nuisance_path}` and the shared-infrastructure list again
 byte for byte; `uv run rfi campaign-candidates` writes `{facts.candidates_path}` again
-byte for byte; this command writes `{RECOVERY_PATH}` and this page. Nothing in that chain
-reads a seed at run time — the seed decides what was generated, and it is printed here so
-a reader can regenerate rather than take the claim on trust.
+byte for byte; `uv run rfi policy-score` writes `{facts.scores_path}` again byte for
+byte; this command writes `{RECOVERY_PATH}` and this page. Nothing in that chain reads
+a seed at run time — the seed decides what was generated, and it is printed here so a
+reader can regenerate rather than take the claim on trust.
 
-The digests below are what the four files the figure was measured against were when
+The digests below are what the five files the figure was measured against were when
 this page was written:
 
 | File | SHA-256 |
@@ -986,6 +1241,7 @@ this page was written:
 | `{facts.candidates_path}` | `{facts.candidates_sha256}` |
 | `{facts.truth_path}` | `{facts.truth_sha256}` |
 | `{facts.nuisance_path}` | `{facts.nuisance_sha256}` |
+| `{facts.scores_path}` | `{facts.scores_sha256}` |
 """
 
 

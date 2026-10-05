@@ -128,9 +128,10 @@ Categories, and the figure is about what this Corpus's postings say)
 
 **Review Queue**:
 The ranked list of content items a reviewer works through, ordered by Triage
-Priority. The headline metric will be the fraction of true findings within its
-top D entries — precision at a stated depth, never accuracy — and is not
-computed yet: what ships today is the ranking and the arithmetic behind it.
+Priority. The headline metric is the fraction of true findings within its
+top D entries — precision at a stated depth, never accuracy — published by
+`rfi campaign-recovery` at several depths, alongside the recovery and the
+false-grouping rate.
 _Avoid_: Inbox, dashboard, results
 
 **Review depth**:
