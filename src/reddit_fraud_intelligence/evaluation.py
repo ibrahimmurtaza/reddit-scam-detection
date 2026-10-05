@@ -981,9 +981,9 @@ def _bound(recovery: Recovery) -> str:
         *wrap(
             f"{count} of {campaigns} Planted Campaigns have nothing inside their own "
             "membership that reaches a Campaign Candidate, so no edge this method rests "
-            "on can hold them: the figure above sits under a ceiling of "
-            f"{recovery.ceiling} of {campaigns}, which is a limit on the method rather "
-            "than a prediction of the run",
+            f"on can hold {_plural(count, 'it', 'them')}: the figure above sits under a "
+            f"ceiling of {recovery.ceiling} of {campaigns}, which is a limit on the "
+            "method rather than a prediction of the run",
             indent=2,
         ),
     ]
@@ -1001,13 +1001,13 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun if number == 1 else f"{noun}s"}"
 
 
-def _verb(number: int) -> str:
-    """The verb that agrees with a count: one candidate reaches, none reach."""
-    return "reaches" if number == 1 else "reach"
-
-
 def _plural(number: int, one: str, many: str) -> str:
-    """The word that agrees with a count: one campaign shares, none share."""
+    """The word that agrees with a count: one campaign shares, none share.
+
+    The one agreement helper, so a console line and a report line naming the same figure
+    cannot disagree about the word that goes with it — which is how the two views of the
+    recall bound came to saying "them" and "it" for the same count of one.
+    """
     return one if number == 1 else many
 
 
@@ -1088,9 +1088,10 @@ def _unmatched_table(recovery: Recovery) -> str:
     if not recovery.unmatched:
         return "unmatched  no candidate; every one of them reached a Planted Campaign"
 
+    unmatched = len(recovery.unmatched)
     heading = (
         f"unmatched  {_count(recovery.facts.candidates, 'candidate')} published, of which "
-        f"{len(recovery.unmatched)} {_verb(len(recovery.unmatched))} no Planted Campaign."
+        f"{unmatched} {_plural(unmatched, 'reaches', 'reach')} no Planted Campaign."
     )
     lines = [heading, "  not one of them is counted against the figure above"]
     for candidate in recovery.unmatched:
@@ -1158,9 +1159,10 @@ def _footer(recovery: Recovery) -> str:
         f"The manifest holds {facts.nuisance_records} records over "
         f"{facts.nuisance_kinds} kinds."
     )
+    unmatched = len(recovery.unmatched)
     candidates_line = (
-        f"Of the {facts.candidates} candidates, {len(recovery.unmatched)} "
-        f"{_verb(len(recovery.unmatched))} no Planted Campaign."
+        f"Of the {facts.candidates} candidates, {unmatched} "
+        f"{_plural(unmatched, 'reaches', 'reach')} no Planted Campaign."
     )
     return f"""\
 Measured by `rfi campaign-recovery`, against the Planted Campaign membership in
@@ -1529,9 +1531,10 @@ def _unmatched_report(recovery: Recovery) -> str:
     if not recovery.unmatched:
         return "Every Campaign Candidate this run produced reached a Planted Campaign."
 
+    unmatched = len(recovery.unmatched)
     lines = [
         f"Of the {_count(recovery.facts.candidates, 'candidate')} published, "
-        f"{len(recovery.unmatched)} {_verb(len(recovery.unmatched))} no account of any "
+        f"{unmatched} {_plural(unmatched, 'reaches', 'reach')} no account of any "
         "Planted Campaign."
     ]
     lines.append(

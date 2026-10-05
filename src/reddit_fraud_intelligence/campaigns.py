@@ -352,7 +352,7 @@ def group(corpus_path: Path, list_path: Path, shared_path: Path) -> Grouping:
             list_path,
             rows,
             suffixes,
-            kept.points,
+            points,
             candidates,
             shared_filter.silenced,
         ),
@@ -555,9 +555,13 @@ def _facts(
     its posts was sitting in a candidate, and the four figures would no longer add up
     to the Corpus's accounts.
 
-    `points` is the graph the filter left standing, so an account whose only Contact
-    Point sat under a withheld registration counts as reaching nothing rather than
-    reaching something: the figure has to describe what the grouping could use.
+    `points` is every Contact Point the Corpus published rather than the graph the
+    filter left standing, because "reaches nothing" is a claim about the Corpus and not
+    about the filter. An account whose only Contact Point sat under a withheld
+    registration does reach something, and what the filter did about it is `silenced`'s
+    to say, which is why that is passed in rather than worked out here. Reading the kept
+    graph instead would put such an account in two of the four lines at once, and the
+    four would then describe more accounts than the Corpus holds.
 
     `silenced` is the filter's count and not this function's, so it is passed in rather
     than worked out again: two ways of asking whether an account reached anything
