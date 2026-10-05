@@ -6,11 +6,12 @@ committed Corpus, the resolved links, the generated CAFC report, the generated
 registrable-domain report, the generated Contact Points and their report, the
 generated Scam Category projection, the generated Corpus composition and its
 report, the generated
-Campaign Candidates, the generated Policy Scores, and the generated recovery
+Campaign Candidates, the generated Policy Scores, the generated Content
+Embedding records, and the generated recovery
 report and its join — the project's own prose
 wherever it lands. Not scanned: this
 directory, which is where the phrases live; `data/cafc/base_rates.jsonl`, which holds
-CAFC's category names and not ours; and `data/public-suffix/public_suffix_list.dat`,
+CAFC's category names and not ours; `data/public-suffix/public_suffix_list.dat`,
 which is publicsuffix.org's text and not the project's.
 
 The list is deliberately phrases rather than bare words. "Feature", "adapter",
@@ -76,6 +77,7 @@ def scanned() -> list[Path]:
         REPO_ROOT / "data" / "campaigns" / "campaign-candidates.jsonl",
         REPO_ROOT / "data" / "contacts" / "post-contacts.jsonl",
         REPO_ROOT / "data" / "domains" / "post-domains.jsonl",
+        REPO_ROOT / "data" / "embeddings" / "content-embeddings.jsonl",
         REPO_ROOT / "data" / "evaluation" / "recovery.jsonl",
         REPO_ROOT / "data" / "infrastructure" / "shared-hosts.jsonl",
         REPO_ROOT / "data" / "signals" / "policy-scores.jsonl",

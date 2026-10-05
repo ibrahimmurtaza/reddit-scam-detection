@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Ranks Reddit content for reviewer attention and links suspicious content to shared infrastructure"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
-dependencies = []
+# One dependency, and it is the first. It is here because ticket #21 needs a place to put
+# a vector: pgvector is a Postgres extension, so reaching it means a Postgres driver. The
+# driver is the whole of it — the embedding model below is this project's own and needs
+# no wheel, and that is deliberate (ADR-0024).
+dependencies = ["psycopg[binary]>=3.3"]
 
 [project.scripts]
 rfi = "reddit_fraud_intelligence.cli:main"

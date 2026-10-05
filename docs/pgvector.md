@@ -1,8 +1,8 @@
 # pgvector
 
 `pgvector` provides the `vector` type and the HNSW and IVFFlat access methods.
-The project uses it to store sentence embeddings alongside Corpus content
-(see issue #21).
+The project uses it to store Content Embeddings alongside Corpus content
+(`rfi content-embeddings`, ADR-0024).
 
 ## Installed version
 
@@ -71,12 +71,41 @@ script, so the script never handles a database password. For a new database:
 CREATE EXTENSION vector;
 ```
 
+`rfi content-embeddings` does not run it: it is per database, it needs a role
+permitted to create one, and it is a persistent change to the database rather
+than to a row in it. A database without the extension is refused, with that
+statement in the message.
+
+The project database, which `content_embedding` lives in:
+
+```sql
+CREATE DATABASE rfi;
+\c rfi
+CREATE EXTENSION vector;
+```
+
 Check what a server offers without activating anything:
 
 ```sql
 SELECT name, default_version FROM pg_available_extensions WHERE name = 'vector';
 SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';
 ```
+
+## Running against it
+
+The connection comes from the environment and never from an argument, because
+an argument is a place a password ends up in a shell history and in a CI log:
+
+```powershell
+$env:PGHOST="localhost"; $env:PGPORT="5433"
+$env:PGUSER="postgres"; $env:PGDATABASE="rfi"
+$env:PGPASSWORD="..."     # never committed
+uv run rfi content-embeddings
+```
+
+`RFI_DATABASE_URL` is read first if it is set, so a hosted database is one
+variable rather than five. With neither it nor any `PG*` variable set the
+command refuses rather than letting libpq pick a database by itself.
 
 ## Verifying a fresh install
 
@@ -116,5 +145,24 @@ SELECT label FROM items ORDER BY embedding <=> '[1,2,3]' LIMIT 2;
 ```
 
 Expect `Index Scan using items_hnsw`. With `enable_seqscan` off this proves the
-index is usable; on a table this small Postgres would prefer a scan anyway, so
-the setting is load-bearing.
+index is *usable*; on a table this small Postgres would prefer a scan anyway, so
+the setting is load-bearing. That distinction is the whole reason
+`rfi content-embeddings` reports the plan the planner chose rather than claiming
+its index is at work: forcing the planner's hand and printing the result would be
+printing a figure the run had arranged (ADR-0024).
+
+## What the project chose, and where it is written down
+
+| | |
+| --- | --- |
+| Access method | `hnsw`, over `ivfflat` |
+| Operator class | `vector_cosine_ops` |
+| Column | `vector(256)`, and the width is the embedding model's |
+| Index name | derived from the table's, so the name created and the name checked cannot drift |
+
+The reasoning, the alternatives, and the memory figures on both sides — HNSW's resident graph
+against IVFFlat's fixed set of centroids, and why a free tier and a large corpus disagree
+about which of those is the constraint — are in
+`docs/adr/0024-a-content-embedding-is-a-published-lexical-model-over-text-and-links.md`.
+On the committed Corpus the index is about 56 kB over 34 rows and the planner prefers a
+sequential scan, which the command prints and explains rather than overstates.

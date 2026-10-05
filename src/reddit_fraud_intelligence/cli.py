@@ -48,6 +48,12 @@ from reddit_fraud_intelligence.evaluation import (
     render_table as render_recovery_table,
     write_recovery,
 )
+from reddit_fraud_intelligence.embeddings import (
+    embed_corpus,
+    read_content_records,
+    render_table as render_embeddings_table,
+    write_content_records,
+)
 from reddit_fraud_intelligence.generator import (
     corpus_items,
     nuisance_records,
@@ -104,6 +110,8 @@ DEFAULT_COMPOSITION_PATH = Path("data/corpus/composition.jsonl")
 DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
 DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
+DEFAULT_EMBEDDINGS_PATH = Path("data/embeddings/content-embeddings.jsonl")
+DEFAULT_EMBEDDING_TABLE = "content_embedding"
 DEFAULT_REVIEW_DEPTH = 50
 DEFAULT_PRECISION_DEPTHS = ",".join(str(depth) for depth in DEFAULT_DEPTHS)
 
@@ -209,6 +217,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 scores_path=Path(str(args.scores)),
                 candidates_path=Path(str(args.candidates)),
                 depth=int(args.depth),
+            )
+        case "content-embeddings":
+            return _content_embeddings(
+                corpus_path=Path(str(args.corpus)),
+                embeddings_path=Path(str(args.embeddings)),
+                table=str(args.table),
+                replace=bool(args.replace),
             )
         case _:
             parser.error(f"unknown command: {args.command}")
@@ -775,6 +790,63 @@ def _parser() -> argparse.ArgumentParser:
         default=DEFAULT_COMPOSITION_REPORT_PATH,
         help=f"where to write the report (default: {DEFAULT_COMPOSITION_REPORT_PATH})",
     )
+
+    embeddings = commands.add_parser(
+        "content-embeddings",
+        help="embed every Content Item's text and links in pgvector, and index it",
+        description=(
+            "The substrate the content-similarity corroboration is built on: one sentence "
+            "embedding per Content Item, in a vector column under a cosine index, so a "
+            "similarity query can be asked of it. What is embedded is the post's own title, "
+            "its own body and its links, and nothing about its account - the Corpus file is "
+            "the boundary this project measures itself against, and a vector built out of "
+            "who posted would put Planted Campaign membership back through a side door "
+            "(ADR-0008). The model is this project's own and it is published: its name, its "
+            "dimensionality and a digest of the recipe travel on every row and in the column, "
+            "because a vector's comparability is a property of that vector and a table "
+            "holding two models would hold nothing. A vector is computed once and reused - the "
+            "SHA-256 of the text it came from is stored beside it, and a rerun over an "
+            "unchanged Corpus embeds nothing and prints that it computed nothing. HNSW is "
+            "chosen over IVFFlat because it answers without training data and without a "
+            "parameter that has to be revisited as the Corpus grows, and the output reports "
+            "what the planner actually chose rather than claiming the index is at work over a "
+            "table this small. Nothing here groups, corroborates or decides anything "
+            "(ADR-0024). Reads no network."
+        ),
+    )
+    embeddings.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    embeddings.add_argument(
+        "--embeddings",
+        type=Path,
+        default=DEFAULT_EMBEDDINGS_PATH,
+        help=(
+            "where to write the record of what is stored: which post, which model, how wide, "
+            f"and the digest of its text (default: {DEFAULT_EMBEDDINGS_PATH})"
+        ),
+    )
+    embeddings.add_argument(
+        "--table",
+        type=str,
+        default=DEFAULT_EMBEDDING_TABLE,
+        help=(
+            "the table to store the vectors in, which is where another model's vectors would "
+            f"go rather than this one's (default: {DEFAULT_EMBEDDING_TABLE})"
+        ),
+    )
+    embeddings.add_argument(
+        "--replace",
+        action="store_true",
+        help=(
+            "treat the named table as disposable: rows for Content Items this Corpus does "
+            "not hold are removed even if the two share no Content Item, which is what a "
+            "rerun against a rebuilt Corpus wants and what a mistyped --corpus must not do"
+        ),
+    )
     return parser
 
 
@@ -1250,4 +1322,47 @@ def _review_queue(*, scores_path: Path, candidates_path: Path, depth: int) -> in
         raise SystemExit(refusal) from refusal
 
     print(render_queue(queue))
+    return 0
+
+
+def _content_embeddings(
+    *, corpus_path: Path, embeddings_path: Path, table: str, replace: bool = False
+) -> int:
+    """Embed every Content Item, store the vectors, and publish the record of what is stored.
+
+    The record is written and then read back before the run reports success, because a file
+    this project publishes and cannot read is a file nothing will ever hold to its bytes: the
+    vocabulary check in `read_content_records` is the only thing standing between a future
+    field — a Planted Campaign's identifier above all — and a file nobody examines (ADR-0008).
+
+    The vectors are not read back and are not published. They live in the table, which is
+    where the ticket asked for them, and what is published is which post each stored vector
+    belongs to and under which model.
+    """
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the record": embeddings_path,
+        }
+    )
+    _require_present(
+        {"the Corpus": corpus_path},
+        "Run `rfi generate-corpus` first; this command reads no published list.",
+    )
+
+    try:
+        embedded = embed_corpus(corpus_path, table, replace=replace)
+        write_content_records(embeddings_path, embedded.records)
+        published = read_content_records(embeddings_path)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+    if published != embedded.records:
+        raise SystemExit(
+            f"{embeddings_path.as_posix()} does not read back as the {len(published)} records "
+            "this run stored, so it is not published"
+        )
+
+    print(render_embeddings_table(embedded))
+    print(f"record         {embeddings_path}")
+    print(f"vectors        in the table {table}")
     return 0
