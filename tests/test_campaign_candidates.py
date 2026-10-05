@@ -672,6 +672,54 @@ def test_a_candidate_joined_on_a_contact_point_alone_is_labelled_as_the_weaker_e
     assert "weaker of the two readings" not in both_block
 
 
+def test_an_account_reaching_only_a_withheld_contact_point_is_silenced_not_unreachable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The four figures partition the Corpus, and a withheld Contact Point does not break it.
+
+    An account whose only reach is an address at a withheld registration reaches
+    something, and everything it reaches is known-shared, so it belongs to the line that
+    counts what the filter silenced. Counting it as `unreachable` as well would put one
+    account in two of the four lines, and the four would then describe more accounts than
+    the Corpus holds — which is the whole claim of the partition, and a claim about
+    addition that a reader checks by adding.
+
+    The case is worth its own Corpus because the shape it needs is narrow and the shipped
+    one does not have it: it takes two accounts sharing one address under a withheld
+    registration and no registration at all, and no email in the shipped Corpus sits
+    under a host the filter withholds.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9091",
+                "syn_pastewriter_9091",
+                body="the intake is desk@pastevault.example",
+            ),
+            post(
+                "syn_p_9092",
+                "syn_pastewriter_9092",
+                body="the intake is desk@pastevault.example",
+            ),
+        ),
+    )
+
+    _, printed = run(tmp_path, corpus, capsys=capsys)
+
+    assert "2 accounts" in printed
+    assert (
+        "grouped       0 accounts in 0 candidates, on 0 registrations and 0 Contact Points"
+        in printed
+    )
+    assert (
+        "silenced      2 accounts reaching nothing but known-shared infrastructure"
+        in printed
+    )
+    assert "unreachable   0 accounts reaching nothing this grouping can use" in printed
+    assert "alone         0 accounts reaching something nobody else reaches" in printed
+
+
 def test_a_contact_point_at_a_withheld_registration_joins_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

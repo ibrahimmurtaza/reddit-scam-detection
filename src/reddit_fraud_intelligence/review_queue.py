@@ -251,7 +251,7 @@ def _opening(queue: ReviewQueue) -> str:
         else f"Review depth {queue.depth} of the {facts.posts} posts {facts.scores_path} "
         "holds, so nothing was cut."
     )
-    return "\n".join([*wrap(cut, indent=0, width=100), _SUBHEADING])
+    return "\n".join([*wrap(cut, indent=0, width=_WIDTH), _SUBHEADING])
 
 
 def _figures(queue: ReviewQueue) -> str:
@@ -326,10 +326,11 @@ def _row(cells: Sequence[str], widths: Sequence[int]) -> str:
 def _block(rank: int, entry: QueueEntry) -> str:
     """One entry: every Signal, the weight it was earned at, and what fired it.
 
-The last line of the arithmetic is the total against the published total, so the
-    division that produced the score on the heading line is written out rather than left to the
-    reader. The candidates come under it with the shared thing each is joined on, because an
-    identifier on its own says nothing to somebody who has not opened the candidates file.
+    The last line of the arithmetic is the total against the published total, so the
+    division that produced the score on the heading line is written out rather than left
+    to the reader. The candidates come under it with the shared thing each is joined on,
+    because an identifier on its own says nothing to somebody who has not opened the
+    candidates file.
     """
     score = entry.score
     lines = [f"{rank}  {score.post_id}  {score.account}  {score.score}/100"]

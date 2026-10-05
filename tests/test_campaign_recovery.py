@@ -555,6 +555,7 @@ def rotator(
     tmp_path: Path,
     *,
     points: Iterable[str] = (),
+    domains: Iterable[str] = ("rotator-free.example",),
 ) -> tuple[Path, Path, Path]:
     """Two campaigns, one of which shares nothing with itself and cannot be reached.
 
@@ -563,6 +564,10 @@ def rotator(
     edge this method rests on joins them however hard the grouping tries. Written out
     rather than generated because the point of the test is the shape of the bound and a
     generator would be the wrong place to plant it.
+
+    `domains` and `points` both default to something, so a caller wanting a candidate on
+    one edge alone has to pass the other as empty rather than inherit both and claim the
+    figure it sees came from the edge it meant to exercise.
     """
     corpus = corpus_of(
         tmp_path,
@@ -578,7 +583,7 @@ def rotator(
                 "cc-01",
                 ("syn_alpha_0001", "syn_beta_0002"),
                 ("syn_p_0001", "syn_p_0002"),
-                "rotator-free.example",
+                *domains,
                 points=points,
             )
         ],
@@ -646,12 +651,18 @@ def test_a_campaign_shared_on_a_contact_point_alone_is_outside_the_bound(
 ) -> None:
     """The bound counts what neither edge reaches, so one edge is enough to escape it.
 
-    The same Corpus with the shared campaign resting on a Telegram handle rather than on
-    a registration. Nothing about the bound changes: the campaign is still reachable, and
-    the point of the test is that a reader checking the bound is not asked to know which
-    edge did the work.
+    The same Corpus with the shared campaign resting on a Telegram handle and on no
+    registration at all. Nothing about the bound changes: the campaign is still reachable,
+    and the point of the test is that a reader checking the bound is not asked to know
+    which edge did the work.
+
+    The line the two edges are named on is asserted as well as the bound, because a
+    candidate carrying both edges would escape the bound just the same and the test would
+    pass while exercising nothing: the point of this one is the edge the second run adds.
     """
-    corpus, candidates, nuisance_path = rotator(tmp_path, points=("syn_shared_desk",))
+    corpus, candidates, nuisance_path = rotator(
+        tmp_path, points=("syn_shared_desk",), domains=()
+    )
 
     _, _, printed = run(
         tmp_path / "out",
@@ -666,6 +677,7 @@ def test_a_campaign_shared_on_a_contact_point_alone_is_outside_the_bound(
     assert bound(printed) == (
         "1 of 2 Planted Campaigns have nothing inside them reaching a candidate"
     )
+    assert "syn-campaign-shared  Contact Points: syn_shared_desk" in printed
 
 
 def test_the_bound_is_stated_as_a_bound_rather_than_as_a_rate_of_fraud_found(
@@ -697,6 +709,45 @@ def test_the_bound_is_stated_as_a_bound_rather_than_as_a_rate_of_fraud_found(
         assert "a limit on the method rather than a prediction of the run" in flat
     assert "ceiling of 1 of 2" in " ".join(printed.split())
     assert "ceiling of 1 of 2" in page
+
+
+def test_the_two_views_of_the_bound_agree_on_the_word_goes_with_its_count(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One figure, two views, one pronoun — checked at the count where it breaks.
+
+    The console and the page each render the bound, and each used to name the count's
+    pronoun its own way: the page agreed it with the count and the console said "them"
+    whatever the count was. At a bound of one, which is the case a small Corpus reaches
+    first, the two views then made two grammatical claims about one run and neither was
+    a figure a reader could check by adding.
+
+    Both sentences are found by the clause they share rather than by exact text, because
+    the views differ in their markdown and their line breaking and the claim here is about
+    the word, not about the wrapping.
+    """
+    corpus, candidates, nuisance_path = rotator(tmp_path)
+
+    _, report, printed = run(
+        tmp_path / "out",
+        corpus=corpus,
+        candidates=candidates,
+        truth=tmp_path / "truth.jsonl",
+        nuisance=nuisance_path,
+        capsys=capsys,
+    )
+    page = report.read_text(encoding="utf-8")
+
+    clause = "so no edge this method rests on can hold "
+
+    def pronoun(view: str) -> str:
+        """The word the sentence gives the count, stripped of what is joined to it."""
+        flat = " ".join(view.split())
+        after = flat.index(clause) + len(clause)
+        return "".join(c for c in flat[after:].split(" ")[0] if c.isalpha())
+
+    assert pronoun(printed) == pronoun(page)
+    assert pronoun(printed) == "it"
 
 
 def test_no_campaign_in_the_committed_corpus_is_beyond_the_method(
