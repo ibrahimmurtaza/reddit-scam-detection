@@ -42,7 +42,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
-from reddit_fraud_intelligence.campaigns import CampaignCandidate, read_campaign_candidates
+from reddit_fraud_intelligence.campaigns import (
+    CampaignCandidate,
+    Evidence,
+    read_campaign_candidates,
+)
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.jsonl import JsonObject, write_lines
 from reddit_fraud_intelligence.nuisance import (
@@ -53,6 +57,7 @@ from reddit_fraud_intelligence.nuisance import (
 )
 from reddit_fraud_intelligence.review_queue import QueueEntry, build_queue
 from reddit_fraud_intelligence.truth import PlantedCampaign, read_truth
+from reddit_fraud_intelligence.text import wrap
 
 _HEADING = "Campaign recovery"
 _SUBHEADING = """\
@@ -128,12 +133,19 @@ class CampaignRecovery:
     candidate order, and is empty exactly when the campaign is missed. The outcome is
     worked out here rather than passed in, so the file, the table, and the figure cannot
     disagree about which of the three a campaign is.
+
+    `within` is what the membership shares with itself: every shared registration and
+    every shared Contact Point that two or more of the campaign's own accounts reach.
+    It is empty exactly when the campaign is in the recall bound, and it is what makes
+    that figure checkable rather than asserted — a reader can look at the memberships
+    and see for themselves which of them share anything.
     """
 
     campaign_id: str
     accounts: tuple[str, ...]
     posts: tuple[str, ...]
     matches: tuple[Match, ...]
+    within: tuple[tuple[Evidence, str], ...] = ()  # each as (which edge, what it names)
 
     @property
     def outcome(self) -> Outcome:
@@ -166,6 +178,47 @@ class CampaignRecovery:
     def candidate_ids(self) -> tuple[str, ...]:
         return tuple(match.candidate_id for match in self.matches)
 
+    @property
+    def bounded(self) -> bool:
+        """Whether no edge this method rests on reaches inside this membership.
+
+        A campaign two of whose accounts share nothing that reaches a candidate has no
+        edge within its own membership, so no candidate can hold two of them without
+        also holding an account from outside it — which is not a recovery. Asked of the
+        membership rather than of the outcome, because a campaign can be `recovered` and
+        still be outside the method's reach on a Corpus where the memberships overlap,
+        and conflating the two questions would report a bound as a result.
+        """
+        return not self.within
+
+    def shared_within(self) -> str:
+        """What the membership shares that reaches a candidate, grouped by which edge.
+
+        Grouped rather than one edge per item, because the enum's names are plural —
+        they are the labels the candidates table prints — and "Contact Points
+        syn_vantageledger" beside "registrations vantage-ledger.example" is a list of two
+        headings rather than a claim about two things.
+        """
+        return "; ".join(
+            f"{edge.value}: {', '.join(names)}"
+            for edge, names in self.shared_by_edge()
+            if names
+        )
+
+    def shared_by_edge(self) -> tuple[tuple[Evidence, tuple[str, ...]], ...]:
+        """The names this membership shares that reach a candidate, per edge.
+
+        In `Evidence`'s own order, so the two views print the same list in the same
+        sequence without either of them sorting a vocabulary the other does not share.
+        """
+        return tuple(
+            (
+                edge,
+                tuple(name for other, name in self.within if other is edge),
+            )
+            for edge in Evidence
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Unmatched:
@@ -174,14 +227,21 @@ class Unmatched:
     Printed rather than counted against N. The Corpus plants one — a shop's three
     accounts on one domain — and ADR-0005 says they group, so the grouping is right to
     produce them and calling that a miss would report correct behaviour as a failure.
-    The registration that joins them is named, because a candidate with no campaign
-    behind it is only diagnosable if the reader can see what it was joined on.
+    The evidence is carried rather than only printed, because a candidate with no campaign
+    behind it is only diagnosable if the reader can see what it was joined on, and
+    `joined_on` renders both edges through the grouping's own vocabulary.
     """
 
     candidate_id: str
     accounts: tuple[str, ...]
     posts: tuple[str, ...]
+    evidence: Evidence
     shared_domains: tuple[str, ...]
+    shared_contact_points: tuple[str, ...]
+
+    def joined_on(self) -> str:
+        """Everything it is joined on, under the edge, in the grouping's own words."""
+        return self.evidence.joined_on((*self.shared_domains, *self.shared_contact_points))
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,6 +408,27 @@ class Recovery:
             }
         )
 
+    @property
+    def beyond(self) -> tuple[CampaignRecovery, ...]:
+        """The campaigns this method cannot reach, in membership order.
+
+        The method's recall bound, stated as the membership rather than as a count, so
+        the figure it produces can be taken apart: each of these is a campaign the
+        generator planted that no shared thing inside it reaches a candidate.
+        """
+        return tuple(recovery for recovery in self.recoveries if recovery.bounded)
+
+    @property
+    def ceiling(self) -> int:
+        """The most campaigns this method could recover, whatever the grouping did.
+
+        An upper bound on the method rather than a prediction of the run: a campaign
+        inside the bound can still be missed, because the component holding it may also
+        hold an account from outside it — which is what happened to the alpha Planted
+        Campaign on this Corpus.
+        """
+        return len(self.recoveries) - len(self.beyond)
+
 
 def recover(
     corpus_path: Path,
@@ -512,7 +593,41 @@ def _recovery(
         accounts=tuple(sorted(campaign.accounts)),
         posts=tuple(sorted(campaign.posts)),
         matches=matches,
+        within=_within(members, candidates),
     )
+
+
+def _within(
+    members: set[str], candidates: Sequence[CampaignCandidate]
+) -> tuple[tuple[Evidence, str], ...]:
+    """What the membership shares that reaches a candidate, read off the candidates file.
+
+    Two of the campaign's own accounts reached by one registration or one Contact Point
+    is what makes the campaign reachable by this method at all, and the candidates file
+    is where that is recorded: any two accounts reaching the same thing are in one
+    component, so the thing is named under the candidate holding them. This is why the
+    bound can be measured here without the evaluator doing any grouping of its own, and
+    why the evaluator still opens neither the Public Suffix List nor the
+    shared-infrastructure list.
+
+    Read off what the grouping published rather than off the Corpus, so it measures what
+    the method did rather than what the Corpus holds: a membership whose only shared
+    registration was withheld has nothing here, which is exactly why it is beyond the
+    method and belongs in the bound.
+
+    The edge travels with the name because a registration and a Contact Point can be the
+    same string, and a reader told only `copperlantern.example` could not tell which one
+    put a candidate together.
+    """
+    found: set[tuple[Evidence, str]] = set()
+    for candidate in candidates:
+        for shared in candidate.shared_domains:
+            if len(members & set(shared.accounts)) > 1:
+                found.add((Evidence.DOMAIN, shared.domain))
+        for point in candidate.shared_contact_points:
+            if len(members & set(point.accounts)) > 1:
+                found.add((Evidence.CONTACT, point.value))
+    return tuple(sorted(found, key=lambda item: (item[0].value, item[1])))
 
 
 def _false_groupings(
@@ -599,6 +714,10 @@ def _unmatched(candidate: CampaignCandidate) -> Unmatched:
         shared_domains=tuple(
             sorted(shared.domain for shared in candidate.shared_domains)
         ),
+        shared_contact_points=tuple(
+            sorted(point.value for point in candidate.shared_contact_points)
+        ),
+        evidence=candidate.evidence,
     )
 
 
@@ -734,6 +853,7 @@ def render_table(recovery: Recovery) -> str:
         f"{_HEADING}\n\n{_SUBHEADING}",
         _figures(recovery),
         _campaigns_table(recovery),
+        _bound(recovery),
         _unmatched_table(recovery),
         _false_groupings_table(recovery),
         _precision_table(recovery),
@@ -782,6 +902,11 @@ def _figures(recovery: Recovery) -> str:
             f"{facts.candidates} candidates hold only part of one",
         ),
         ("missed", f"{recovery.missed} Planted Campaigns"),
+        (
+            "bound",
+            f"{len(recovery.beyond)} of {facts.campaigns} Planted Campaigns have nothing "
+            "inside them reaching a candidate",
+        ),
         (
             "false groupings",
             f"{len(recovery.false_groupings)} of {facts.candidates} Campaign Candidates, "
@@ -835,6 +960,41 @@ def _depths(recovery: Recovery) -> str:
     return ", ".join(str(depth) for depth in recovery.depths)
 
 
+def _bound(recovery: Recovery) -> str:
+    """The recall bound, and what each membership shares that reaches a candidate.
+
+    Printed for every run, including a run where nothing is bounded, because a figure
+    that appears only when it is bad is indistinguishable from a missing one. The rows
+    under it are the check: a reader can take each membership and see for themselves what
+    reaches a candidate, so the count above is arithmetic rather than an assertion.
+
+    Wording, not decoration: the count is measured against the edges the grouping
+    published, so the claim is that nothing inside the membership reaches a candidate
+    rather than that the accounts share nothing at all. A membership whose only shared
+    registration was withheld shares plenty and is still beyond the method, and it is
+    this wording that keeps the count honest about which of the two it found.
+    """
+    count = len(recovery.beyond)
+    campaigns = len(recovery.recoveries)
+    lines = [
+        "recall bound",
+        *wrap(
+            f"{count} of {campaigns} Planted Campaigns have nothing inside their own "
+            "membership that reaches a Campaign Candidate, so no edge this method rests "
+            "on can hold them: the figure above sits under a ceiling of "
+            f"{recovery.ceiling} of {campaigns}, which is a limit on the method rather "
+            "than a prediction of the run",
+            indent=2,
+        ),
+    ]
+    for entry in recovery.recoveries:
+        lines.append(
+            f"  {entry.campaign_id}  "
+            + (entry.shared_within() if entry.within else "nothing reaches a candidate")
+        )
+    return "\n".join(lines)
+
+
 def _count(number: int, noun: str) -> str:
     """One count, agreeing with its noun. Every figure here is small, and a reader
     seeing "1 accounts" stops to wonder whether the figure is right."""
@@ -844,6 +1004,11 @@ def _count(number: int, noun: str) -> str:
 def _verb(number: int) -> str:
     """The verb that agrees with a count: one candidate reaches, none reach."""
     return "reaches" if number == 1 else "reach"
+
+
+def _plural(number: int, one: str, many: str) -> str:
+    """The word that agrees with a count: one campaign shares, none share."""
+    return one if number == 1 else many
 
 
 def _row(cells: Sequence[str], widths: Sequence[int]) -> str:
@@ -915,9 +1080,10 @@ def _unmatched_table(recovery: Recovery) -> str:
 
     A candidate a reader cannot account for is the thing that makes X of N
     uninterpretable: `2 of 2` beside three candidates is a claim about one third of the
-    output. The registrations are printed for the same reason the grouping prints its
-    own - the shared domain is the whole of the reason those accounts are together, so
-    the reason is what a reader needs.
+    output. The shared registrations and Contact Points are printed for the same reason
+    the grouping prints its own - the shared thing is the whole of the reason those
+    accounts are together, so the reason is what a reader needs, and a candidate resting
+    on a Contact Point names the Contact Point rather than nothing at all.
     """
     if not recovery.unmatched:
         return "unmatched  no candidate; every one of them reached a Planted Campaign"
@@ -930,8 +1096,7 @@ def _unmatched_table(recovery: Recovery) -> str:
     for candidate in recovery.unmatched:
         lines.append(
             f"  {candidate.candidate_id}  {_count(len(candidate.accounts), 'account')}, "
-            f"{_count(len(candidate.posts), 'post')}  "
-            f"{', '.join(candidate.shared_domains) or '-'}"
+            f"{_count(len(candidate.posts), 'post')}  {candidate.joined_on()}"
         )
     return "\n".join(lines)
 
@@ -1009,11 +1174,17 @@ the posts called right or wrong would measure agreement with the generator rathe
 anything about fraud, and publishing it would be a number nobody could falsify
 (ADR-0004).
 
-What the figure is bounded by is stated rather than left in the tickets. A Planted
-Campaign that leans on a known-shared host is lost with the host, an account that reaches
-no registration cannot be proposed at all, and a campaign that rotates its registration
-from one post to the next is invisible by construction. Recovery measured this way is a
-statement about planted structure in a synthetic Corpus, and it is a lower bound.
+What the figure is bounded by is stated rather than left in the tickets, and the bound
+is a count rather than an adjective. {recovery.recovered} of {len(recovery.recoveries)}
+Planted Campaigns were recovered and {len(recovery.beyond)} {_plural(len(recovery.beyond), 'has', 'have')}
+nothing inside {_plural(len(recovery.beyond), 'its', 'their')} own membership that reaches a candidate, so this
+method cannot hold {_plural(len(recovery.beyond), 'it', 'them')} by construction: the figure sits under a
+ceiling of {recovery.ceiling} of {len(recovery.recoveries)}, which is a limit on the method rather than a
+prediction of the run. A Planted Campaign that leans on a known-shared host is lost with
+the host, and a campaign that rotates both its registrations and its Contact Points is
+invisible to any method resting on these two edges. Recovery measured this way is a
+statement about planted structure in a synthetic Corpus, and it is not an estimate of
+fraud found in the world.
 
 The Nuisance Structure above is the other half of the claim.
 {records_line}
@@ -1087,6 +1258,20 @@ def render_report(recovery: Recovery) -> str:
         f"| {measure.depth} | {measure.true} | {measure.of} |"
         for measure in recovery.precision
     )
+    bound_rows = "\n".join(
+        f"| `{entry.campaign_id}` | "
+        + (
+            "; ".join(
+                f"{edge.value}: {', '.join(f'`{name}`' for name in names)}"
+                for edge, names in entry.shared_by_edge()
+                if names
+            )
+            if entry.within
+            else "**nothing reaches a candidate**"
+        )
+        + " |"
+        for entry in recovery.recoveries
+    )
 
     return f"""# Recovery of Planted Campaigns
 
@@ -1126,19 +1311,34 @@ number a reader has to take on trust (ADR-0004).
 {left_over}
 
 None of these is counted against the figure above, and none of them is a miss. ADR-0005
-puts accounts in a Campaign Candidate when they share a registrable domain, and a small
-business whose three accounts share its own domain is a grouping the system is *right*
-to produce — the Corpus plants exactly that as a decoy account cluster. Counting it
-against N would report correct behaviour as a failure and would put N above the number
-of things that were planted. The rate at which the grouping is wrong is reported below:
-it is counted against the same manifest these candidates were measured against.
+puts accounts in a Campaign Candidate when they share a registrable domain or a shared
+Contact Point, so both of the shapes the Corpus plants are groupings the system is
+*right* to produce: a small business whose three accounts share its own domain, and one
+desk whose three accounts publish one Telegram Contact Point three ways. Neither is a
+Planted Campaign, and counting either against N would report correct behaviour as a
+failure and would put N above the number of things that were planted. The rate at which
+the grouping is wrong is reported below: it is counted against the same manifest these
+candidates were measured against.
+
+## The recall bound
+
+{_bound_line(recovery)}
+
+| Planted Campaign | Shares within its own membership |
+| --- | --- |
+{bound_rows}
+
+{_bound_prose(recovery)}
 
 ## False groupings
 
 A false grouping is a Campaign Candidate whose accounts belong to different Planted
 Campaigns, or to none. Stated as a rule rather than left to be inferred from the
 figure, so a reader can check the number against the sentence rather than the other
-way round.
+way round. One of the candidates above rests on a Contact Point alone, and a grouping
+built on the weaker of the two readings is the one this page should be read with more
+care: `rfi campaign-candidates` prints the measured recall behind that reading
+beside the candidate, and it is not the same kind of evidence as a registration.
 
 **{false_count} of {facts.candidates} Campaign Candidates are false groupings.**
 Measured against the Nuisance Structure in `{facts.nuisance_path}`, because a
@@ -1209,13 +1409,18 @@ the posts called right or wrong would measure agreement with the generator rathe
 anything about fraud, and it would be a number nobody could falsify. That is why the
 figure is a count of recovered campaigns and not a rate over labelled posts (ADR-0004).
 
-**The figure is a lower bound, and the bounds are structural.** A Planted Campaign that
-leans on a known-shared host is lost with the host, because the registration is withheld
-before the grouping; an account that reaches no registration cannot be proposed at all;
-and a campaign that rotates its registration from one post to the next is invisible by
-construction, since nothing links its accounts but the registrations they share. Recovery
-measured this way is a statement about planted structure in a synthetic Corpus, and it is
-not an estimate of fraud found in the world.
+**The figure is a lower bound, and the bound is stated as a count.** A Planted Campaign
+that leans on a known-shared host is lost with the host, because the registration is
+withheld before the grouping; and a campaign that rotates both its registrations and its
+Contact Points leaves nothing inside itself that reaches a candidate, so no edge this
+method rests on can hold it however well the grouping works. That last case is the recall
+bound, counted in its own section above. It is published rather than described, because a
+rate a reader has to take on trust about its own ceiling is not a measurement.
+
+**The figure says nothing about fraud in the world.** Everything above is a statement
+about planted structure in a synthetic Corpus, measured against membership the generator
+wrote. It is not an estimate of fraud found in the world, and no figure over the whole
+Corpus is published to suggest otherwise.
 
 **Recovery and the false-grouping rate are measured together.** Recovery alone can be
 produced by a grouping that also merges unrelated accounts, so the rate of false
@@ -1243,6 +1448,62 @@ this page was written:
 | `{facts.nuisance_path}` | `{facts.nuisance_sha256}` |
 | `{facts.scores_path}` | `{facts.scores_sha256}` |
 """
+
+
+def _bound_line(recovery: Recovery) -> str:
+    """The bound as one sentence, used by the report and by nothing else.
+
+    Both views say it, and they say it in the same words because it is one figure: a
+    console and a page that named different ceilings would be two claims about the same
+    run, and the page is generated so the agreement is the default rather than a
+    coincidence.
+    """
+    count = len(recovery.beyond)
+    campaigns = len(recovery.recoveries)
+    return (
+        f"**{count} of the {campaigns} Planted Campaigns have nothing inside their own "
+        "membership that reaches a Campaign Candidate**, so no edge this method rests on "
+        f"can hold {_plural(count, 'it', 'them')} at all: the figure above sits under a "
+        f"ceiling of {recovery.ceiling} of {campaigns}, which is a limit on the method "
+        "rather than a prediction of the run."
+    )
+
+
+def _bound_prose(recovery: Recovery) -> str:
+    """What the bound is and is not, in the words a reader has to be able to check.
+
+    The check is in the table above rather than in this paragraph: a membership with
+    nothing reaching a candidate inside it cannot be recovered by one, because holding
+    two of its accounts means also holding whatever connects them, and nothing does.
+
+    The wording counts what reaches a candidate rather than what the accounts share at
+    all, and the difference matters: a membership whose one shared registration was
+    withheld shares plenty, is still beyond this method, and belongs in this count. The
+    evaluator cannot tell the two apart without opening the shared-infrastructure list,
+    which it must not do (ADR-0018).
+    """
+    count = len(recovery.beyond)
+    if count:
+        return (
+            "Every one of those is a miss this method could not have avoided: two accounts "
+            "of it reach nothing in common that a candidate could hold them on, so a "
+            "candidate that held them would have had to reach outside the membership, "
+            "which is an over-grouping rather than a recovery. The other "
+            f"{recovery.ceiling} {_plural(recovery.ceiling, 'campaign is', 'campaigns are')} "
+            "in the table above share something that reaches a candidate, so they were "
+            "within reach — and within reach is not recovered: a campaign can be inside "
+            "this bound and still be missed, because the component holding it may also "
+            "hold an account from outside it, which is what happened to the alpha Planted "
+            "Campaign on this Corpus."
+        )
+    return (
+        "Every membership in this Corpus shares something that reaches a candidate, so "
+        "nothing here is out of the method's reach by construction and the ceiling above "
+        "is all of them. That is a fact about this Corpus and not a general one: a "
+        "campaign that rotates both its registrations and its Contact Points is invisible "
+        "to a method resting on those two edges, and one that leans on a known-shared host "
+        "is lost with the host."
+    )
 
 
 def _join(campaign: CampaignRecovery) -> str:
@@ -1274,16 +1535,29 @@ def _unmatched_report(recovery: Recovery) -> str:
         "Planted Campaign."
     ]
     lines.append(
-        "Each is printed with the registrations that join it, because that is the whole "
-        "of the reason its accounts are together:"
+        "Each is printed with the registrations and Contact Points that join it, and with "
+        "the edge they rest on, because that is the whole of the reason its accounts are "
+        "together:"
     )
     for candidate in recovery.unmatched:
-        domains = ", ".join(f"`{domain}`" for domain in candidate.shared_domains) or "nothing named"
         lines.append(
             f"- `{candidate.candidate_id}` — {_count(len(candidate.accounts), 'account')}, "
-            f"{_count(len(candidate.posts), 'post')}, joined on {domains}."
+            f"{_count(len(candidate.posts), 'post')}, {candidate.evidence.value}: "
+            f"{_named(candidate)}."
         )
     return "\n".join(lines)
+
+
+def _named(candidate: Unmatched) -> str:
+    """A candidate's evidence in a report, each name in code formatting.
+
+    One helper rather than a join at the call site, so the empty case says what it means
+    instead of rendering an empty set of backticks and so the phrase comes from the same
+    `Evidence` the grouping printed it with.
+    """
+    return ", ".join(
+        f"`{name}`" for name in (*candidate.shared_domains, *candidate.shared_contact_points)
+    ) or candidate.evidence.value
 
 
 def _nuisance_row(count: NuisanceCount) -> str:

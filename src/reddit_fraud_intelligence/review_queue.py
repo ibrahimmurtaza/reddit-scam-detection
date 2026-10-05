@@ -326,11 +326,10 @@ def _row(cells: Sequence[str], widths: Sequence[int]) -> str:
 def _block(rank: int, entry: QueueEntry) -> str:
     """One entry: every Signal, the weight it was earned at, and what fired it.
 
-    The last line of the arithmetic is the total against the published total, so the
-    division that produced the score on the heading line is written out rather than left to
-    the reader. The candidates come under it with the registration each is joined on,
-    because an identifier on its own says nothing to somebody who has not opened the
-    candidates file.
+The last line of the arithmetic is the total against the published total, so the
+    division that produced the score on the heading line is written out rather than left to the
+    reader. The candidates come under it with the shared thing each is joined on, because an
+    identifier on its own says nothing to somebody who has not opened the candidates file.
     """
     score = entry.score
     lines = [f"{rank}  {score.post_id}  {score.account}  {score.score}/100"]
@@ -362,6 +361,10 @@ _NO_SIGNAL = "no Signal"
 # every value in the block starts in the same column whichever shape the entry took.
 _LABEL = max(len("candidates"), len(_NO_SIGNAL))
 
+# The width a block line is wrapped to, which is the console claim this command makes and
+# the width its own test holds it to.
+_WIDTH = 100
+
 
 def _candidates(entry: QueueEntry) -> list[str]:
     """One line per candidate holding this post, or the line that says there is none.
@@ -369,21 +372,38 @@ def _candidates(entry: QueueEntry) -> list[str]:
     The dash is the project's own mark for a cell with nothing in it. It is printed rather
     than the line omitted, because an entry with no candidate line is indistinguishable
     from a run that joined nothing at all.
+
+    Wrapped rather than built in one piece, because naming both edges under their own
+    labels makes this the longest line the command prints and the queue's own claim is
+    that nothing in it is a line of three hundred columns. The continuation is indented
+    under the column so a reader can still see which candidate the rest of the sentence is
+    about.
     """
+    heading = f"  {'candidates'.ljust(_LABEL)}  "
     if not entry.candidates:
-        return [f"  {'candidates'.ljust(_LABEL)}  -  no Campaign Candidate holds it"]
-    return [
-        f"  {'candidates'.ljust(_LABEL)}  {candidate.candidate_id}  "
-        f"{_count(len(candidate.accounts), 'account')}, joined on "
-        f"{_joined_on(candidate)}"
-        for candidate in entry.candidates
-    ]
+        return [f"{heading}-  no Campaign Candidate holds it"]
+    lines: list[str] = []
+    for candidate in entry.candidates:
+        wrapped = wrap(
+            f"{candidate.candidate_id}  "
+            f"{_count(len(candidate.accounts), 'account')}, joined on "
+            f"{_joined_on(candidate)}",
+            indent=len(heading),
+            width=_WIDTH,
+        )
+        lines.append(f"{heading}{wrapped[0]}")
+        lines.extend(wrapped[1:])
+    return lines
 
 
 def _joined_on(candidate: CampaignCandidate) -> str:
-    """The registrations a candidate is joined on, which are why it exists (ADR-0005)."""
-    domains = ", ".join(shared.domain for shared in candidate.shared_domains)
-    return domains or "no registration this file names"
+    """The shared things a candidate is joined on, under the edge, which are why it exists.
+
+    Delegates rather than re-lists them, because `rfi campaign-candidates` is the module
+    that owns ADR-0005's two edges: a reader meeting a candidate here and a candidate
+    there must not be shown two different vocabularies for the same evidence.
+    """
+    return candidate.joined_on()
 
 
 def _footer() -> str:

@@ -71,10 +71,10 @@ this module inventing a grouping edge in order to be helpful, which is the failu
 exists to avoid.
 
 Nothing is grouped here. ADR-0005 permits a Contact Point as a grouping edge and this
-command builds none: the shared list is the evidence ticket #20 needs, and a grouping
-edge that had not been measured would put an unmeasured input into the recovery figure
-ADR-0004 is measured against. The output says so, because a shared list read as a list
-of groupings is the more damaging of the two misreadings.
+command still builds none: the shared list is what `rfi campaign-candidates` groups on,
+and it is measured here first so that the grouping edge is not an unmeasured input to
+the recovery figure ADR-0004 is measured against. The output says so, because a shared
+list read as a list of groupings is the more damaging of the two misreadings.
 
 Nothing here reads the truth file or the Nuisance Structure manifest. The Corpus and the
 Labelled Set beside it are the whole input — no published list decides what a post says
@@ -821,10 +821,16 @@ def extract(items: Iterable[CorpusItem]) -> tuple[PostContacts, ...]:
     return tuple(_post(item) for item in items)
 
 
-def _reach(
+def reach(
     rows: Iterable[PostContacts],
 ) -> dict[tuple[ContactKind, str], SharedContact]:
     """What each Contact Point is reached by, counted once each way.
+
+    Public because a second command reads it. `rfi campaign-candidates` needs to know
+    which Contact Points two accounts share in order to join them, and it reads them
+    from the Corpus through this function rather than from the file this module writes:
+    a grouping that depended on somebody having run this command first would not be a
+    function of the Corpus, and would open a fourth file to say so (ADR-0008).
 
     Accounts and posts are counted per Contact Point rather than per post, because a
     post naming a handle in its title and its body reaches it once and reporting it
@@ -1087,7 +1093,7 @@ def contact_points(corpus_path: Path, labelled_path: Path) -> ContactPoints:
     """
     corpus = read_corpus(corpus_path)
     rows = extract(corpus)
-    points = _reach(rows)
+    points = reach(rows)
     return ContactPoints(
         facts=survey(rows, points, corpus_path, labelled_path),
         points=points,
@@ -1356,9 +1362,9 @@ value is printed beneath it, so a reader can see how many places a string came f
 before deciding what it is.
 
 Nothing here groups on a Contact Point. ADR-0005 permits one as a grouping edge and
-this command builds none: the shared blocks above are the evidence ticket #20 needs,
-and a grouping edge that had not been measured would put an unmeasured input into the
-recovery figure ADR-0004 is measured against.
+this command still builds none: the shared blocks above are what `rfi campaign-candidates`
+groups on, and the recall printed beside them is what keeps that edge from putting an
+unmeasured input into the recovery figure ADR-0004 is measured against.
 
 Every Contact Point above is a Synthetic Entity because the Corpus is synthetic, and
 which figures say so is printed rather than asserted. There is no reserved namespace

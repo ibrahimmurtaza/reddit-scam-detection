@@ -19,11 +19,12 @@ and committed, with the base rate of every thematic category computed from it. T
 projection of those categories down to ten Scam Categories, and the comparison of
 the Corpus's own distribution against those base rates. The pipeline itself: the
 Registrable Domain of every link, then the Contact Points every post names, then
-the Campaign Candidates those registrations produce, with known-shared infrastructure
-filtered out as published data, then the Policy Score those same links and posts add
-up to, with the arithmetic printed beside it. And the measurement: how many of the two
-Planted Campaigns that grouping recovered, as X of N, joined by a command that runs
-after it rather than inside it. The Review Queue those scores are ordered into, at a
+the Campaign Candidates those registrations and Contact Points produce, with
+known-shared infrastructure filtered out as published data, then the Policy Score those
+same links and posts add up to, with the arithmetic printed beside it. And the
+measurement: how many of the two Planted Campaigns that grouping recovered, as X of N,
+joined by a command that runs after it rather than inside it, with the method's recall
+bound stated as a count beside it. The Review Queue those scores are ordered into, at a
 stated depth. The false-grouping rate beside that recovery figure, and the Review
 Queue's precision at several depths, are measured by the same evaluator. The
 Confidence, the corroborated grouping tier, and the graph report are not built yet.
@@ -53,8 +54,8 @@ steps, which are named against each row. Every file has one reader:
 | `data/infrastructure/shared-hosts.jsonl` | Known-shared infrastructure: a link shortener, a paste site, a link-in-bio service. Each row carries where the host came from and when it was added. | `rfi campaign-candidates` |
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
-| `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | a reader, then the grouping-edge ticket #20 |
-| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations that join them. | `rfi campaign-recovery`, `rfi review-queue`, then the corroboration ticket #24 |
+| `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | `rfi campaign-candidates`, which reads them from the Corpus rather than from here, and a reader |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations and Contact Points that join them. | `rfi campaign-recovery`, `rfi review-queue`, then the corroboration ticket #24 |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, and the recovery report beside it |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
@@ -250,10 +251,12 @@ posts advertising a Contact Point has been measured on nothing else.
 The most important number in the output is a false grouping waiting to happen. Four
 accounts name `syn_vantageledger`, and one of them is a declared Hard Negative: a person
 who lost money and quoted the channel they were given. That is correct reporting and the
-worst possible grouping input, which is why nothing groups on it yet. ADR-0005 permits a
-Contact Point as a grouping edge and this command builds none — the shared blocks are
-the evidence ticket #20 needs, and an unmeasured grouping edge would put an unmeasured
-input into the recovery figure ADR-0004 measures against.
+worst possible grouping input. ADR-0005 permits a Contact Point as a grouping edge and
+`rfi campaign-candidates` now groups on one — which merges that Hard Negative into the
+alpha Planted Campaign's candidate and costs the project a recovery, as the recovery
+section below says. This command still builds no grouping of its own: the shared blocks
+are the evidence the grouping reads, and they are measured here first so that the edge is
+not an unmeasured input into the recovery figure ADR-0004 is measured against.
 
 Every figure the command prints is a lower bound, and the measured recall above is what
 bounds it: the Contact Points this Corpus publishes that were not read are named in the
@@ -284,12 +287,13 @@ post says to be reached at does not depend on what anybody registered.
 
 `rfi campaign-candidates` is the whole path from the Corpus to an output: two
 accounts reach the same Campaign Candidate when a chain of shared registrable domains
-connects them, and on nothing else. The console output is the report — an
-index of the candidates, then for each one the accounts, the posts, and the shared
-domains that put them together — and it carries its own evidence with it because a
-grouping a reader cannot check is a claim rather than a result. The Contact Points above
-are the second thing ADR-0005 permits as an edge, and this command reads neither them
-nor the file they are written to.
+or shared Contact Points connects them, and on nothing else. The console output is the
+report — an index of the candidates, then for each one the accounts, the posts, and the
+shared registrations and Contact Points that put them together — and it carries its own
+evidence with it because a grouping a reader cannot check is a claim rather than a
+result. The Contact Points are read out of the Corpus by the same rule
+`rfi contact-points` publishes, so the grouping stays a function of the Corpus and of
+the two lists it names: it still opens three files and no fourth.
 
 ```
 uv run rfi campaign-candidates   # reads the Corpus, the Public Suffix List, and the list
@@ -297,27 +301,61 @@ uv run rfi campaign-candidates   # reads the Corpus, the Public Suffix List, and
 
 | File | Holds |
 | --- | --- |
-| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, and each shared registration with the accounts and posts that reach it. |
+| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, each shared registration with the accounts and posts that reach it, and each shared Contact Point with the accounts that published it and every spelling the Corpus wrote it in. |
 
-It recovers both Planted Campaigns from shared registration alone — alpha on
-`vantage-ledger.example`, which one of its accounts reaches through a mirror
-hostname, and beta on `signal-harbor.example` — and it refuses the case ADR-0005 was
-written about: accounts pasting one advert word for word, with nothing shared but
-text, produce no candidate at all. `tests/test_campaign_candidates.py` writes that
-case out by hand and asserts an empty output; the Corpus's own copy of it is joined
-by nothing but the shortener those accounts all use, so the filter rather than the
-absence of links is what silences it. The Corpus also plants two near-miss pairs for
-the same reason, and neither reaches a candidate, so nothing about the output depends
-on matching a name rather than a registration.
+**The second edge is what makes a desk that pays for a domain per post visible.** Its
+registrations move every time the advert is posted and nothing joins the accounts that
+share them; one Telegram Contact Point published throughout is the same infrastructure by
+any other name. On this Corpus that is `syn-nuisance-obfuscated-copperlantern`: one desk
+publishing one Contact Point three ways — written out with a full stop between its
+characters, written out with spaces, and with a digit standing in for a letter — where two
+of the three accounts reach no registration at all. It comes out as `cc-02`.
+
+**The two edges are not equally good, and every candidate says which one it rests on.**
+A registration is somebody's property and this project resolves it against the published
+Public Suffix List. A Contact Point is read out of a post by a rule with a measured
+recall against the Labelled Set, and a candidate built on a Contact Point alone says so
+on its own line rather than leaving the reader to work it out from the section heading:
+
+```
+cc-02  3 accounts, 7 posts, first seen 2026-06-06T14:23:00Z
+  justified by  Contact Points, the weaker of the two readings; `rfi contact-points` has the measured recall
+  shared contact points
+    syn_copperlantern  telegram, 3 accounts, 3 posts  written @s y n _ c o p p e r l a n t e r n, @s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n, @syn_c0pperlantern
+```
+
+The label is worked out from the two evidence lists rather than stored, so the file and
+the table cannot hold different opinions about which edge a candidate rests on.
+
+Both Planted Campaigns come out on their own registration — alpha on
+`vantage-ledger.example`, which one of its accounts reaches through a mirror hostname,
+and beta on `signal-harbor.example` — and both now carry the Contact Point their accounts
+share as well. What it refuses is the case ADR-0005 was written about: accounts pasting
+one advert word for word, with nothing shared but text, produce no candidate at all.
+`tests/test_campaign_candidates.py` writes that case out by hand and asserts an empty
+output; the Corpus's own copy of it is joined by nothing but the shortener those accounts
+all use, so the filter rather than the absence of links is what silences it. The Corpus
+also plants two near-miss pairs for the same reason, and neither reaches a candidate, so
+nothing about the output depends on matching a name rather than a registration.
+
+**What the second edge costs is published rather than absorbed.** It also joins
+`syn_greyloch_6612` to the alpha Planted Campaign: that account is a Hard Negative that
+lost money to the desk and published the desk's Telegram Contact Point while writing the
+complaint down. Nothing in this project can tell an operator from a customer, so the
+candidate holds the membership and one account from outside it, alpha's outcome becomes
+`partial`, and the recovery figure below is 1 of 2 rather than 2 of 2. `cc-01` names the
+account that cost it, and the false-grouping rate rises with it.
 
 ## Known-shared infrastructure
 
-Five candidates used to come out of that grouping and two of them were junk: a link
-shortener and a link-in-bio page are Registrable Domains like any other, so they
-grouped every account that touched them — `hopcut.example` alone reached four
-accounts, and with the paste site six, which was `cc-01` in the list. They are
+Five candidates used to come out of a grouping built on registrations alone and two of
+them were junk: a link shortener and a link-in-bio page are Registrable Domains like any
+other, so they grouped every account that touched them — `hopcut.example` alone reached
+four accounts, and with the paste site six, which was `cc-01` in the list. They are
 withheld now, before the grouping rather than after it, so a withheld registration
-joins nothing and cannot bridge two accounts either.
+joins nothing and cannot bridge two accounts either. An address at one of those
+registrations is withheld with it, because everybody who complains into a paste site
+publishes that address.
 
 The list of registrations to withhold is
 `data/infrastructure/shared-hosts.jsonl`, and it is read as data rather than written
@@ -334,7 +372,7 @@ is the direct-adjacency baseline ADR-0009 asks for — and the output reports th
 difference:
 
 ```
-  filtered      3 of 16 registrations withheld, removing 2 of 5 components
+  filtered      3 of 16 registrations and 0 of 6 Contact Points withheld, removing 2 of 5 components
 ```
 
 followed by what left the graph, so a registration the resolved links hold and no
@@ -347,20 +385,22 @@ withheld  3 registrations, reached by 10 accounts; no candidate is joined on one
   pastevault.example  paste site      3 accounts
 ```
 
-What is left is the two Planted Campaigns and one shop that shares a domain it is
-right to group on — a correct grouping that must never be counted as recovery
-(ADR-0004) — and every Hard Negative that reaches a shared host and nothing else is
-now in no candidate at all. The four account figures above the index are a partition,
-so they add up to the accounts in the Corpus: grouped, alone (a registration nobody
-else reaches), silenced (nothing but known-shared infrastructure), and unreachable (no
-registration at all). `silenced` is a line of its own because the six accounts the
-filter silences are not the ten that touch a shared host — four of those share a
-registration with nobody and are simply alone. The cost is stated rather than hidden:
-a Planted Campaign that leans on a shared host is lost with the host, so a recall
-figure measured this way is a lower bound. `tests/test_campaign_candidates.py` proves
-the list is what decides, by adding a host to a copy of it and watching a candidate
-disappear, and by running with an empty list and watching all five components come
-back.
+What is left is the two Planted Campaigns and two desks that are not campaigns — the
+shop, whose three accounts share a domain it is right to group on and which must never
+be counted as recovery (ADR-0004), and the desk behind the obfuscated handles — and
+every Hard Negative that reaches a shared host and nothing else is now in no candidate
+at all. The four account figures above the index are a partition, so they add up to the
+accounts in the Corpus: grouped, alone (something nobody else reaches), silenced
+(nothing but known-shared infrastructure), and unreachable (nothing at all). The
+partition is over both edges rather than over registrations, because an account grouped
+by a shared handle has been reached. `silenced` is a line of its own because the six
+accounts the filter silences are not the ten that touch a shared host — four of those
+share a registration with nobody and are simply alone. The cost is stated rather than
+hidden: a Planted Campaign that leans on a shared host is lost with the host, so a
+recall figure measured this way is a lower bound. `tests/test_campaign_candidates.py`
+proves the list is what decides, by adding a host to a copy of it and watching a
+candidate disappear, and by running with an empty list and watching all five components
+come back.
 
 The figures at the top of the output are a partition of the Corpus's accounts, and two
 accounts in the Corpus reach nothing at all: they are therefore beyond any amount of
@@ -374,9 +414,9 @@ the run opens rather than by reading the code that decides what to open.
 ## The recovery figure
 
 `docs/campaign-recovery.md` is the report: how many of the two Planted Campaigns the
-grouping recovered. **2 of 2**, with the shop printed beside them, the false-grouping
-rate counted against it, and the Review Queue's precision at several depths beside
-that.
+grouping recovered. **1 of 2**, with the partial named, the shop and the obfuscated-handle
+desk printed beside it, the false-grouping rate counted against the same manifest, and
+the Review Queue's precision at several depths beside that.
 
 ```
 uv run rfi campaign-candidates   # writes the candidates this measures
@@ -386,7 +426,7 @@ uv run rfi campaign-recovery     # reads them, and the membership, and writes tw
 | File | Holds |
 | --- | --- |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. |
-| `docs/campaign-recovery.md` | The report: the figure, the join behind it, the candidates that are not a recovery, the false-grouping rate, the precision of the Review Queue at several depths, the Nuisance Structure it was measured against, and what the number cannot say. |
+| `docs/campaign-recovery.md` | The report: the figure, the join behind it, the candidates that are not a recovery, the recall bound, the false-grouping rate, the precision of the Review Queue at several depths, the Nuisance Structure it was measured against, and what the number cannot say. |
 
 **It is a separate command, and that is the point.** It reads the candidates
 `rfi campaign-candidates` published and does no grouping of its own — it opens neither
@@ -408,7 +448,32 @@ a campaign's three accounts and one of its own is an over-grouping rather than h
 recovery. Both are reported as `partial`, with the accounts held, missing, and
 unexpected named, and neither is counted into the figure. The three outcomes —
 recovered, partial, missed — partition the membership, so a reader can add them up and
-get N rather than take the numerator on trust.
+get N rather than take the numerator on trust. Alpha is `partial` on this Corpus
+because `syn_greyloch_6612` is in its candidate, and the report prints that account
+beside the figure rather than leaving the reader to find it.
+
+**The recall bound is a count, and it is published on every run.**
+
+```
+  bound              0 of 2 Planted Campaigns have nothing inside them reaching a candidate
+```
+
+A campaign with nothing inside its own membership that reaches a Campaign Candidate is
+beyond this method by construction: no candidate can hold two of its accounts without
+also reaching outside the membership, and a candidate that does is an over-grouping
+rather than a recovery. The count is measured against the edges the grouping published,
+which is why a membership whose only shared registration was withheld is in it — the
+evaluator cannot tell that case from a membership that shares nothing, and does not need
+to, because both are beyond the method. The report names each one and lists what every
+other membership shares that reaches a candidate, so the count is arithmetic a reader can
+redo rather than a claim about the ceiling. It reads zero on this Corpus — both campaigns
+share something with themselves — and it is printed at zero anyway, because a figure that
+appears only when it is bad is a figure a reader cannot tell from a missing one.
+
+The ceiling it states is why `1 of 2` is not a rate of fraud found in the world, and the
+report says so in its own words. The ceiling is a limit on the method rather than a
+prediction of the run: alpha is inside it and was still missed, because the candidate
+holding it also holds an account from outside it.
 
 **Nobody reviewed any of it.** The figure is computed by this command against
 membership the generator planted, and the report says so in its own words, because a
@@ -431,13 +496,15 @@ re-runs the grouping over them, and joins again for the same figure and the same
 
 The report states the limits rather than leaving them in the tickets, and one of them
 is why the figure is only half the claim. A Planted Campaign leaning on a shared host
-is lost with the host, an account that reaches no registration cannot be proposed at
-all, and a campaign that rotates its registration per post is invisible by
-construction — so this is a lower bound. Recovery on its own can also be produced by
-a grouping that merges unrelated accounts, so the rate of false groupings against the
-same manifest is published beside it (ticket #19), and the Review Queue's precision
-at several depths is published with them. Of the two rates on the page — recovery and
-precision — the lower of the two numbers is the more trustworthy, deliberately.
+is lost with the host, an account that reaches nothing the grouping can use cannot be
+proposed at all, and a campaign that rotates both its registrations and its Contact
+Points is invisible to a method resting on those two edges — so this is a lower bound,
+with the size of the last case published as a count. Recovery on its own can also be
+produced by a grouping that merges unrelated accounts, so the rate of false groupings
+against the same manifest is published beside it (ticket #19) — 3 of 4 candidates on
+this Corpus — and the Review Queue's precision at several depths is published with them.
+Of the two rates on the page — recovery and precision — the lower of the two numbers is
+the more trustworthy, deliberately.
 
 ## The Policy Score
 
@@ -876,7 +943,7 @@ patch `urllib.request.urlopen` to refuse.
   registrations fired it), 0015 (Content Signals are phrase lists with a
   sentence-scoped negation guard, and the sentence is the evidence), 0016
   (Contact Points are read literally — which 0019 amends — the ones this build cannot
-  read are reported rather than repaired, and nothing groups on one yet), and 0017 (a post's Scam
+  read are reported rather than repaired, and 0023 is what groups on one), and 0017 (a post's Scam
   Category is read off its own text with published phrase lists, the first match wins,
   and CAFC cannot validate the reading), and 0018 (the evaluator joins the published
   candidates in a command of its own, so measurement cannot reach inference and the
@@ -889,4 +956,8 @@ patch `urllib.request.urlopen` to refuse.
   candidates rather than re-running either step, and it computes no figure), and 0021 (a
   post's Scam Category is compared with the category its Registrable Domain is associated
   with, the association is a majority of the postings reaching it, and a registration with
-  too few of them is reported as unassociated rather than decided by a tie-break).
+  too few of them is reported as unassociated rather than decided by a tie-break), and
+  0022 (recovery, the false-grouping rate and queue precision are measured together by
+  one command), and 0023 (a Contact Point joins two accounts on the same footing as a
+  shared registration, every candidate is labelled with the edge that justified it, and
+  the method's recall bound is published as a count rather than described).

@@ -8,15 +8,15 @@ command rewrites it byte for byte.
 
 ## The figure
 
-**2 of 2 Planted Campaigns recovered**, with 0 partial and 0 missed.
+**1 of 2 Planted Campaigns recovered**, with 1 partial and 0 missed.
 
 The three outcomes partition the membership in `data/corpus/truth.jsonl`, so a reader can add
 them up and get N rather than take the numerator on trust.
 
 | Planted Campaign | Outcome | Accounts | Posts | Candidates |
 | --- | --- | ---: | ---: | --- |
-| syn-campaign-alpha | recovered | 3 | 4 | cc-01 |
-| syn-campaign-beta | recovered | 2 | 3 | cc-03 |
+| syn-campaign-alpha | partial | 3 | 4 | cc-01 |
+| syn-campaign-beta | recovered | 2 | 3 | cc-04 |
 
 A Campaign Candidate counts as a recovery only when it holds a Planted Campaign's whole
 membership. That is the whole of the rule, and it is stricter than it sounds: two
@@ -28,41 +28,60 @@ number a reader has to take on trust (ADR-0004).
 
 ### The joins behind it
 
-- **syn-campaign-alpha** — 3 accounts, 4 posts, outcome `recovered`.
-  - `cc-01` holds `syn_harborlight_5517`, `syn_pinecrest_9032`, `syn_quantproof_2841`
+- **syn-campaign-alpha** — 3 accounts, 4 posts, outcome `partial`.
+  - `cc-01` holds `syn_harborlight_5517`, `syn_pinecrest_9032`, `syn_quantproof_2841`; also holds `syn_greyloch_6612`, which the membership does not name
 - **syn-campaign-beta** — 2 accounts, 3 posts, outcome `recovered`.
-  - `cc-03` holds `syn_clearpathwork_3184`, `syn_northwindhire_7736`
+  - `cc-04` holds `syn_clearpathwork_3184`, `syn_northwindhire_7736`
 
 - No Planted Campaign went ungrouped.
 
 ## Candidates that are not a recovery
 
-Of the 3 candidates published, 1 reaches no account of any Planted Campaign.
-Each is printed with the registrations that join it, because that is the whole of the reason its accounts are together:
-- `cc-02` — 3 accounts, 3 posts, joined on `rivermill-bikes.example`.
+Of the 4 candidates published, 2 reach no account of any Planted Campaign.
+Each is printed with the registrations and Contact Points that join it, and with the edge they rest on, because that is the whole of the reason its accounts are together:
+- `cc-02` — 3 accounts, 7 posts, Contact Points: `syn_copperlantern`.
+- `cc-03` — 3 accounts, 3 posts, registrations: `rivermill-bikes.example`.
 
 None of these is counted against the figure above, and none of them is a miss. ADR-0005
-puts accounts in a Campaign Candidate when they share a registrable domain, and a small
-business whose three accounts share its own domain is a grouping the system is *right*
-to produce — the Corpus plants exactly that as a decoy account cluster. Counting it
-against N would report correct behaviour as a failure and would put N above the number
-of things that were planted. The rate at which the grouping is wrong is reported below:
-it is counted against the same manifest these candidates were measured against.
+puts accounts in a Campaign Candidate when they share a registrable domain or a shared
+Contact Point, so both of the shapes the Corpus plants are groupings the system is
+*right* to produce: a small business whose three accounts share its own domain, and one
+desk whose three accounts publish one Telegram Contact Point three ways. Neither is a
+Planted Campaign, and counting either against N would report correct behaviour as a
+failure and would put N above the number of things that were planted. The rate at which
+the grouping is wrong is reported below: it is counted against the same manifest these
+candidates were measured against.
+
+## The recall bound
+
+**0 of the 2 Planted Campaigns have nothing inside their own membership that reaches a Campaign Candidate**, so no edge this method rests on can hold them at all: the figure above sits under a ceiling of 2 of 2, which is a limit on the method rather than a prediction of the run.
+
+| Planted Campaign | Shares within its own membership |
+| --- | --- |
+| `syn-campaign-alpha` | registrations: `vantage-ledger.example`; Contact Points: `syn_vantageledger` |
+| `syn-campaign-beta` | registrations: `signal-harbor.example`; Contact Points: `syn_northwindhire` |
+
+Every membership in this Corpus shares something that reaches a candidate, so nothing here is out of the method's reach by construction and the ceiling above is all of them. That is a fact about this Corpus and not a general one: a campaign that rotates both its registrations and its Contact Points is invisible to a method resting on those two edges, and one that leans on a known-shared host is lost with the host.
 
 ## False groupings
 
 A false grouping is a Campaign Candidate whose accounts belong to different Planted
 Campaigns, or to none. Stated as a rule rather than left to be inferred from the
 figure, so a reader can check the number against the sentence rather than the other
-way round.
+way round. One of the candidates above rests on a Contact Point alone, and a grouping
+built on the weaker of the two readings is the one this page should be read with more
+care: `rfi campaign-candidates` prints the measured recall behind that reading
+beside the candidate, and it is not the same kind of evidence as a registration.
 
-**1 of 3 Campaign Candidates are false groupings.**
+**3 of 4 Campaign Candidates are false groupings.**
 Measured against the Nuisance Structure in `data/corpus/nuisance.jsonl`, because a
 false-grouping rate over a clean sweep is a number nobody can falsify (ADR-0022).
 
 | Candidate | Accounts | Why it is a false grouping | Nuisance records |
 | --- | ---: | --- | --- |
-| `cc-02` | 3 | holds accounts that belong to no Planted Campaign | syn-nuisance-decoy-shop (decoy_account_cluster) |
+| `cc-01` | 4 | holds accounts that belong to no Planted Campaign | syn-nuisance-hard-negative-scam_complaint-syn_greyloch_6612 (hard_negative), syn-nuisance-paraphrase-alpha (staggered_paraphrase), syn-nuisance-shared-pastevault (known_shared_infrastructure) |
+| `cc-02` | 3 | holds accounts that belong to no Planted Campaign | syn-nuisance-obfuscated-copperlantern (obfuscated_contact) |
+| `cc-03` | 3 | holds accounts that belong to no Planted Campaign | syn-nuisance-decoy-shop (decoy_account_cluster) |
 
 ## Precision in the Review Queue at several depths
 
@@ -134,13 +153,18 @@ the posts called right or wrong would measure agreement with the generator rathe
 anything about fraud, and it would be a number nobody could falsify. That is why the
 figure is a count of recovered campaigns and not a rate over labelled posts (ADR-0004).
 
-**The figure is a lower bound, and the bounds are structural.** A Planted Campaign that
-leans on a known-shared host is lost with the host, because the registration is withheld
-before the grouping; an account that reaches no registration cannot be proposed at all;
-and a campaign that rotates its registration from one post to the next is invisible by
-construction, since nothing links its accounts but the registrations they share. Recovery
-measured this way is a statement about planted structure in a synthetic Corpus, and it is
-not an estimate of fraud found in the world.
+**The figure is a lower bound, and the bound is stated as a count.** A Planted Campaign
+that leans on a known-shared host is lost with the host, because the registration is
+withheld before the grouping; and a campaign that rotates both its registrations and its
+Contact Points leaves nothing inside itself that reaches a candidate, so no edge this
+method rests on can hold it however well the grouping works. That last case is the recall
+bound, counted in its own section above. It is published rather than described, because a
+rate a reader has to take on trust about its own ceiling is not a measurement.
+
+**The figure says nothing about fraud in the world.** Everything above is a statement
+about planted structure in a synthetic Corpus, measured against membership the generator
+wrote. It is not an estimate of fraud found in the world, and no figure over the whole
+Corpus is published to suggest otherwise.
 
 **Recovery and the false-grouping rate are measured together.** Recovery alone can be
 produced by a grouping that also merges unrelated accounts, so the rate of false
@@ -163,7 +187,7 @@ this page was written:
 | File | SHA-256 |
 | --- | --- |
 | `data/corpus/corpus.jsonl` | `3dbda898eb9a262ffdc9fa817c8bbadfd394315e45ca8211218da6615c20703f` |
-| `data/campaigns/campaign-candidates.jsonl` | `9de22d696ef985a9aa87996b39ca99d8e5b8f502873b577a92d79ee4ebab438b` |
+| `data/campaigns/campaign-candidates.jsonl` | `72aac5f37ab42d9b47fbd0e7609439cbfde80f87298240832c83b96e00a662c8` |
 | `data/corpus/truth.jsonl` | `fcb21f160c9eb213400716e559cc8d1239c074340997454b1ef3e8be913f8f7c` |
 | `data/corpus/nuisance.jsonl` | `702b4824be49aed370d41ceceeb11addf8f9089275d33be73805b9900a9be2ec` |
 | `data/signals/policy-scores.jsonl` | `2157650e7914f181faf093e833550b86e38c575bf438a2df296dc8c7dd7f1fa3` |
