@@ -964,7 +964,7 @@ def _facts(
     return EmbedFacts(
         accounts=len({item.account for item in items}),
         computed=stored.computed,
-        corpus_path=corpus_path.as_posix(),
+        corpus_path=_display_path(corpus_path),
         corpus_sha256=hashlib.sha256(corpus_path.read_bytes()).hexdigest(),
         plan_node=plan[0],
         plan_index=plan[1],
@@ -1016,7 +1016,8 @@ def _figures(embedded: Embedded) -> str:
         (
             "database",
             f"{store.host}:{store.port}/{store.database} as {store.user} "
-            f"(PostgreSQL {store.server_version}, pgvector {store.extension_version})",
+            f"(PostgreSQL {_pg_version(store.server_version)}, "
+            f"pgvector {store.extension_version})",
         ),
         ("table", f"{store.table} ({_count(store.rows, 'row')})"),
         ("index", store.index),
@@ -1223,6 +1224,39 @@ def _bytes(size: int) -> str:
         if size >= limit:
             return f"{size / limit:.1f} {unit}"
     return f"{size} bytes"
+
+
+def _pg_version(server_version: str) -> str:
+    """The numeric part of what the server says it is, and nothing else.
+
+    A Debian-packaged server answers `server_version` with `18.6 (Debian 18.6-1.pgdg12+2)`,
+    forty-one characters of distribution bookkeeping, where a source build answers `18.1`. The
+    version that bears on a `vector` column is the numeric one, so that is what is printed. A
+    figure whose width changes with the packaging of the host is a figure the output cannot
+    promise it holds to a width.
+    """
+    return server_version.split(" ")[0]
+
+
+def _display_path(path: Path) -> str:
+    """A path as a reader would type it, which is usually shorter than the one we were given.
+
+    Where the repository happens to be checked out is not a fact about the Corpus, so an
+    absolute path is not printed back: a CI checkout sits at
+    `/home/runner/work/<owner>/<repository>`, which repeats the repository's name and is longer
+    than anything a developer types, and the figure carrying it runs past the width the output
+    claims to hold while printing nothing a reader did not already know. A path under the
+    working directory is printed relative to it, which is what the README quotes and what a
+    reader would type to open it.
+
+    A path outside the working directory is printed in full, because there is nothing to be
+    relative to and a reader who cannot tell which file was read cannot check the digest
+    printed on the line below.
+    """
+    try:
+        return path.resolve().relative_to(Path.cwd()).as_posix()
+    except ValueError:
+        return path.as_posix()
 
 
 def _row(cells: Sequence[str], widths: Sequence[int]) -> str:

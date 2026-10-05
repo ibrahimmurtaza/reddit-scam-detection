@@ -1040,6 +1040,75 @@ def test_the_console_output_is_plain_ascii_within_its_own_width(
     assert not too_wide, f"lines wider than 100 columns: {too_wide}"
 
 
+def test_the_database_figure_prints_only_the_numeric_version(
+    tmp_path: Path, table: str
+) -> None:
+    """The width of that line is a property of the machine, not of this module.
+
+    A Debian-packaged server answers `server_version` with `18.6 (Debian 18.6-1.pgdg12+2)`,
+    forty-one characters of distribution bookkeeping; a source build answers `18.1`. The
+    version that matters to a `vector` column is the numeric one, so that is what is printed.
+    A line whose width changes with the packaging of the host is a line the width test above
+    cannot pass on every machine it claims to, and that test passed here only because this
+    machine's string is short.
+    """
+    printed = render_table(embed_corpus(COMMITTED_CORPUS, table))
+    line = next(
+        line for line in printed.splitlines() if line.strip().startswith("database")
+    )
+    matched = re.search(r"PostgreSQL ([^,]+), pgvector", line)
+    assert matched is not None, f"no PostgreSQL version on the database line: {line!r}"
+    printed_version = matched.group(1)
+    with open_store(connection_string()) as connection:
+        row = connection.execute(
+            "SELECT current_setting('server_version') AS version"
+        ).fetchone()
+    assert row is not None
+    answered = str(row["version"])
+
+    assert re.fullmatch(r"\d+(\.\d+)*", printed_version), (
+        f"printed {printed_version!r}, which is not a bare version: the host answered "
+        f"{answered!r}"
+    )
+    assert printed_version == answered.split(" ")[0]
+
+
+def test_the_corpus_figure_is_printed_relative_to_where_the_command_runs(
+    tmp_path: Path, table: str
+) -> None:
+    """So the line is the same length everywhere the repository happens to be checked out.
+
+    `Path(__file__).parent.parent` is absolute, so a caller that hands this command an absolute
+    path gets that whole path back in its output. A CI checkout sits at
+    `/home/runner/work/<owner>/<repository>`, and the line carrying it runs past the width the
+    output claims to hold. A path under the working directory is printed relative to it, which
+    is both shorter and what the README already quotes.
+    """
+    inside = Path.cwd() / "data" / "corpus" / "corpus.jsonl"
+
+    printed = render_table(embed_corpus(inside, table))
+
+    assert "corpus    data/corpus/corpus.jsonl (" in printed
+    assert str(Path.cwd()) not in printed
+
+
+def test_a_corpus_outside_the_working_directory_is_still_printed_in_full(
+    tmp_path: Path, table: str
+) -> None:
+    """Relative-to-here is a shortening, not a truncation.
+
+    A Corpus in a temporary directory is not under the working directory, so there is nothing
+    to be relative to, and printing only its last component would leave a reader unable to say
+    which of two such files was read. The SHA-256 on the line below identifies it either way,
+    but the path is what a reader opens.
+    """
+    corpus = write_corpus(tmp_path / "elsewhere.jsonl", (post("syn_p_9101", "syn_x_0101"),))
+
+    printed = render_table(embed_corpus(corpus, table))
+
+    assert f"corpus    {corpus.as_posix()} (1 post across 1 account)" in printed
+
+
 def test_the_command_refuses_to_write_the_corpus_away(tmp_path: Path, table: str) -> None:
     """The Corpus is the input. A path collision that overwrote it would destroy the thing
     the whole measurement is against, and every other command here has the same guard."""
