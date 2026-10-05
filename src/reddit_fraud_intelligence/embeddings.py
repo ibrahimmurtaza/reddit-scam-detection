@@ -665,7 +665,11 @@ class Stored:
 
 
 def store_embeddings(
-    connection: Database, table: str, items: Sequence[CorpusItem]
+    connection: Database,
+    table: str,
+    items: Sequence[CorpusItem],
+    *,
+    replace: bool = False,
 ) -> Stored:
     """Bring the table into line with the Corpus, embedding only what is not already there.
 
@@ -675,6 +679,13 @@ def store_embeddings(
     Rows for Content Items the Corpus no longer holds are removed rather than left behind.
     The table is a projection of the Corpus, and a row left behind would come back from every
     similarity query as though it were a post somebody could go and read.
+
+    That removal is also the one destructive statement in this module, so it is guarded:
+    `replace` says the named table is disposable, and without it a Corpus sharing no Content
+    Item with what the table holds is refused rather than allowed to empty it. Post ids are
+    what the guard reads, because a Corpus that edits posts keeps every post it did not touch
+    and nothing keyed on the file's digest would survive an edit — which is the ordinary case
+    the reuse rule exists to make cheap.
 
     A Corpus naming one post twice is refused here rather than by `read_corpus`, because a
     duplicate is only a problem in this path: it would be embedded twice, written twice, and
@@ -699,6 +710,8 @@ def store_embeddings(
     }
 
     reused = {record.post_id for record in records if held.get(record.post_id) == record.text_sha256}
+    if held and not replace and not (held.keys() & {record.post_id for record in records}):
+        raise _unrelated(table, held, records)
     computed = [
         ContentEmbedding(
             record=record, embedding=embed(embedded_text(known[record.post_id]))
@@ -913,7 +926,7 @@ def store_facts(connection: Database, table: str) -> VectorStore:
     )
 
 
-def embed_corpus(corpus_path: Path, table: str) -> Embedded:
+def embed_corpus(corpus_path: Path, table: str, *, replace: bool = False) -> Embedded:
     """Read the Corpus, store every Content Item's vector, and ask what is near what.
 
     One call, for the same reason the grouping and the scoring are one call: the records
@@ -930,7 +943,7 @@ def embed_corpus(corpus_path: Path, table: str) -> Embedded:
     try:
         ensure_table(connection, table)
         ensure_index(connection, table)
-        stored = store_embeddings(connection, table, items)
+        stored = store_embeddings(connection, table, items, replace=replace)
         records = stored.records
         return Embedded(
             facts=_facts(
@@ -1211,6 +1224,34 @@ def _count(number: int, noun: str) -> str:
     """One count, agreeing with its noun. Every figure here is small, and a reader seeing
     "1 posts" stops to wonder whether the figure is right."""
     return f"{number} {noun if number == 1 else f"{noun}s"}"
+
+
+def _unrelated(
+    table: str, held: Mapping[str, str], records: Sequence[ContentRecord]
+) -> ValueError:
+    """The refusal for a Corpus that shares nothing with the table, and why it is not a digest.
+
+    The rows about to be deleted are a function of which file was named on the command line,
+    and nothing in the table recorded which Corpus it was a projection of — so the shape of
+    the mistake is all there is to go on. Two Corpora with no Content Item in common is that
+    shape: every row in the table is about to go, and a run that meant to add a post never
+    adds a post and never shares one.
+
+    The refusal names the two counts rather than "an error", because the reader's next
+    question is how much was nearly lost, and it offers both ways out: another `--table` keeps
+    what is there, and `--replace` says this table was meant to be disposable. A guard with no
+    way to lift it deliberately is a guard that gets disabled rather than obeyed.
+    """
+    kept = sorted(held)
+    incoming = sorted(record.post_id for record in records)
+    return ValueError(
+        f"this Corpus shares no Content Item with the {len(held)} rows {table} holds, so "
+        f"bringing the table into line with it would empty it: it holds {kept[0]} through "
+        f"{kept[-1]} and this Corpus holds {incoming[0]} through {incoming[-1]}. The rows are "
+        "derived, so nothing is lost that a rerun cannot rebuild, but the Corpus they came "
+        "from has to still exist. If these are two Corpora, point --table at another name to "
+        "keep both; if this table was meant to be disposable, pass --replace"
+    )
 
 
 def _bytes(size: int) -> str:

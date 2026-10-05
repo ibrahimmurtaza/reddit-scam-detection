@@ -91,6 +91,15 @@ run publishes the plan rather than assuming it.
 - **Leave rows for Content Items the Corpus no longer holds.** Rejected: the table is a
   projection of the Corpus, and a row left behind comes out of every similarity query as
   though it were a post somebody could go and read.
+- **Record which Corpus the table is a projection of, and refuse a different one.** Rejected,
+  and it is the near miss worth recording, because it is the more obvious guard and it is
+  wrong. The obvious identity is the digest of the Corpus file, and editing one post's body
+  rewrites that file: every legitimate edit would be refused, which is the exact operation the
+  reuse rule exists to make cheap. Any identity stable across an edit is a property of the
+  posts rather than the file, so the guard reads post ids instead — two Corpora sharing no
+  Content Item is the shape of a mistyped `--corpus`, and a Corpus that edits posts shares
+  every post it did not touch and is never refused. `--replace` lifts it deliberately, because
+  a guard with no way to lift it on purpose is a guard that gets disabled rather than obeyed.
 - **`ivfflat` with a `lists` count chosen for this corpus.** Rejected, and it is the near miss
   worth recording. It is one index type away from the one chosen, it is what several
   tutorials reach for first, and on a table this small it is *worse* in the way that matters:

@@ -223,6 +223,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 corpus_path=Path(str(args.corpus)),
                 embeddings_path=Path(str(args.embeddings)),
                 table=str(args.table),
+                replace=bool(args.replace),
             )
         case _:
             parser.error(f"unknown command: {args.command}")
@@ -837,6 +838,15 @@ def _parser() -> argparse.ArgumentParser:
             f"go rather than this one's (default: {DEFAULT_EMBEDDING_TABLE})"
         ),
     )
+    embeddings.add_argument(
+        "--replace",
+        action="store_true",
+        help=(
+            "treat the named table as disposable: rows for Content Items this Corpus does "
+            "not hold are removed even if the two share no Content Item, which is what a "
+            "rerun against a rebuilt Corpus wants and what a mistyped --corpus must not do"
+        ),
+    )
     return parser
 
 
@@ -1315,7 +1325,9 @@ def _review_queue(*, scores_path: Path, candidates_path: Path, depth: int) -> in
     return 0
 
 
-def _content_embeddings(*, corpus_path: Path, embeddings_path: Path, table: str) -> int:
+def _content_embeddings(
+    *, corpus_path: Path, embeddings_path: Path, table: str, replace: bool = False
+) -> int:
     """Embed every Content Item, store the vectors, and publish the record of what is stored.
 
     The record is written and then read back before the run reports success, because a file
@@ -1339,7 +1351,7 @@ def _content_embeddings(*, corpus_path: Path, embeddings_path: Path, table: str)
     )
 
     try:
-        embedded = embed_corpus(corpus_path, table)
+        embedded = embed_corpus(corpus_path, table, replace=replace)
         write_content_records(embeddings_path, embedded.records)
         published = read_content_records(embeddings_path)
     except ValueError as refusal:

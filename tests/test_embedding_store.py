@@ -1,4 +1,4 @@
-﻿"""The pgvector half: the table, the index, the reuse rule, and the similarity query.
+"""The pgvector half: the table, the index, the reuse rule, and the similarity query.
 
 Everything here needs a PostgreSQL server with `pgvector` activated, which is the
 environment ticket #4 built and `docs/pgvector.md` documents. The tests are marked and
@@ -30,6 +30,7 @@ import struct
 import sys
 import urllib.request
 from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -222,6 +223,27 @@ def post(post_id: str, account: str, *links: str, body: str = "body") -> CorpusI
         created_at="2026-01-05T09:00:00Z",
         links=links,
     )
+
+
+def rows_held(connection: Database, table: str) -> int:
+    """How many rows the table holds, counted in the database rather than inferred.
+
+    The tests that assert a table was emptied, or was not, need the count after the fact and
+    have no other way to get it: the run that emptied it printed a figure, and a figure is
+    what this module exists to distrust.
+    """
+    row = (
+        connection.execute(
+            sql.SQL("SELECT count(*) AS rows FROM {table}").format(
+                table=sql.Identifier(table)
+            )
+        )
+        .fetchone()
+    )
+    assert row is not None
+    count = row["rows"]
+    assert isinstance(count, int)
+    return count
 
 
 # --- what goes in the column ------------------------------------------------------
@@ -1090,6 +1112,126 @@ def test_the_corpus_figure_is_printed_relative_to_where_the_command_runs(
 
     assert "corpus    data/corpus/corpus.jsonl (" in printed
     assert str(Path.cwd()) not in printed
+
+
+def test_a_second_corpus_will_not_empty_the_table_by_accident(
+    tmp_path: Path, table: str
+) -> None:
+    """The table is a projection of one Corpus, and nothing recorded which one.
+
+    `DELETE ... WHERE NOT (post_id = ANY(...))` is what keeps a removed Content Item from
+    coming back out of every similarity query as though it were a post somebody could read,
+    and it is also what empties thirty-four rows the moment `--corpus` names the wrong file.
+    The data is derived so a rerun restores it, but only from a Corpus that still exists, and
+    the run that destroyed it was the run that should have noticed.
+
+    Refused when the two share no Content Item at all, which is the shape of pointing at the
+    wrong file: every post in one is absent from the other, so all of the table is about to go.
+    A Corpus that *edits* posts shares every post it did not touch and is never refused.
+    """
+    other = write_corpus(
+        tmp_path / "other.jsonl", (post("syn_p_9301", "syn_x_0301"),)
+    )
+    embed_corpus(COMMITTED_CORPUS, table)
+
+    with pytest.raises(ValueError, match="empty"):
+        embed_corpus(other, table)
+
+    with open_store(connection_string()) as connection:
+        assert rows_held(connection, table) == len(read_corpus(COMMITTED_CORPUS))
+
+
+def test_a_corpus_that_edits_posts_is_never_refused(
+    tmp_path: Path, table: str
+) -> None:
+    """The guard is about an unrelated file, not about a Corpus that changed.
+
+    Editing one post's body rewrites the Corpus file, so anything keying on the digest of the
+    file would refuse on every legitimate edit - and the reuse rule exists precisely to make
+    those cheap. Post ids are what survive an edit, so they are what the guard reads.
+    """
+    items = read_corpus(COMMITTED_CORPUS)
+    edited = write_corpus(
+        tmp_path / "edited.jsonl",
+        (
+            replace(
+                items[0], body=f"{items[0].body} and one more sentence"
+            ),
+            *items[1:],
+        ),
+    )
+
+    embed_corpus(COMMITTED_CORPUS, table)
+    stored = embed_corpus(edited, table)
+
+    assert stored.facts.computed == 1
+    assert stored.facts.reused == len(items) - 1
+
+
+def test_a_replacement_flag_lets_the_caller_empty_the_table_on_purpose(
+    tmp_path: Path, table: str
+) -> None:
+    """`--replace` is how a reader says they meant it.
+
+    Somebody re-running this against a rebuilt Corpus from scratch has no reason to be stopped,
+    and the guard that stops them by default is worthless if it cannot be lifted deliberately.
+    """
+    other = write_corpus(
+        tmp_path / "other.jsonl", (post("syn_p_9301", "syn_x_0301"),)
+    )
+    embed_corpus(COMMITTED_CORPUS, table)
+
+    stored = embed_corpus(other, table, replace=True)
+
+    assert stored.facts.posts == 1
+    with open_store(connection_string()) as connection:
+        assert rows_held(connection, table) == 1
+
+
+def test_the_command_exits_on_an_unrelated_corpus_and_says_how_to_lift_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], table: str
+) -> None:
+    """The refusal has to reach the reader as an exit, not as a traceback.
+
+    `SystemExit` carrying the refusal's own words is what every other refusal here does, and
+    it is the only reason `--replace` is discoverable: a guard whose way out is not printed is
+    a guard a reader works around by dropping the command.
+    """
+    other = write_corpus(
+        tmp_path / "other.jsonl", (post("syn_p_9301", "syn_x_0301"),)
+    )
+    run(tmp_path / "first", corpus=COMMITTED_CORPUS, capsys=capsys, table=table)
+
+    with pytest.raises(SystemExit) as raised:
+        main(["content-embeddings", "--corpus", str(other), "--table", table])
+
+    assert "--replace" in str(raised.value)
+    assert str(table) in str(raised.value)
+
+
+def test_the_command_accepts_the_replacement_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], table: str
+) -> None:
+    other = write_corpus(
+        tmp_path / "other.jsonl", (post("syn_p_9301", "syn_x_0301"),)
+    )
+    run(tmp_path / "first", corpus=COMMITTED_CORPUS, capsys=capsys, table=table)
+
+    main(
+        [
+            "content-embeddings",
+            "--corpus",
+            str(other),
+            "--embeddings",
+            str(tmp_path / "records.jsonl"),
+            "--table",
+            table,
+            "--replace",
+        ]
+    )
+
+    with open_store(connection_string()) as connection:
+        assert rows_held(connection, table) == 1
 
 
 def test_a_corpus_outside_the_working_directory_is_still_printed_in_full(

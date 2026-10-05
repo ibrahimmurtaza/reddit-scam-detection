@@ -834,6 +834,16 @@ edited post costs one embedding and not thirty-four, and rows for posts the Corp
 holds are removed rather than left behind to come out of every query as though they were
 posts somebody could read.
 
+That removal is the one destructive thing this command does, and which rows it removes is a
+function of which file was named on the command line, so it is guarded. A Corpus sharing no
+post id at all with what the table holds is refused rather than allowed to empty it: that is
+the shape of a mistyped `--corpus`, and it is the shape in which a run that meant to add a
+post adds nothing and shares nothing. A Corpus that *edits* posts keeps every post it did not
+touch and is never refused — which is why the guard reads post ids and not the digest of the
+file, since editing one post rewrites that digest and would refuse every ordinary edit. Pass
+`--replace` when the table really is meant to be disposable. The rows are derived, so nothing
+is lost that a rerun cannot rebuild, but the Corpus they came from has to still exist.
+
 **The model is this project's own, and it is published.** `hashed-word-ngrams-v1`, 256
 dimensions, and the digest of the recipe — three facts a reader needs before a stored vector
 means anything, because two models' numbers have no common distance. A feature is each word
