@@ -165,18 +165,23 @@ class Evidence(StrEnum):
     BOTH = "registrations and Contact Points"
 
     @property
-    def kind(self) -> EvidenceKind | None:
-        """The one edge this label names, and `None` for the two that name none or both.
+    def kind(self) -> EvidenceKind:
+        """The one edge this label names.
 
-        `NONE` and `BOTH` have no single edge and say so rather than picking one, which is
-        the same reason they exist: a timing row always names exactly one kind, so a
-        candidate resting on both edges cannot be rendered as one.
+        `NONE` and `BOTH` name no single edge and are refused rather than answered with
+        one: a piece of evidence is a registration or a Contact Point and never both and
+        never neither, so a label naming two or none has no answer to give. Answering with
+        a guess is how two vocabularies for the same thing drift apart quietly, and this is
+        the only place the reader learns which kind a piece of evidence is.
         """
         if self is Evidence.DOMAIN:
             return EvidenceKind.REGISTRATION
         if self is Evidence.CONTACT:
             return EvidenceKind.CONTACT_POINT
-        return None
+        raise ValueError(
+            f"{self.value} names no single edge, so it has no kind: a piece of evidence is "
+            "a registration or a Contact Point, and never both and never neither"
+        )
 
     @classmethod
     def of(cls, shared_domains: Sequence[SharedDomain], points: Sequence[SharedContact]) -> Evidence:
@@ -1226,13 +1231,11 @@ def _named_evidence(
     location is a complaint a reader of the file cannot act on, which is the whole reason
     `read_object` hands the line number down.
     """
-    kind = label.kind
-    assert kind is not None, f"{label} names no single edge"
     if field not in record:
         raise ValueError(
             f"{where} holds {label.value} with {sorted(record)}, and it names no {field}"
         )
-    return (kind.value, read_text(where, record, field))
+    return (label.kind.value, read_text(where, record, field))
 
 
 def _gaps(
