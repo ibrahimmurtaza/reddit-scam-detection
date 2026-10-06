@@ -49,6 +49,22 @@ resolved links and the published Contact Points already hold it. The withheld
 registrations are printed on the same terms, since a registration in the resolved links
 that no candidate names would otherwise be unexplained.
 
+The clock is read here too, and it is read as corroboration and nothing else
+(ADR-0025). Every candidate carries the temporal proximity of the things it rests on —
+the span from the earliest post by any account reaching one to the latest, and the gap
+between the nearest two of them — and a piece of evidence whose accounts were all active
+inside a stated window is corroborated. That verdict does not join two accounts at any
+window, because ADR-0005 says a candidate rests on shared infrastructure and on nothing
+else, and a rule that could be argued about from a threshold would be a grouping by
+timing wearing a grouping by registration's clothes. What it does is order the output and
+say so: a candidate the window corroborates something under is printed ahead of every
+candidate it corroborates nothing under, and one it corroborates nothing under is named
+below the table with the gaps beside its evidence, because a miss nobody can see is a miss
+nobody can diagnose. The window is a figure in the output and a parameter on the command,
+not a rule buried here, and nothing is removed for want of it: a registration two
+accounts reached months apart may be a registration that changed hands, and a campaign may
+simply be a patient one.
+
 What this cannot reach is stated here rather than left in the tickets. A campaign that
 rotates both its registrations and its Contact Points shares nothing with itself, so no
 grouping resting on either edge can propose it; the count of campaigns in that position
@@ -63,8 +79,9 @@ evaluator after this has finished (ADR-0008).
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -94,6 +111,12 @@ _SUBHEADING = """\
 Accounts joined by a shared registrable domain or a shared Contact Point.
 Every entry is a proposal, not a finding about who is behind them."""
 
+# The window temporal proximity is measured against, in hours. A parameter rather than a
+# constant because what counts as "at the same time" is a judgment a reader may want to
+# make differently, and because a figure whose rule is buried in the code cannot be
+# disagreed with: the output names this number on every run and `--window-hours` sets it.
+DEFAULT_WINDOW_HOURS = 24
+
 # What justified a candidate, in the run's own words. Three and no fourth, because
 # ADR-0005 permits two edges and a candidate of two or more accounts cannot have used
 # neither. The names are the ones the index and the blocks print, so the table cannot
@@ -105,6 +128,23 @@ Every entry is a proposal, not a finding about who is behind them."""
 # candidate resting on one handle rests on the weaker of the two readings and a reader
 # is entitled to know that before deciding whether to act on it.
 _WEAKER = "the weaker of the two readings; `rfi contact-points` has the measured recall"
+
+
+class EvidenceKind(StrEnum):
+    """Which of ADR-0005's two edges one piece of evidence belongs to.
+
+    The singular of the two labels above, kept as its own vocabulary because a piece of
+    evidence names exactly one edge and a candidate's label may name both or neither. The
+    two are not written out twice anywhere: `Evidence.kind` reads this one, and the reader
+    takes the kind off that rather than off a literal of its own.
+
+    A closed vocabulary rather than the name of a thing, because the published file pairs
+    each timing row with the evidence it describes and a row naming something this build
+    does not publish is a row no figure beside it can be counted in.
+    """
+
+    REGISTRATION = "registration"
+    CONTACT_POINT = "Contact Point"
 
 
 class Evidence(StrEnum):
@@ -123,6 +163,20 @@ class Evidence(StrEnum):
     DOMAIN = "registrations"
     CONTACT = "Contact Points"
     BOTH = "registrations and Contact Points"
+
+    @property
+    def kind(self) -> EvidenceKind | None:
+        """The one edge this label names, and `None` for the two that name none or both.
+
+        `NONE` and `BOTH` have no single edge and say so rather than picking one, which is
+        the same reason they exist: a timing row always names exactly one kind, so a
+        candidate resting on both edges cannot be rendered as one.
+        """
+        if self is Evidence.DOMAIN:
+            return EvidenceKind.REGISTRATION
+        if self is Evidence.CONTACT:
+            return EvidenceKind.CONTACT_POINT
+        return None
 
     @classmethod
     def of(cls, shared_domains: Sequence[SharedDomain], points: Sequence[SharedContact]) -> Evidence:
@@ -191,13 +245,103 @@ class WithheldRegistration:
 
 
 @dataclass(frozen=True, slots=True)
+class _Joined:
+    """What one component rests on, and when the accounts behind each of it posted.
+
+    The evidence and its timing in one value, because they are one answer: a candidate
+    whose registrations and Contact Points were worked out in one pass and whose gaps were
+    worked out in another could print a gap beside a piece of evidence it does not name, or
+    leave one named piece of evidence with no gap beside it at all. Nothing here reaches
+    outside the component, so every list is the justification rather than the context.
+    """
+
+    domains: tuple[SharedDomain, ...]
+    points: tuple[SharedContact, ...]
+    timing: tuple[EvidenceTiming, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceTiming:
+    """How close in time the accounts behind one piece of evidence posted.
+
+    Two gaps, and they answer different questions. `span_seconds` runs from the earliest
+    of those accounts' posts to the latest, and it is what the window is measured against:
+    an operator running two accounts is active through both of them across the same days,
+    and a registration two accounts reached months apart may be a domain that changed
+    hands — which is the case the ticket is written for. `closest_seconds` is between the
+    nearest post by one account reaching the evidence and the nearest by another. It never
+    decides anything, and it is published because it is the figure a reader needs to
+    disagree with the span: a candidate whose accounts came within a minute of each other
+    and did nothing else together for three weeks is a different claim from one whose
+    accounts posted together all morning.
+
+    Both are published rather than summarised, and neither is allowed to group anything:
+    see `Timing`.
+    """
+
+    kind: EvidenceKind
+    value: str
+    closest_seconds: int
+    span_seconds: int
+
+    def within(self, window_seconds: int) -> bool:
+        """Whether these accounts were all active inside the stated window.
+
+        A method rather than a stored column, for the reason ADR-0023 gives for not
+        storing the evidence label: a verdict nothing recomputes is a second account of
+        the same fact, and the file and the table beside it could then disagree about
+        whether a candidate was corroborated.
+
+        The span rather than the closest pair, which is the stronger of the two readings
+        and the one the ticket asks for. Deciding on the closest pair would let a single
+        coincidence corroborate a whole component: two of five accounts posting in the
+        same minute by accident is enough to call the other three corroborated, and a
+        group claim is not settled by the luckiest pair in it.
+        """
+        return self.span_seconds <= window_seconds
+
+
+@dataclass(frozen=True, slots=True)
+class Timing:
+    """Temporal proximity across a whole candidate, in the run's own words.
+
+    `pieces` is how many registrations and Contact Points the candidate rests on and
+    `corroborated` is how many of them hold their accounts inside the window, so a
+    candidate resting on one registration reads `1 of 1` or `0 of 1` and a candidate
+    resting on both edges reads out of four rather than collapsing to a yes.
+    `closest_seconds` is the nearest pair of accounts anywhere in the component, and it
+    is published whatever the window says: it is the gap a reader needs to disagree with
+    the window rather than the number the window produced.
+    """
+
+    window_seconds: int
+    pieces: int
+    corroborated: int
+    closest_seconds: int
+
+    @property
+    def corroborates(self) -> bool:
+        """Whether any piece of evidence under this candidate holds two accounts together.
+
+        Anything at all, rather than all of it. A candidate whose registration puts two
+        accounts in the same hour and whose Contact Point joins a third a fortnight later
+        is a grouping timing agrees with and disagrees with in two places, and the second
+        place is printed beside the third account rather than used to throw the candidate
+        away.
+        """
+        return self.corroborated > 0
+
+
+@dataclass(frozen=True, slots=True)
 class CampaignCandidate:
     """A proposed grouping of accounts, and everything a reader needs to check it.
 
     `accounts` is what the run proposes; `shared_domains` and `shared_contact_points`
     are why, and `evidence` says which of the two the candidate rests on. `first_seen`
     is the earliest post by any account in the component, which is the only date in the
-    Corpus that says anything about when the group was active.
+    Corpus that says anything about when the group was active. `corroboration` and
+    `timing` are what the clock adds, which is corroboration and never the reason the
+    candidate exists (ADR-0025).
     """
 
     candidate_id: str
@@ -205,6 +349,8 @@ class CampaignCandidate:
     posts: tuple[str, ...]
     shared_domains: tuple[SharedDomain, ...]
     shared_contact_points: tuple[SharedContact, ...]
+    corroboration: tuple[EvidenceTiming, ...]
+    timing: Timing
     first_seen: str
 
     @property
@@ -290,6 +436,31 @@ class SharedFilter:
 
 
 @dataclass(frozen=True, slots=True)
+class Corroboration:
+    """What the clock added to this run, which is evidence for and against and never a
+    grouping edge (ADR-0005).
+
+    Beside `SharedFilter`, which removes accounts from the graph, this one removes
+    nothing. `deprioritised` is every candidate the window corroborates nothing under, and
+    it is carried whole rather than counted so the output can name each one: a grouping
+    that got weaker for want of a second account in the same hour is a decision, and a
+    decision a reader cannot see is the same as a defect nobody noticed.
+
+    The two candidate counts and the two piece counts are published side by side because
+    they can disagree, and when they do the disagreement is the finding — a candidate
+    corroborated by one registration and not by the Contact Point that joined its third
+    account is the shape this Corpus actually produces.
+    """
+
+    window_seconds: int
+    candidates: int
+    corroborated: int
+    pieces: int
+    corroborated_pieces: int
+    deprioritised: tuple[CampaignCandidate, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Grouping:
     """Everything one run establishes, so the table and the file cannot disagree.
 
@@ -300,11 +471,17 @@ class Grouping:
 
     facts: GroupingFacts
     filtered: SharedFilter
+    temporal: Corroboration
     candidates: tuple[CampaignCandidate, ...]
     corpus: tuple[CorpusItem, ...] = field(repr=False)
 
 
-def group(corpus_path: Path, list_path: Path, shared_path: Path) -> Grouping:
+def group(
+    corpus_path: Path,
+    list_path: Path,
+    shared_path: Path,
+    window_hours: int = DEFAULT_WINDOW_HOURS,
+) -> Grouping:
     """Read the three files and return the candidates, the figures, and the Corpus.
 
     One call, because the figures, the candidates, and the printed evidence are three
@@ -327,7 +504,9 @@ def group(corpus_path: Path, list_path: Path, shared_path: Path) -> Grouping:
     step before it.
 
     Candidates come out largest first, then by the accounts' names, so a fixed Corpus
-    produces a fixed list under fixed identifiers. The identifier says where a
+    produces a fixed list under fixed identifiers — with every candidate the timing
+    corroborates ahead of every candidate it does not, because that is the whole of
+    what timing is allowed to do here (ADR-0005). The identifier says where a
     candidate sits in the output and nothing else: it is not an identity that survives
     the Corpus changing underneath it.
     """
@@ -338,12 +517,13 @@ def group(corpus_path: Path, list_path: Path, shared_path: Path) -> Grouping:
     points = shared_contact_points(read_contact_points(corpus))
     created_at = {item.post_id: item.created_at for item in corpus}
 
+    window_seconds = _window_seconds(window_hours)
     withheld = shared.withheld()
     kept = _Reach.of(rows, points, created_at, withheld)
     unfiltered = _Reach.of(rows, points, created_at, frozenset())
     candidates = tuple(
-        kept.candidate(f"cc-{number:02d}", accounts)
-        for number, accounts in enumerate(sorted(kept.components(), key=kept.order_key), start=1)
+        kept.candidate(f"cc-{number:02d}", accounts, window_seconds)
+        for number, accounts in enumerate(kept.ordered(window_seconds), start=1)
     )
     shared_filter = _filter(rows, unfiltered, points, candidates, shared, withheld)
     return Grouping(
@@ -357,8 +537,47 @@ def group(corpus_path: Path, list_path: Path, shared_path: Path) -> Grouping:
             shared_filter.silenced,
         ),
         filtered=shared_filter,
+        temporal=_corroboration(window_seconds, candidates),
         candidates=candidates,
         corpus=corpus,
+    )
+
+
+def _window_seconds(window_hours: int) -> int:
+    """The window in seconds, refusing a window that could never corroborate anything.
+
+    Zero would make the closest pair of accounts fall outside it however close the two
+    posts are, and a negative window is the same rule reached from the other side. The
+    run refuses it rather than publishing a figure about a threshold that cannot be met,
+    which is what makes `--window-hours 0` a mistake somebody is told about rather than a
+    Corpus every candidate of which is uncorroborated for no reason.
+    """
+    if window_hours < 1:
+        raise ValueError(
+            f"--window-hours is {window_hours}, and a window has to be at least one hour: "
+            "nothing falls inside a window of less than that"
+        )
+    return window_hours * 3_600
+
+
+def _corroboration(
+    window_seconds: int, candidates: Sequence[CampaignCandidate]
+) -> Corroboration:
+    """What the clock says across the whole run, and which candidates it says nothing about.
+
+    Counted off the candidates themselves rather than recomputed, so the figure and the
+    lines under each candidate cannot disagree: one candidate's timing is one count and
+    this sums them.
+    """
+    return Corroboration(
+        window_seconds=window_seconds,
+        candidates=len(candidates),
+        corroborated=sum(1 for candidate in candidates if candidate.timing.corroborates),
+        pieces=sum(len(candidate.corroboration) for candidate in candidates),
+        corroborated_pieces=sum(candidate.timing.corroborated for candidate in candidates),
+        deprioritised=tuple(
+            candidate for candidate in candidates if not candidate.timing.corroborates
+        ),
     )
 
 
@@ -375,6 +594,13 @@ class _Reach:
     keys them. It is carried whole rather than re-indexed by accounts, because the
     spellings and the post list of each one are evidence the candidate has to publish
     and there is nothing to be gained by taking them apart to put them back together.
+
+    `moments` is each account's posts as sorted instants, which is the whole of what the
+    clock needs: one index rather than a re-read of the Corpus per piece of evidence,
+    and it is built from the same `posts_by_account` the grouping was built from, so a
+    post that reached no registration still counts towards when its account was active.
+    That matters — the complaint a victim writes about a desk arrives weeks after the
+    desk's own posts, and it is the timestamp of both that says so.
     """
 
     accounts_by_domain: dict[str, set[str]]
@@ -382,6 +608,7 @@ class _Reach:
     points: Mapping[tuple[ContactKind, str], SharedContact]
     posts_by_account: dict[str, set[str]]
     first_seen: dict[str, str]
+    moments: dict[str, tuple[datetime, ...]]
 
     @classmethod
     def of(
@@ -402,7 +629,7 @@ class _Reach:
         The posts of both still count towards the accounts that wrote them, because a
         post is why an account is silent, not why its other posts do not exist.
         """
-        reach = cls({}, {}, {}, {}, {})
+        reach = cls({}, {}, {}, {}, {}, {})
         for row in rows:
             reach.posts_by_account.setdefault(row.account, set()).add(row.post_id)
             _earliest(reach.first_seen, row.account, created_at[row.post_id])
@@ -416,6 +643,10 @@ class _Reach:
             points={
                 key: point for key, point in points.items() if _kept(point, withheld)
             },
+            moments={
+                account: tuple(sorted(_moment(created_at[post]) for post in posts))
+                for account, posts in reach.posts_by_account.items()
+            },
         )
 
     def order_key(self, accounts: frozenset[str]) -> tuple[int, int, tuple[str, ...]]:
@@ -425,6 +656,23 @@ class _Reach:
         that does not depend on how many posts the Corpus happens to hold for it.
         """
         return (-len(accounts), -len(self.posts_of(accounts)), tuple(sorted(accounts)))
+
+    def ordered(self, window_seconds: int) -> list[frozenset[str]]:
+        """The components, the corroborated ones first, then the usual order.
+
+        The only thing the clock is allowed to do to the output. Corroborated ahead of
+        uncorroborated is a deprioritising and not a filter: both are reported, and
+        which is which is under every candidate's name. Sorting on it at all is the
+        difference between the ordering being the run's opinion and the clock being a
+        column of a table somebody can ignore.
+        """
+        return sorted(
+            self.components(),
+            key=lambda accounts: (
+                not self.timing(accounts, window_seconds).corroborates,
+                *self.order_key(accounts),
+            ),
+        )
 
     def posts_of(self, accounts: frozenset[str]) -> tuple[str, ...]:
         """Every post written by a set of accounts, sorted."""
@@ -440,24 +688,33 @@ class _Reach:
         """
         return frozenset(self.accounts_by_domain.get(registration, ()))
 
-    def candidate(self, candidate_id: str, accounts: frozenset[str]) -> CampaignCandidate:
-        """One component, with the shared registrations and Contact Points that join it
-        rather than every one it touches.
+    def timing(self, accounts: frozenset[str], window_seconds: int) -> Timing:
+        """What the clock says about one component, against a stated window.
+
+        Worked out from the same gaps the candidate publishes, by the same function, so the
+        ordering and the line printed under a candidate cannot disagree about which
+        candidates are corroborated. It is worked out twice — once to sort the components
+        and once to build the candidate they become — because the order has to be settled
+        before any identifier is assigned, and the gaps are a pure function of the
+        component, so there is nothing for the two to disagree about.
+        """
+        return _summary(self.corroboration(accounts), window_seconds)
+
+    def corroboration(self, accounts: frozenset[str]) -> tuple[EvidenceTiming, ...]:
+        """The timing of every piece of evidence a component is joined on."""
+        return self._joined(accounts).timing
+
+    def _joined(self, accounts: frozenset[str]) -> _Joined:
+        """What one component rests on, and how far apart those accounts posted.
 
         Only something two of the component's accounts reach is named: it is the reason
-        the accounts are together, and every registration is in the resolved links and
-        every Contact Point in the file the reading published. Every post of every
-        account in the component is listed, not only the posts that carry shared
-        evidence — an account reached through one link or one handle may have posts that
-        show what else it does, and that is the material a reviewer reads the grouping
-        against.
-
-        A Contact Point's spellings are the Corpus's rather than the component's, and
-        that is deliberate: the spellings are what tells sharing from folding, and
-        leaving out the one that made a second account's post read as the same value
-        would hide the only evidence that it was a fold rather than a repetition.
+        they are together, and every registration is in the resolved links and every
+        Contact Point in the file the reading published. A registration one account of the
+        component reaches is context rather than a reason, and a gap measured over the
+        accounts that joined nothing would be a number about the Corpus rather than about
+        this candidate.
         """
-        shared = tuple(
+        domains = tuple(
             SharedDomain(
                 domain=domain,
                 accounts=tuple(sorted(accounts & self.accounts_by_domain[domain])),
@@ -466,17 +723,96 @@ class _Reach:
             for domain in sorted(self.accounts_by_domain)
             if len(accounts & self.accounts_by_domain[domain]) > 1
         )
-        joined = tuple(
+        points = tuple(
             replace(point, accounts=tuple(sorted(accounts & set(point.accounts))))
             for _, point in sorted(self.points.items())
             if len(accounts & set(point.accounts)) > 1
         )
+        pieces = [
+            *(
+                (EvidenceKind.REGISTRATION, shared.domain, shared.accounts)
+                for shared in domains
+            ),
+            *(
+                (EvidenceKind.CONTACT_POINT, point.value, point.accounts)
+                for point in points
+            ),
+        ]
+        return _Joined(
+            domains=domains,
+            points=points,
+            timing=tuple(self._gap(kind, value, reaching) for kind, value, reaching in pieces),
+        )
+
+    def _gap(self, kind: EvidenceKind, value: str, reaching: Collection[str]) -> EvidenceTiming:
+        """One piece of evidence, and how far apart the accounts that reach it posted.
+
+        The nearest pair of accounts is found by walking the posts in time order and
+        looking at the neighbouring pairs that belong to different accounts, rather than
+        by pairing every account with every other: the closest two posts by different
+        accounts are always neighbours in that order, because anything between them would
+        be nearer to one of them. So the walk is linear in the posts of the piece rather
+        than quadratic in them, and a candidate over a thousand posts costs no more than
+        one over ten.
+
+        The span is the first post to the last, over every account reaching the piece and
+        every post any of them wrote — not only the posts carrying it. An account that
+        published a handle once and posts about something else for a year was still
+        active for a year, and that is the span a reader wants beside the gap.
+
+        An account that reached the evidence with no post in the Corpus is refused rather
+        than skipped, because there is no moment for it and a skipped one would leave the
+        span measuring fewer accounts than the evidence names.
+        """
+        silent = sorted(set(reaching) - self.moments.keys())
+        if silent:
+            raise ValueError(
+                f"{value} is reached by {silent}, and an account with no post in the Corpus "
+                "has no moment to be timed at"
+            )
+        ordered = sorted(
+            (moment, account) for account in reaching for moment in self.moments[account]
+        )
+        gaps = (
+            (later[0] - earlier[0]).total_seconds()
+            for earlier, later in zip(ordered, ordered[1:], strict=False)
+            if earlier[1] != later[1]
+        )
+        return EvidenceTiming(
+            kind=kind,
+            value=value,
+            closest_seconds=int(min(gaps, default=0.0)),
+            span_seconds=int((ordered[-1][0] - ordered[0][0]).total_seconds()),
+        )
+
+    def candidate(
+        self, candidate_id: str, accounts: frozenset[str], window_seconds: int
+    ) -> CampaignCandidate:
+        """One component, with the shared registrations and Contact Points that join it
+        rather than every one it touches, and the timing of each.
+
+        Every post of every account in the component is listed, not only the posts that
+        carry shared evidence — an account reached through one link or one handle may have
+        posts that show what else it does, and that is the material a reviewer reads the
+        grouping against.
+
+        A Contact Point's spellings are the Corpus's rather than the component's, and
+        that is deliberate: the spellings are what tells sharing from folding, and
+        leaving out the one that made a second account's post read as the same value
+        would hide the only evidence that it was a fold rather than a repetition.
+
+        The evidence and its timing come out of one pass, so a candidate cannot print a gap
+        beside a piece of evidence it does not name or name one it has no gap for.
+        """
+        joined = self._joined(accounts)
         return CampaignCandidate(
             candidate_id=candidate_id,
             accounts=tuple(sorted(accounts)),
             posts=self.posts_of(accounts),
-            shared_domains=shared,
-            shared_contact_points=joined,
+            shared_domains=joined.domains,
+            shared_contact_points=joined.points,
+            corroboration=joined.timing,
+            timing=_summary(joined.timing, window_seconds),
             first_seen=min(self.first_seen[account] for account in accounts),
         )
 
@@ -534,6 +870,53 @@ def _earliest(first_seen: dict[str, str], account: str, created_at: str) -> None
     """Keep the earliest post per account. RFC 3339 UTC sorts lexically as it reads."""
     if account not in first_seen or created_at < first_seen[account]:
         first_seen[account] = created_at
+
+
+def _summary(pieces: Sequence[EvidenceTiming], window_seconds: int) -> Timing:
+    """One candidate's timing, from the gaps it publishes.
+
+    The one place the four figures are counted, so the ordering decision, the line under
+    the candidate and the line in the file are the same arithmetic. `closest_seconds` is
+    published whatever the window says: it is the gap a reader needs in order to disagree
+    with the window rather than the number the window produced.
+    """
+    return Timing(
+        window_seconds=window_seconds,
+        pieces=len(pieces),
+        corroborated=sum(1 for piece in pieces if piece.within(window_seconds)),
+        closest_seconds=min((piece.closest_seconds for piece in pieces), default=0),
+    )
+
+
+def _moment(created_at: str) -> datetime:
+    """One post's timestamp as an instant, so two of them can be subtracted.
+
+    The Corpus writes RFC 3339 in UTC and the writer sorts on it lexically, which is
+    chronological order as long as the offset is always the same one — a Corpus carrying
+    both `Z` and `+02:00` would sort wrongly there, and parsing here is what makes the
+    gaps right anyway. A timestamp that will not parse is refused by name rather than
+    quietly read as zero: a gap of no length at all is the one figure in this module that
+    would corroborate everything.
+
+    A timestamp with no offset is refused too, and separately, because it is not a failure
+    of parsing but of arithmetic: subtracting it from one that carries an offset raises a
+    `TypeError` from inside the subtraction rather than anything a reader of this output
+    could act on. The Corpus generator writes `Z` throughout; a Corpus Provider that wrote
+    a local time would be refused here and named, which is the point of the refusal.
+    """
+    try:
+        moment = datetime.fromisoformat(created_at)
+    except ValueError as refusal:
+        raise ValueError(
+            f"created_at={created_at!r} is not an RFC 3339 timestamp, and the timing of a "
+            "post cannot be read from it"
+        ) from refusal
+    if moment.tzinfo is None:
+        raise ValueError(
+            f"created_at={created_at!r} carries no offset, and a gap between it and a "
+            "timestamp that carries one is not a length"
+        )
+    return moment
 
 
 def _facts(
@@ -706,6 +1089,21 @@ def write_campaign_candidates(path: Path, candidates: Sequence[CampaignCandidate
                     }
                     for point in candidate.shared_contact_points
                 ],
+                "corroboration": [
+                    {
+                        "kind": piece.kind.value,
+                        "value": piece.value,
+                        "closest_seconds": piece.closest_seconds,
+                        "span_seconds": piece.span_seconds,
+                    }
+                    for piece in candidate.corroboration
+                ],
+                "timing": {
+                    "window_seconds": candidate.timing.window_seconds,
+                    "pieces": candidate.timing.pieces,
+                    "corroborated": candidate.timing.corroborated,
+                    "closest_seconds": candidate.timing.closest_seconds,
+                },
                 "first_seen": candidate.first_seen,
             }
 
@@ -730,6 +1128,18 @@ def read_campaign_candidates(path: Path) -> tuple[CampaignCandidate, ...]:
     Campaign Candidate (ADR-0005), so a file holding one is a file describing a
     grouping this project does not produce, and the recovery figure would then be
     joining against something other than the grouping's output.
+
+    Every row is also checked against the arithmetic it publishes beside itself, which
+    is the arrangement `read_policy_scores` has: the timing on a row has to name exactly
+    the evidence the row rests on, to count as many pieces as there are of them, and to
+    carry the nearest gap among them. A file whose rows disagree with themselves about
+    when their accounts posted is a file a reader cannot use to weigh a candidate, and
+    the two commands that read it would print the disagreement as though it were a fact.
+
+    One window across the whole file, for the same reason `read_policy_scores` demands
+    one published weight set: `corroborated` means nothing without the threshold it was
+    counted against, so a file written by two runs at two windows is refused rather than
+    read as one figure.
     """
     candidates = tuple(_candidate(path, number, text) for number, text in read_rows(path))
     refuse_repeated(
@@ -737,6 +1147,13 @@ def read_campaign_candidates(path: Path) -> tuple[CampaignCandidate, ...]:
         (candidate.candidate_id for candidate in candidates),
         "a join would count a candidate twice",
     )
+    windows = {candidate.timing.window_seconds for candidate in candidates}
+    if len(windows) > 1:
+        raise ValueError(
+            f"{path.as_posix()} publishes {sorted(windows)} seconds of timing window across "
+            "its rows, and a corroborated count means nothing without the window it was "
+            "counted against"
+        )
     return candidates
 
 
@@ -757,6 +1174,8 @@ def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
         )
     shared = _entries(where, record, "shared_domains")
     points = _entries(where, record, "shared_contact_points")
+    names = _joined_on(where, shared, points)
+    pieces = _gaps(where, record, names)
     return CampaignCandidate(
         candidate_id=read_text(where, record, "candidate_id"),
         accounts=accounts,
@@ -767,8 +1186,183 @@ def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
         shared_contact_points=tuple(
             _point(where, entry, accounts) for entry in points if isinstance(entry, dict)
         ),
+        corroboration=pieces,
+        timing=_timing(where, record, names, pieces),
         first_seen=read_text(where, record, "first_seen"),
     )
+
+
+def _joined_on(
+    where: str, shared: Sequence[object], points: Sequence[object]
+) -> frozenset[tuple[str, str]]:
+    """The `(kind, value)` pairs a candidate's own two evidence lists name.
+
+    Read off the evidence rather than off the timing rows, so the checks below run the
+    other way round: what the timing claims to describe has to be something the candidate
+    is actually joined on, rather than what the candidate happens to name happening to be
+    timed. One kind of pair rather than two so the comparison below is one comparison, and
+    the kinds come off `Evidence.kind` so this reader cannot drift from the label the table
+    prints.
+    """
+    named = [
+        _named_evidence(where, entry, kind, field)
+        for kind, field, entries in (
+            (Evidence.DOMAIN, "domain", shared),
+            (Evidence.CONTACT, "value", points),
+        )
+        for entry in entries
+        if isinstance(entry, dict)
+    ]
+    return frozenset(named)
+
+
+def _named_evidence(
+    where: str, record: JsonObject, label: Evidence, field: str
+) -> tuple[str, str]:
+    """One piece of evidence a candidate names, as `(kind, value)`.
+
+    Checked here rather than left to the two list readers below, because this runs first
+    and a field it cannot find has to be refused with the line it is on: a refusal with no
+    location is a complaint a reader of the file cannot act on, which is the whole reason
+    `read_object` hands the line number down.
+    """
+    kind = label.kind
+    assert kind is not None, f"{label} names no single edge"
+    if field not in record:
+        raise ValueError(
+            f"{where} holds {label.value} with {sorted(record)}, and it names no {field}"
+        )
+    return (kind.value, read_text(where, record, field))
+
+
+def _gaps(
+    where: str, record: JsonObject, names: frozenset[tuple[str, str]]
+) -> tuple[EvidenceTiming, ...]:
+    """One row's timing, checked against the evidence that row rests on.
+
+    Both directions, because both are ways the file could lie about a candidate: a timing
+    row for something the candidate is not joined on is a gap the reader would weigh
+    against a grouping it does not justify, and a piece of evidence with no timing row is
+    a claim about a grouping that nothing measured.
+    """
+    entries = _entries(where, record, "corroboration")
+    pieces = tuple(_gap_row(where, entry) for entry in entries if isinstance(entry, dict))
+    refuse_repeated(
+        f"{where} corroboration",
+        (f"{piece.kind.value} {piece.value}" for piece in pieces),
+        "one piece of evidence has two gaps, and a reader cannot tell which is the run's",
+    )
+    named = {(piece.kind.value, piece.value) for piece in pieces}
+    if named != names:
+        raise ValueError(
+            f"{where} times {sorted(named)} and is joined on {sorted(names)}, so its "
+            "corroboration is about something other than this candidate"
+        )
+    return pieces
+
+
+def _gap_row(where: str, record: JsonObject) -> EvidenceTiming:
+    """One timing row, checked as a row of its own before it is read."""
+    vocabulary = tuple(field.name for field in fields(EvidenceTiming))
+    if set(record) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds a timing row with {sorted(record)}, which is not the timing "
+            f"vocabulary {sorted(vocabulary)}"
+        )
+    closest = _seconds(where, record, "closest_seconds")
+    span = _seconds(where, record, "span_seconds")
+    if span < closest:
+        raise ValueError(
+            f"{where} has closest_seconds={closest} and span_seconds={span}, and the span "
+            "across a piece of evidence cannot be shorter than the gap inside it"
+        )
+    return EvidenceTiming(
+        kind=read_vocabulary(where, "kind", record["kind"], EvidenceKind),
+        value=read_text(where, record, "value"),
+        closest_seconds=closest,
+        span_seconds=span,
+    )
+
+
+def _timing(
+    where: str,
+    record: JsonObject,
+    names: frozenset[tuple[str, str]],
+    pieces: Sequence[EvidenceTiming],
+) -> Timing:
+    """One row's timing summary, checked against the gaps the row publishes above it.
+
+    Four checks, all the same claim in four shapes: the row says how many pieces of
+    evidence it is timing, the list above it says how many there are, the nearest gap it
+    publishes has to be the smallest one in that list, and the count of corroborated
+    pieces has to be the count of those gaps that fall inside the window this row carries.
+    That last one is the figure both the ordering of this project and the heading below the
+    table rest on, so a row asserting it without bearing it out would be read as though the
+    clock had agreed with a candidate the clock disagrees about.
+    """
+    carried = record["timing"]
+    if not isinstance(carried, dict):
+        raise ValueError(f"{where} has timing={carried!r}, which is not a row")
+    vocabulary = tuple(field.name for field in fields(Timing))
+    if set(carried) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds timing with {sorted(carried)}, which is not the timing "
+            f"vocabulary {sorted(vocabulary)}"
+        )
+    window_seconds = _seconds(where, carried, "window_seconds")
+    counted = _seconds(where, carried, "pieces")
+    corroborated = _seconds(where, carried, "corroborated")
+    closest_seconds = _seconds(where, carried, "closest_seconds")
+    if window_seconds < 3_600:
+        raise ValueError(
+            f"{where} was counted at a window of {window_seconds} seconds, and a window has "
+            "to be at least one hour: nothing this project can produce falls inside less"
+        )
+    if counted != len(names):
+        raise ValueError(
+            f"{where} says it times {counted} pieces of evidence and is joined on "
+            f"{len(names)} of them"
+        )
+    if corroborated > counted:
+        raise ValueError(
+            f"{where} corroborates {corroborated} of its {counted} pieces of evidence, and "
+            "there are only that many to corroborate"
+        )
+    gaps = [piece.closest_seconds for piece in pieces]
+    if gaps and min(gaps) != closest_seconds:
+        raise ValueError(
+            f"{where} says its accounts came closest {closest_seconds} seconds apart and "
+            f"publishes gaps of {sorted(gaps)}"
+        )
+    inside = sum(1 for piece in pieces if piece.within(window_seconds))
+    if inside != corroborated:
+        raise ValueError(
+            f"{where} says {corroborated} of its pieces of evidence fall inside its "
+            f"{window_seconds} second window and publishes spans of "
+            f"{sorted(piece.span_seconds for piece in pieces)}, of which {inside} do"
+        )
+    return Timing(
+        window_seconds=window_seconds,
+        pieces=counted,
+        corroborated=corroborated,
+        closest_seconds=closest_seconds,
+    )
+
+
+def _seconds(where: str, record: JsonObject, field_name: str) -> int:
+    """One duration in seconds, refused when it is anything else.
+
+    A boolean passes for an integer in Python, so `true` would read as one second and
+    corroborate everything; a negative duration would have to be explained by something
+    this file does not print. Both are named rather than left to a reader of the file.
+    """
+    value = record[field_name]
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(
+            f"{where} has {field_name}={value!r}, and a duration is a whole number of "
+            "seconds"
+        )
+    return value
 
 
 def _entries(where: str, record: JsonObject, field_name: str) -> list[object]:
@@ -859,16 +1453,17 @@ def render_table(grouping: Grouping) -> str:
     by_post = _posts_by_id(grouping.corpus)
     sections = (
         f"{_HEADING}\n\n{_SUBHEADING}",
-        _figures(grouping.facts, grouping.filtered),
+        _figures(grouping.facts, grouping.filtered, grouping.temporal),
         _index(grouping.candidates),
         "\n\n".join(_block(candidate, by_post) for candidate in grouping.candidates),
+        _uncorroborated(grouping.temporal),
         _withheld(grouping.filtered),
-        _footer(grouping.filtered),
+        _footer(grouping.filtered, grouping.temporal),
     )
     return "\n\n".join(section for section in sections if section) + "\n"
 
 
-def _figures(facts: GroupingFacts, shared: SharedFilter) -> str:
+def _figures(facts: GroupingFacts, shared: SharedFilter, temporal: Corroboration) -> str:
     """What was read, and what came of it. One figure per line, labelled.
 
     The four account counts are a partition of the accounts, so a reader can add them
@@ -876,6 +1471,10 @@ def _figures(facts: GroupingFacts, shared: SharedFilter) -> str:
     count on the `grouped` line rather than being added into one number, because a
     candidate resting on one handle and a candidate resting on one domain are not the
     same claim and the reader is entitled to know which of them is which.
+
+    The window is a line of its own and the two timing counts are a line of their own,
+    because a corroborated count without the threshold it was counted against is not a
+    figure: `3 of 4` beside a window nobody can see is a score out of an unknown number.
     """
     fields = (
         ("corpus", facts.corpus_path),
@@ -899,9 +1498,26 @@ def _figures(facts: GroupingFacts, shared: SharedFilter) -> str:
         ),
         ("unreachable", f"{_count(facts.accounts_unreachable, 'account')} reaching nothing this grouping can use"),
         ("filtered", _withheld_counts(shared)),
+        ("window", f"{_window(temporal.window_seconds)} between two accounts on one piece of evidence"),
+        ("timing", _timing_counts(temporal)),
     )
     width = max(len(name) for name, _ in fields)
     return "\n".join(f"  {name.ljust(width)}  {value}" for name, value in fields)
+
+
+def _timing_counts(temporal: Corroboration) -> str:
+    """What the clock corroborated, and the rule that it removed nothing.
+
+    The trailing clause is on every run rather than only on one where it mattered,
+    because a reader looking for the candidates the clock dropped and finding none has
+    to be able to tell that from a clock that was never asked. The candidates it did not
+    corroborate are below the table under their own heading.
+    """
+    return (
+        f"{_of(temporal.corroborated, temporal.candidates, 'candidate')} and "
+        f"{_of(temporal.corroborated_pieces, temporal.pieces, 'piece')} of evidence "
+        "corroborated; no candidate removed"
+    )
 
 
 def _withheld_counts(shared: SharedFilter) -> str:
@@ -967,6 +1583,7 @@ def _index(candidates: Sequence[CampaignCandidate]) -> str:
         "first seen",
         "justified by",
         "shared registrations",
+        "timing",
     )
     rows = [
         (
@@ -976,6 +1593,7 @@ def _index(candidates: Sequence[CampaignCandidate]) -> str:
             candidate.first_seen,
             candidate.evidence.value,
             ", ".join(shared.domain for shared in candidate.shared_domains),
+            f"{candidate.timing.corroborated} of {candidate.timing.pieces} corroborated",
         )
         for candidate in candidates
     ]
@@ -997,13 +1615,18 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
     """One candidate and the evidence for it: why it exists, who, and on what.
 
     The label comes first and the evidence follows it, so the block reads in the order a
-    reader has to judge it in: which kind of claim this is, then the registrations, then
-    the Contact Points, then the accounts and every post they wrote.
+    reader has to judge it in: which kind of claim this is, then what the clock made of
+    it, then the registrations, then the Contact Points, then the accounts and every post
+    they wrote. The timing sits beside each piece of evidence rather than in one list at
+    the end, because the claim it bears on is about that piece and nobody else.
     """
+    timing = _gaps_by_value(candidate)
+    window_seconds = candidate.timing.window_seconds
     lines = [
         f"{candidate.candidate_id}  {len(candidate.accounts)} accounts, "
         f"{len(candidate.posts)} posts, first seen {candidate.first_seen}",
         f"  justified by  {_justified(candidate)}",
+        f"  timing        {_candidate_timing(candidate)}",
     ]
     if candidate.shared_domains:
         lines.append("  shared registrations")
@@ -1011,7 +1634,7 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
         for shared in candidate.shared_domains:
             lines.append(
                 f"    {shared.domain.ljust(width)}  {len(shared.accounts)} accounts, "
-                f"{len(shared.posts)} posts"
+                f"{len(shared.posts)} posts  {_within(timing[shared.domain], window_seconds)}"
             )
     if candidate.shared_contact_points:
         lines.append("  shared contact points")
@@ -1021,7 +1644,8 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
             lines.append(
                 f"    {point.value.ljust(width)}  {point.kind.value}, "
                 f"{_count(len(point.accounts), 'account')}, "
-                f"{_count(len(point.posts), 'post')}  written {spellings}"
+                f"{_count(len(point.posts), 'post')}  "
+                f"{_within(timing[point.value], window_seconds)}  written {spellings}"
             )
     lines.append("  accounts")
     lines.extend(f"    {account}" for account in candidate.accounts)
@@ -1033,18 +1657,133 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
     return "\n".join(lines)
 
 
+def _gaps_by_value(candidate: CampaignCandidate) -> dict[str, EvidenceTiming]:
+    """The timing of each piece of evidence, keyed by what it names.
+
+    Keyed by the value alone because the two edges name different things: a Contact
+    Point value is a handle or an address, never a registration, so one key cannot hold
+    two pieces and a lookup that found the wrong one would be a lookup that failed.
+    """
+    return {piece.value: piece for piece in candidate.corroboration}
+
+
+def _candidate_timing(candidate: CampaignCandidate) -> str:
+    """One candidate against the window, and the gap that decided it.
+
+    The count of pieces rather than a yes or a no, because a candidate can be
+    corroborated by one edge and not the other and both halves of that are findings: on
+    this Corpus the registration puts three accounts in the same morning and the Contact
+    Point brings in a fourth account two weeks later.
+    """
+    timing = candidate.timing
+    pieces = "piece" if timing.pieces == 1 else "pieces"
+    return (
+        f"{timing.corroborated} of {timing.pieces} {pieces} of evidence within the "
+        f"{_window_of(timing.window_seconds)} window; nearest pair "
+        f"{_gap(timing.closest_seconds)} apart"
+    )
+
+
+def _within(piece: EvidenceTiming, window_seconds: int) -> str:
+    """One piece of evidence against the window, in the block under its own name.
+
+    The span leads because that is the figure the verdict is about, and the window is
+    named rather than referred to: `inside the window` in a block with four evidence rows
+    on it does not say which window.
+    """
+    return (
+        f"{_gap(piece.span_seconds)} across, "
+        + ("inside" if piece.within(window_seconds) else "outside")
+        + f" the {_window_of(window_seconds)} window"
+    )
+
+
+def _window(window_seconds: int) -> str:
+    """The window, in hours, because that is the unit `--window-hours` sets it in.
+
+    Rounded down rather than to the nearest hour, so a figure that says "24 hours" is
+    the window the run was given and not an hour either side of it.
+    """
+    return f"{window_seconds // 3_600} hour" + ("" if window_seconds == 3_600 else "s")
+
+
+def _window_of(window_seconds: int) -> str:
+    """The same window as it reads in front of a noun: `24-hour`, never `24 hours`.
+
+    Two spellings of one figure rather than one spelling used in two places, because
+    "the 24 hours window" is the sort of thing a reader reads past without noticing and
+    then quotes back at somebody.
+    """
+    return f"{window_seconds // 3_600}-hour"
+
+
+def _gap(seconds: int) -> str:
+    """One gap, in the largest unit that still says something about it.
+
+    `30m`, `4h30m`, `14d9h16m`, and a seconds part only where the gap is not a whole
+    minute — a reader comparing this with the `created_at` printed above it has to be able
+    to check it by eye, and that means no decimals, no unit they would have to look up, and
+    no figure that is quietly rounded. A gap of nothing reads as the minute it was rather
+    than as a zero, because two accounts posted in the same minute is the case the ticket
+    is about and `0m apart` reads like a missing figure.
+    """
+    if seconds == 0:
+        return "the same minute"
+    days, rest = divmod(seconds, 86_400)
+    hours, rest = divmod(rest, 3_600)
+    minutes, rest = divmod(rest, 60)
+    parts = [f"{days}d"] if days else []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or not parts:
+        parts.append(f"{minutes}m")
+    return "".join(parts)
+
+
 def _justified(candidate: CampaignCandidate) -> str:
     """The evidence label, carrying the warning where a reader will meet the candidate.
 
-    Only the Contact Point edge carries it. A candidate resting on a registration as
-    well has nothing to warn about, and printing the caveat on every row would make it
-    noise on the rows where it does not apply and so worth skipping on the one where it
-    does. A candidate naming no evidence at all carries the fourth label, which is what
-    the reader allows and the grouping never writes.
+    Only the Contact Point edge carries the recall warning, and a candidate resting on a
+    registration as well has nothing to warn about. What the clock makes of the candidate
+    is on the `timing` line two below this one rather than here: it is a second claim on
+    the same candidate, and a line carrying two of them is a line where a reader has to
+    work out which caveat belongs to which piece of evidence. A candidate naming no
+    evidence at all carries the fourth label, which is what the reader allows and the
+    grouping never writes.
     """
     if candidate.evidence is not Evidence.CONTACT:
         return candidate.evidence.value
     return f"{candidate.evidence.value}, {_WEAKER}"
+
+
+def _uncorroborated(temporal: Corroboration) -> str:
+    """Every candidate the window corroborates nothing under, named.
+
+    Printed on every run, including one where there are none: a section that only appears
+    when it is bad is a section a reader cannot tell from a missing one, and a candidate
+    the clock had no time for and a clock never asked the question are two different
+    things. Nothing is dropped — this is a deprioritising, so the candidate is in the
+    table above with its span beside its evidence and named again here with the nearest
+    pair of accounts, which is the one figure a reader needs to disagree with the window.
+    """
+    window = _window(temporal.window_seconds)
+    if not temporal.deprioritised:
+        return (
+            "uncorroborated  none: every candidate above holds its evidence's accounts "
+            f"inside {window}"
+        )
+    lines = [
+        f"uncorroborated  {_of(len(temporal.deprioritised), temporal.candidates, 'candidate')} "
+        f"deprioritised: no evidence under them spans less than {window}, and none of "
+        "them is removed for it"
+    ]
+    for candidate in temporal.deprioritised:
+        lines.append(
+            f"  {candidate.candidate_id}  {len(candidate.accounts)} accounts, "
+            f"{len(candidate.posts)} posts, nearest pair of accounts "
+            f"{_gap(candidate.timing.closest_seconds)} apart"
+        )
+    return "\n".join(lines)
 
 
 def _withheld(shared: SharedFilter) -> str:
@@ -1123,7 +1862,7 @@ def _kinds(item: WithheldRegistration) -> tuple[str, ...]:
     return tuple(dict.fromkeys(host.kind.value.replace("_", " ") for host in item.hosts))
 
 
-def _footer(shared: SharedFilter) -> str:
+def _footer(shared: SharedFilter, temporal: Corroboration) -> str:
     """What the run can and cannot claim, and where the filter comes from.
 
     The list is named rather than described, because the claim that the junk is gone
@@ -1132,8 +1871,19 @@ def _footer(shared: SharedFilter) -> str:
     """
     return f"""\
 Every candidate above rests on a shared registrable domain, a shared Contact Point, or
-both, and on nothing else. Text similarity and timing are not used and could not produce
-a candidate on their own, which is what ADR-0005 requires.
+both, and on nothing else. Timing is read as corroboration and content similarity is not
+read at all, and neither could produce a candidate on its own, which is what ADR-0005
+requires.
+
+Timing corroborates a grouping and never creates one. Two accounts that post in the same
+minute and share nothing are not grouped, and this run would not group them whatever the
+window is set to. What the window does is order this list and say so: a candidate some
+piece of evidence under it holds two accounts inside the window is printed ahead of every
+candidate it does not, and one it corroborates nothing under is printed in full with the
+gap beside its evidence and named again below the table. Nothing is dropped for want of
+timing. A domain two accounts reached months apart may be a domain that changed hands and
+a campaign may simply be a patient one, so the gap is published as a figure a reviewer can
+weigh rather than acted on as a decision, and the window that judged it is named above.
 
 The two edges are not equally good, and each candidate says which one it rests on. A
 registration is somebody's property and this project resolves it against the published

@@ -28,7 +28,8 @@ import json
 import sys
 import urllib.request
 from collections.abc import Mapping
-from datetime import date
+from datetime import date, datetime
+from itertools import combinations
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,7 @@ def run(
     corpus: Path = DEFAULT_CORPUS_PATH,
     capsys: pytest.CaptureFixture[str] | None = None,
     shared: Path | None = None,
+    window: int | None = None,
 ) -> tuple[Path, str]:
     candidates_path = directory / "campaign-candidates.jsonl"
     argv = [
@@ -64,6 +66,8 @@ def run(
     ]
     if shared is not None:
         argv += ["--shared-infrastructure", str(shared)]
+    if window is not None:
+        argv += ["--window-hours", str(window)]
     exit_code = main(argv)
     assert exit_code == 0
     printed = capsys.readouterr().out if capsys is not None else ""
@@ -89,6 +93,20 @@ def records(row: Row, field: str) -> list[Row]:
 def text(row: Row, field: str) -> str:
     value = row[field]
     assert isinstance(value, str), f"{field} is not text: {value!r}"
+    return value
+
+
+def integer(row: Row, field: str) -> int:
+    value = row[field]
+    assert isinstance(value, int) and not isinstance(value, bool), (
+        f"{field} is not a whole number: {value!r}"
+    )
+    return value
+
+
+def nested(row: Row, field: str) -> Row:
+    value = row[field]
+    assert isinstance(value, dict), f"{field} is not a row: {value!r}"
     return value
 
 
@@ -329,10 +347,18 @@ def test_the_printed_table_shows_each_candidate_with_the_evidence_for_it(
     assert "cc-01" in printed
 
     heading = next(line for line in printed.splitlines() if line.startswith("candidate "))
-    for column in ("accounts", "posts", "first seen", "justified by", "shared registrations"):
+    for column in (
+        "accounts",
+        "posts",
+        "first seen",
+        "justified by",
+        "shared registrations",
+        "timing",
+    ):
         assert column in heading
     index_line = next(line for line in printed.splitlines() if line.startswith("cc-01 "))
-    assert index_line.rstrip().endswith("signal-harbor.example, vantage-ledger.example")
+    assert "signal-harbor.example, vantage-ledger.example" in index_line
+    assert index_line.rstrip().endswith("2 of 2 corroborated"), index_line
 
     block = printed.split("cc-01  3 accounts, 4 posts, first seen")[1]
     for account in ("syn_alpha_0001", "syn_beta_0002", "syn_gamma_0003"):
@@ -1143,6 +1169,11 @@ def test_the_filtered_groupings_are_the_two_planted_campaigns_the_shop_and_the_o
     comes out on the handle alone. Nothing else groups, so the recovery figure the
     evaluator publishes is measured against a list this small that a reader can check by
     hand.
+
+    The obfuscated desk comes last because it is the one candidate the 24-hour window
+    corroborates nothing under: seven posts over three weeks, and one handle held by three
+    accounts throughout. The identifier says where a candidate sits in this output and
+    nothing else, so moving it to the end of the table moves the identifier with it.
     """
     candidates_path, _ = run(tmp_path)
     written = by_accounts(candidates_path)
@@ -1154,9 +1185,9 @@ def test_the_filtered_groupings_are_the_two_planted_campaigns_the_shop_and_the_o
             "syn_pinecrest_9032",
             "syn_quantproof_2841",
         ),
-        ("syn_halberdmoor_8823", "syn_thrushmoot_5524", "syn_wintermarch_4417"),
         ("syn_rivermill_4417", "syn_rivermill_6620", "syn_rivermill_9085"),
         ("syn_clearpathwork_3184", "syn_northwindhire_7736"),
+        ("syn_halberdmoor_8823", "syn_thrushmoot_5524", "syn_wintermarch_4417"),
     ]
 
 
@@ -1344,6 +1375,520 @@ def test_the_shared_list_records_where_each_host_came_from_and_when_it_was_added
     assert str(SOURCE.relative_to(REPO_ROOT)) not in printed
     assert f"last updated {max(added)}" in printed
     assert "data/infrastructure/shared-hosts.jsonl" in printed
+
+
+# --- temporal proximity as corroboration ----------------------------------------
+
+# 24 hours in seconds, written out because every figure below is checked against it.
+DAY = 86_400
+
+
+def timing_corpus(tmp_path: Path) -> Path:
+    """Two candidates whose accounts posted half an hour apart and 135 days apart.
+
+    The times are written out rather than derived, so every gap in the expected output is
+    a subtraction a reader can do: 09:30 to 10:00 is thirty minutes, and 5 January to 20
+    May is 135 days. One account of the first candidate posts twice, so the gap between
+    two accounts and the span across them are two different numbers — 30 minutes and four
+    and a half hours — and a run printing one of them for both would be caught here.
+    """
+    return write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9101",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                created_at="2026-05-30T09:30:00Z",
+            ),
+            post(
+                "syn_p_9102",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/month-log",
+                created_at="2026-05-30T14:00:00Z",
+            ),
+            post(
+                "syn_p_9103",
+                "syn_beta_0002",
+                "https://vantage-ledger.example/intake",
+                created_at="2026-05-30T10:00:00Z",
+            ),
+            post(
+                "syn_p_9104",
+                "syn_gamma_0003",
+                "https://signal-harbor.example/entry",
+                created_at="2026-01-05T09:00:00Z",
+            ),
+            post(
+                "syn_p_9105",
+                "syn_delta_0004",
+                "https://signal-harbor.example/intake",
+                created_at="2026-05-20T09:00:00Z",
+            ),
+        ),
+    )
+
+
+def test_each_candidate_carries_the_timing_beside_everything_that_joins_it(
+    tmp_path: Path,
+) -> None:
+    """Within-component proximity, computed per candidate and reported per candidate.
+
+    Two numbers, and they are not the same number: the gap between the nearest two
+    accounts is what the window is measured against, and the span from the earliest post
+    to the latest is what says whether a desk was running a campaign or one operator
+    having an account. A candidate resting on one registration gets one row of each, and
+    the window travels on the row so a reader of the file can check the verdict rather
+    than take it.
+    """
+    candidates_path, _ = run(tmp_path, timing_corpus(tmp_path))
+    written = by_accounts(candidates_path)
+
+    near = written[("syn_alpha_0001", "syn_beta_0002")]
+    assert records(near, "corroboration") == [
+        {
+            "kind": "registration",
+            "value": "vantage-ledger.example",
+            "closest_seconds": 1_800,
+            "span_seconds": 16_200,
+        }
+    ]
+    assert near["timing"] == {
+        "window_seconds": DAY,
+        "pieces": 1,
+        "corroborated": 1,
+        "closest_seconds": 1_800,
+    }
+
+    far = written[("syn_delta_0004", "syn_gamma_0003")]
+    assert records(far, "corroboration") == [
+        {
+            "kind": "registration",
+            "value": "signal-harbor.example",
+            "closest_seconds": 11_664_000,
+            "span_seconds": 11_664_000,
+        }
+    ]
+    assert far["timing"] == {
+        "window_seconds": DAY,
+        "pieces": 1,
+        "corroborated": 0,
+        "closest_seconds": 11_664_000,
+    }
+
+
+def test_the_window_is_stated_in_the_output_and_the_gap_beside_every_thing_that_joins(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The rule is printed where a reader meets it, not left in the code.
+
+    A window nobody can see is a threshold they have to guess at before they can judge
+    whether a candidate is corroborated, so the figure says what the window is and the
+    block under each candidate says what it made of every registration and Contact Point
+    that joined it — the nearest pair of accounts either side of the threshold, in the
+    same units a reader can subtract off the `created_at` printed above them.
+    """
+    _, printed = run(tmp_path, timing_corpus(tmp_path), capsys)
+
+    assert "window        24 hours between two accounts on one piece of evidence" in printed
+    assert (
+        "timing        1 of 2 candidates and 1 of 2 pieces of evidence corroborated"
+        in printed
+    )
+
+    near = printed.split("cc-01  2 accounts")[1].split("\n\n")[0]
+    assert (
+        "timing        1 of 1 piece of evidence within the 24-hour window; "
+        "nearest pair 30m apart" in near
+    )
+    assert "vantage-ledger.example  2 accounts, 3 posts" in near
+    assert "4h30m across, inside the 24-hour window" in near
+
+    far = printed.split("cc-02  2 accounts")[1].split("\n\n")[0]
+    assert (
+        "timing        0 of 1 piece of evidence within the 24-hour window; "
+        "nearest pair 135d apart" in far
+    )
+    assert "135d across, outside the 24-hour window" in far
+
+
+def test_the_span_beside_a_piece_of_evidence_is_not_the_gap_inside_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two figures over the same accounts, because they answer two questions.
+
+    The nearest pair is 30 minutes apart and the candidate ran for four and a half hours,
+    and a run that printed the gap twice would have answered neither: the gap is how close
+    any two of the accounts ever came, and the span is what the window is measured against
+    and what tells a desk running a campaign apart from one operator having an account for
+    years. The span is what the ticket means when it says accounts spread over months may
+    be a domain that changed hands.
+    """
+    candidates_path, _ = run(tmp_path, timing_corpus(tmp_path))
+    written = by_accounts(candidates_path)
+    piece = records(written[("syn_alpha_0001", "syn_beta_0002")], "corroboration")[0]
+
+    assert piece["closest_seconds"] == 1_800
+    assert piece["span_seconds"] == 16_200
+
+
+def test_every_published_gap_is_the_one_the_corpus_and_the_two_readings_hold(
+    tmp_path: Path,
+) -> None:
+    """Every figure recomputed a second time, off two other commands' files.
+
+    The command does not read `post-domains.jsonl` or `post-contacts.jsonl` — it
+    re-resolves the links and re-reads the handles itself, so the grouping and those two
+    files come out of separate runs over the same Corpus. Recomputing the gaps here from
+    them makes "two accounts sharing this registration" a checked statement rather than a
+    shared assumption, and it is done by pairing every account with every other rather than
+    by the walk over neighbouring posts the run uses, so the two agree by being the same
+    arithmetic twice rather than by sharing a method.
+    """
+    corpus = {item.post_id: item for item in read_corpus(COMMITTED_CORPUS)}
+    reaching_domains: dict[str, set[str]] = {}
+    for row in rows(COMMITTED_POST_DOMAINS):
+        for domain in texts(row, "domains"):
+            reaching_domains.setdefault(domain, set()).add(text(row, "account"))
+    reaching_points: dict[str, set[str]] = {}
+    for row in rows(COMMITTED_CONTACTS):
+        for match in records(row, "matches"):
+            reaching_points.setdefault(text(match, "value"), set()).add(text(row, "account"))
+
+    moments: dict[str, list[int]] = {}
+    for item in corpus.values():
+        moments.setdefault(item.account, []).append(
+            int(datetime.fromisoformat(item.created_at).timestamp())
+        )
+
+    candidates_path, _ = run(tmp_path)
+    written = rows(candidates_path)
+    assert written, "the shipped Corpus produces no candidates to check"
+
+    for row in written:
+        accounts = set(texts(row, "accounts"))
+        for piece in records(row, "corroboration"):
+            value = text(piece, "value")
+            if text(piece, "kind") == "Contact Point":
+                published = reaching_points.get(value)
+            else:
+                published = reaching_domains.get(value)
+            assert published is not None, value
+
+            members = sorted(accounts & published)
+            assert len(members) > 1, f"{value} joins one account"
+            stamps = sorted(
+                (moment, member)
+                for member in members
+                for moment in moments[member]
+            )
+            gaps = [
+                later[0] - earlier[0]
+                for earlier, later in combinations(stamps, 2)
+                if earlier[1] != later[1]
+            ]
+            assert integer(piece, "span_seconds") == max(m[0] for m in stamps) - min(
+                m[0] for m in stamps
+            ), piece
+            assert integer(piece, "closest_seconds") == min(gaps), piece
+
+        summary = nested(row, "timing")
+        spans = [integer(piece, "span_seconds") for piece in records(row, "corroboration")]
+        assert integer(summary, "pieces") == len(spans)
+        assert integer(summary, "corroborated") == sum(
+            1 for span in spans if span <= integer(summary, "window_seconds")
+        )
+        assert integer(summary, "closest_seconds") == min(
+            integer(piece, "closest_seconds") for piece in records(row, "corroboration")
+        )
+
+
+def test_the_shipped_corpus_agrees_with_itself_about_which_candidate_the_clock_has_nothing_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """What the clock has something to say about on the Corpus this project ships.
+
+    Two candidates, both of them the project's hard cases rather than a fixture's easy
+    one. `cc-01`'s registration puts three accounts in the same morning and its Telegram
+    handle brings in a fourth account two weeks later, which is the very account that
+    costs the project a recovery — so the candidate is corroborated by one of its two
+    pieces of evidence and the block says which. `cc-04` is the desk behind the
+    obfuscated handles: one handle, three accounts, seven posts over three weeks, and a
+    24-hour window that calls none of that one operator. It is deprioritised, named below
+    the table, and still proposed.
+
+    The counts are checked against the file the run wrote rather than written out here, so
+    a figure that stopped agreeing with its own candidates would be caught rather than
+    quietly updated.
+    """
+    candidates_path, printed = run(tmp_path, capsys=capsys)
+    written = {text(row, "candidate_id"): row for row in rows(candidates_path)}
+    pieces = [piece for row in written.values() for piece in records(row, "corroboration")]
+    corroborated = sum(integer(piece, "span_seconds") <= DAY for piece in pieces)
+    by_span = {
+        (text(row, "candidate_id"), text(piece, "value")): integer(piece, "span_seconds")
+        for row in written.values()
+        for piece in records(row, "corroboration")
+    }
+
+    assert (
+        f"timing        3 of 4 candidates and {corroborated} of {len(pieces)} pieces of "
+        "evidence corroborated; no candidate removed" in printed
+    )
+    assert by_span[("cc-01", "vantage-ledger.example")] == 8_100, "2h15m apart"
+    assert by_span[("cc-01", "syn_vantageledger")] == 1_242_960, "14d9h16m apart"
+
+    block = printed.split("cc-01  4 accounts")[1].split("\n\n")[0]
+    assert "2h15m across, inside the 24-hour window" in block
+    assert "14d9h16m across, outside the 24-hour window" in block
+    assert "1 of 2 pieces of evidence within the 24-hour window" in block
+
+    below = printed.split("uncorroborated  ")[1].split("\n\n")[0]
+    assert "1 of 4 candidates deprioritised" in below
+    assert "cc-04  3 accounts, 7 posts, nearest pair of accounts 42m apart" in below
+    assert "cc-04" in written, "a candidate the window says nothing about is still proposed"
+    assert records(written["cc-04"], "shared_contact_points")
+
+
+def test_matching_posting_times_and_no_shared_infrastructure_group_nothing_at_any_window(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The rule the ticket is for, at a window wide enough to swallow everything.
+
+    Four accounts, every one of them posting in the same minute, none of them sharing a
+    registration or a Contact Point with any other. Timing says they are one operator as
+    loudly as timing can say anything, and there is no window at which it is enough: a
+    year is a hundred and fifty times the default and the file is still empty. The window
+    is a parameter, so a rule that only held at the default would be a rule about a number
+    rather than about timing, and this is the check that it is about timing.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9201",
+                "syn_draycott_5583",
+                "https://anvil-labels.example/apply",
+                created_at="2026-01-05T09:00:00Z",
+            ),
+            post(
+                "syn_p_9202",
+                "syn_underhill_7420",
+                "https://underhilltalent.example/apply",
+                created_at="2026-01-05T09:00:00Z",
+            ),
+            post("syn_p_9203", "syn_mossgavel_2218", created_at="2026-01-05T09:00:00Z"),
+            post(
+                "syn_p_9204",
+                "syn_pellworth_3196",
+                "https://pellworthwork.example/apply",
+                created_at="2026-01-05T09:00:00Z",
+            ),
+        ),
+    )
+
+    candidates_path, printed = run(tmp_path / "year", corpus, capsys, window=24 * 365)
+
+    assert rows(candidates_path) == []
+    assert "cc-01" not in printed
+    assert "0 of 0 candidates and 0 of 0 pieces of evidence corroborated" in printed
+    assert "uncorroborated  none" in printed
+
+
+def test_a_candidate_the_window_corroborates_nothing_is_reported_below_the_others(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Deprioritising, in the three places a reader can look for it.
+
+    Four accounts on one registration and two on another. Size puts the four first and
+    timing puts the two first, so the order in the file, the order in the table and the
+    count in the figure all move together. The four are not removed: they are in the file,
+    in the table with the gap beside their evidence, and named again under a heading of
+    their own with the one figure a reader needs to disagree with the window. A grouping
+    the clock had nothing to say about is still a grouping somebody proposed.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9301",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                created_at="2026-01-05T09:00:00Z",
+            ),
+            post(
+                "syn_p_9302",
+                "syn_beta_0002",
+                "https://vantage-ledger.example/intake",
+                created_at="2026-02-05T09:00:00Z",
+            ),
+            post(
+                "syn_p_9303",
+                "syn_gamma_0003",
+                "https://vantage-ledger.example/month-log",
+                created_at="2026-03-05T09:00:00Z",
+            ),
+            post(
+                "syn_p_9304",
+                "syn_delta_0004",
+                "https://vantage-ledger.example/desk-update",
+                created_at="2026-04-05T09:00:00Z",
+            ),
+            post(
+                "syn_p_9305",
+                "syn_epsilon_0005",
+                "https://signal-harbor.example/entry",
+                created_at="2026-05-30T09:00:00Z",
+            ),
+            post(
+                "syn_p_9306",
+                "syn_zeta_0006",
+                "https://signal-harbor.example/intake",
+                created_at="2026-05-30T09:30:00Z",
+            ),
+        ),
+    )
+
+    candidates_path, printed = run(tmp_path, corpus, capsys)
+
+    indexed = [
+        line.split()[0]
+        for line in printed.splitlines()
+        if line.startswith("cc-") and line.rstrip().endswith("corroborated")
+    ]
+    written = {text(row, "candidate_id"): texts(row, "accounts") for row in rows(candidates_path)}
+    assert indexed == ["cc-01", "cc-02"]
+    assert written["cc-01"] == ["syn_epsilon_0005", "syn_zeta_0006"]
+    assert written["cc-02"] == [
+        "syn_alpha_0001",
+        "syn_beta_0002",
+        "syn_delta_0004",
+        "syn_gamma_0003",
+    ]
+
+    assert (
+        "timing        1 of 2 candidates and 1 of 2 pieces of evidence corroborated; "
+        "no candidate removed" in printed
+    )
+    assert (
+        "uncorroborated  1 of 2 candidates deprioritised: no evidence under them spans less "
+        "than 24 hours, and none of them is removed for it" in printed
+    )
+    deprioritised = printed.split("uncorroborated  ")[1].split("\n\n")[0]
+    assert "cc-02  4 accounts, 4 posts, nearest pair of accounts 28d apart" in deprioritised
+    # The candidate is still proposed, still labelled with the edge it rests on, and its
+    # gap is still printed beside that edge: nothing about it was taken away.
+    assert "justified by  registrations\n" in printed
+    assert "vantage-ledger.example  4 accounts, 4 posts  90d across, outside the 24-hour window" in printed
+
+
+def test_the_window_is_a_parameter_and_a_window_of_nothing_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A threshold the caller states, and a threshold that cannot be met is a mistake.
+
+    Two accounts five hours apart on one registration, run twice: at the one-hour default
+    change the gap is outside the window and the candidate is reported as uncorroborated,
+    and at the 24-hour default it is inside. So the figure, the line under the candidate
+    and the heading below the table all move with the argument rather than with the
+    Corpus, and a reader who disagrees with the window can set a different one. Zero is
+    refused rather than run, because a window nothing can fall inside would report every
+    candidate in the Corpus as uncorroborated for a reason that is about the argument.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9401",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                created_at="2026-05-30T09:00:00Z",
+            ),
+            post(
+                "syn_p_9402",
+                "syn_beta_0002",
+                "https://vantage-ledger.example/intake",
+                created_at="2026-05-30T14:00:00Z",
+            ),
+        ),
+    )
+
+    _, hour = run(tmp_path / "hour", corpus, capsys, window=1)
+    _, day = run(tmp_path / "day", corpus, capsys, window=24)
+
+    assert "window        1 hour between two accounts on one piece of evidence" in hour
+    assert "0 of 1 candidate and 0 of 1 piece of evidence corroborated" in hour
+    assert "5h across, outside the 1-hour window" in hour
+    assert "uncorroborated  1 of 1 candidate deprioritised" in hour
+
+    assert "window        24 hours between two accounts on one piece of evidence" in day
+    assert "1 of 1 candidate and 1 of 1 piece of evidence corroborated" in day
+    assert "5h across, inside the 24-hour window" in day
+    assert "uncorroborated  none" in day
+
+    with pytest.raises(SystemExit) as refusal:
+        main(
+            [
+                "campaign-candidates",
+                "--corpus",
+                str(corpus),
+                "--candidates",
+                str(tmp_path / "campaign-candidates.jsonl"),
+                "--window-hours",
+                "0",
+            ]
+        )
+
+    assert "--window-hours is 0" in str(refusal.value)
+    assert not (tmp_path / "campaign-candidates.jsonl").exists()
+
+
+def test_a_post_stamped_without_an_offset_is_refused_by_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A timestamp with no offset cannot be subtracted from one that carries it.
+
+    The Corpus generator writes RFC 3339 in UTC throughout, so this only arises for a
+    Corpus Provider that writes a local time — which is exactly when the run has to stop
+    rather than raise a `TypeError` from inside a subtraction the reader of this output
+    never sees. The refusal names the value, because a provider with a hundred posts
+    stamped locally needs to know which field to fix and not that something about gaps
+    went wrong.
+    """
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9501",
+                "syn_alpha_0001",
+                "https://vantage-ledger.example/entry",
+                created_at="2026-05-30T09:00:00",
+            ),
+            post(
+                "syn_p_9502",
+                "syn_beta_0002",
+                "https://vantage-ledger.example/intake",
+                created_at="2026-05-30T09:30:00Z",
+            ),
+        ),
+    )
+
+    with pytest.raises(SystemExit) as refusal:
+        main(
+            [
+                "campaign-candidates",
+                "--corpus",
+                str(corpus),
+                "--candidates",
+                str(tmp_path / "campaign-candidates.jsonl"),
+            ]
+        )
+
+    printed = capsys.readouterr().out
+    assert "created_at='2026-05-30T09:00:00' carries no offset" in str(refusal.value)
+    assert "2026-05-30T09:00:00" in str(refusal.value)
+    assert not (tmp_path / "campaign-candidates.jsonl").exists()
+    assert "Traceback" not in printed
 
 
 # --- what the run is allowed to read --------------------------------------------
@@ -1606,5 +2151,9 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_change(
                 assert joined <= set(texts(row, "accounts"))
 
         # The file and the printed index list the same candidates, in the same order.
-        indexed = [line.split()[0] for line in printed.splitlines() if line.startswith("cc-")]
+        indexed = [
+            line.split()[0]
+            for line in printed.splitlines()
+            if line.startswith("cc-") and line.rstrip().endswith("corroborated")
+        ]
         assert indexed[: len(written)] == [text(row, "candidate_id") for row in written]

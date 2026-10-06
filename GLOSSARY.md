@@ -184,6 +184,26 @@ claim about anyone's behaviour. It is the system's output; a Planted Campaign is
 what it is measured against.
 _Avoid_: Campaign, ring, operation, network, cluster of scammers
 
+**Temporal Proximity**:
+How close in time the accounts behind one shared registrable domain or Contact
+Point posted. Published per piece of evidence as two gaps — the span from the
+earliest post by any account reaching it to the latest, and the gap between the
+nearest two — and measured against a stated window. Corroborating evidence and
+never sufficient: it may order candidates and it may deprioritise one, and it can
+never put two accounts in a candidate that shared infrastructure would not.
+_Avoid_: Burst detection, velocity, recency (all name something else), "time
+window" (say the window and its figure)
+
+**Corroboration**:
+What temporal proximity adds to a Campaign Candidate that shared infrastructure
+already put in it: the gap between the accounts behind each shared registration or
+Contact Point, measured against a stated window. Corroboration orders and
+deprioritises and never creates, so two accounts with no shared registration and
+no shared Contact Point are never a candidate however close together they post.
+_Avoid_: Evidence (too broad — a shared registration is the grouping's evidence
+and corroboration is what the clock adds to it), confidence (that is the model's,
+ADR-0003)
+
 **Contact Point**:
 An off-platform contact identifier extracted from content — a Telegram handle,
 Discord ID, email address, or crypto wallet. Published in any of several spellings;

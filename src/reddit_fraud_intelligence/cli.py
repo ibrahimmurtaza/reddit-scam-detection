@@ -15,6 +15,7 @@ from reddit_fraud_intelligence.cafc import (
     write_provenance,
 )
 from reddit_fraud_intelligence.campaigns import (
+    DEFAULT_WINDOW_HOURS,
     group as group_accounts,
     render_table as render_candidates,
     write_campaign_candidates,
@@ -185,6 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 list_path=Path(str(args.list)),
                 shared_path=Path(str(args.shared_infrastructure)),
                 candidates_path=Path(str(args.candidates)),
+                window_hours=int(args.window_hours),
             )
         case "corpus-composition":
             return _corpus_composition(
@@ -565,6 +567,17 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_CANDIDATES_PATH,
         help=f"where to write the candidates (default: {DEFAULT_CANDIDATES_PATH})",
+    )
+    candidates.add_argument(
+        "--window-hours",
+        type=int,
+        default=DEFAULT_WINDOW_HOURS,
+        help=(
+            "the window, in hours, within which the accounts sharing one registration or "
+            "Contact Point corroborate it; timing corroborates and never groups, so a "
+            "window moves a candidate down the list and renumbers it, and nothing else "
+            f"(default: {DEFAULT_WINDOW_HOURS})"
+        ),
     )
 
     recovery = commands.add_parser(
@@ -1139,6 +1152,7 @@ def _campaign_candidates(
     list_path: Path,
     shared_path: Path,
     candidates_path: Path,
+    window_hours: int,
 ) -> int:
     _refuse_shared_paths(
         {
@@ -1156,7 +1170,7 @@ def _campaign_candidates(
     )
 
     try:
-        grouping = group_accounts(corpus_path, list_path, shared_path)
+        grouping = group_accounts(corpus_path, list_path, shared_path, window_hours)
     except ValueError as refusal:
         raise SystemExit(refusal) from refusal
     write_campaign_candidates(candidates_path, grouping.candidates)
