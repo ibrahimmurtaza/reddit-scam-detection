@@ -1326,6 +1326,10 @@ def test_precision_in_the_review_queue_is_reported_at_several_depths(
     for depth, (true, of) in rows.items():
         assert true <= of
         assert f"| {depth} | {true} | {of} |" in page
+        # The same fraction is stated beside its depth in prose, in both views.
+        assert f"{true} of {of} at depth {depth}" in page
+        # The console wraps the same figure inside one wrapped sentence.
+        assert f"{true} of {of} at depth {depth}" in " ".join(printed.split())
 
 
 def test_precision_matches_a_hand_computed_value(
@@ -1397,6 +1401,12 @@ def test_precision_matches_a_hand_computed_value(
     assert "| 3 | 2 | 3 |" in page
     assert "| 4 | 2 | 4 |" in page
     assert "cc-01" in page and "no Planted Campaign" in page
+    # The figure itself is the fraction of the top entries, stated with its depth;
+    # a precision number never appears without its depth, in either view.
+    expected = "0 of 1 at depth 1, 1 of 2 at depth 2, 2 of 3 at depth 3, 2 of 4 at depth 4"
+    assert expected in " ".join(printed.split())
+    for share in ("0 of 1 at depth 1", "1 of 2 at depth 2", "2 of 3 at depth 3", "2 of 4 at depth 4"):
+        assert share in page
 
 
 def test_the_report_states_the_lower_of_the_two_is_the_more_trustworthy(

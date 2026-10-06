@@ -96,12 +96,16 @@ of the trade-off is visible rather than a single number.
 | 20 | 7 | 20 |
 | 50 | 7 | 34 |
 
-Measured at depths 5, 10, 20, 50, against the Planted Campaign membership by
-this command, not by a person reviewing the queue (ADR-0022). Of the two rates on this
-page — recovery and precision — the lower of the two numbers is the more trustworthy,
-and this is deliberate: either one can flatter the system while the other quietly
-fails. Recovery and the false-grouping rate are reported together on this page;
-neither number appears alone.
+5 of 5 at depth 5, 7 of 10 at depth 10, 7 of 20 at depth 20, 7 of 34 at depth 50. Each figure is named with its depth: a precision number is never
+published without one. Measured against the Planted
+Campaign membership by this command, not by a person reviewing the queue
+(ADR-0022).
+
+Of the two rates on this page — recovery and precision — the lower of the two
+numbers is the more trustworthy, and this is deliberate: either one can
+flatter the system while the other quietly fails. Recovery and the
+false-grouping rate are reported together on this page; neither number
+appears alone.
 
 ## What it was measured against
 

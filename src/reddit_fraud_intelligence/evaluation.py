@@ -285,6 +285,16 @@ class QueuePrecision:
     true: int
     of: int
 
+    @property
+    def share(self) -> str:
+        """The fraction itself: how many of the top entries are true findings.
+
+        Spoken in this project's own shape for a rate, so the console line and
+        the report sentence state the same figure over the same counts, and a
+        reader taking one apart gets the same arithmetic both times.
+        """
+        return f"{self.true} of {self.of}"
+
 
 @dataclass(frozen=True, slots=True)
 class NuisanceCount:
@@ -371,7 +381,6 @@ class Recovery:
     nuisance: NuisanceBaseline
     false_groupings: tuple[FalseGrouping, ...]
     precision: tuple[QueuePrecision, ...]
-    depths: tuple[int, ...]
 
     def count(self, outcome: Outcome) -> int:
         return sum(1 for recovery in self.recoveries if recovery.outcome is outcome)
@@ -387,6 +396,18 @@ class Recovery:
     @property
     def missed(self) -> int:
         return self.count(Outcome.MISSED)
+
+    @property
+    def shares(self) -> str:
+        """Every depth's share, with the depth named beside the figure.
+
+        Asked of the Recovery rather than joined at every call site, so the
+        console line and the report sentence cannot phrase the same figures
+        two ways.
+        """
+        return ", ".join(
+            f"{measure.share} at depth {measure.depth}" for measure in self.precision
+        )
 
     @property
     def partial_candidates(self) -> int:
@@ -502,7 +523,6 @@ def recover(
         nuisance=_baseline(nuisance_path, manifest),
         false_groupings=_false_groupings(candidates, campaigns, manifest),
         precision=_precision(queue.entries, campaigns, depths),
-        depths=tuple(depths),
     )
 
 
@@ -914,7 +934,7 @@ def _figures(recovery: Recovery) -> str:
         ),
         (
             "precision",
-            f"the Review Queue's entries at depths {_depths(recovery)}, below",
+            f"true findings of the top entries, per depth: {recovery.shares}",
         ),
         (
             "unmatched",
@@ -925,7 +945,13 @@ def _figures(recovery: Recovery) -> str:
         ),
     )
     width = max(len(name) for name, _ in fields_out)
-    return "\n".join(f"  {name.ljust(width)}  {value}" for name, value in fields_out)
+    lines = []
+    for name, value in fields_out:
+        head = f"  {name.ljust(width)}  "
+        wrapped = wrap(value, indent=len(head), width=100)
+        lines.append(head + wrapped[0].lstrip())
+        lines.extend(wrapped[1:])
+    return "\n".join(lines)
 
 
 def _false_groupings_table(recovery: Recovery) -> str:
@@ -953,11 +979,6 @@ def _false_groupings_table(recovery: Recovery) -> str:
         for record_id, kind in grouping.nuisance:
             lines.append(f"    {record_id} ({kind})")
     return "\n".join(lines)
-
-
-def _depths(recovery: Recovery) -> str:
-    """The depths the precision figures were measured at, named in the header."""
-    return ", ".join(str(depth) for depth in recovery.depths)
 
 
 def _bound(recovery: Recovery) -> str:
@@ -1260,6 +1281,7 @@ def render_report(recovery: Recovery) -> str:
         f"| {measure.depth} | {measure.true} | {measure.of} |"
         for measure in recovery.precision
     )
+    shares = recovery.shares
     bound_rows = "\n".join(
         f"| `{entry.campaign_id}` | "
         + (
@@ -1360,12 +1382,16 @@ of the trade-off is visible rather than a single number.
 | ---: | ---: | ---: |
 {precision_rows}
 
-Measured at depths {_depths(recovery)}, against the Planted Campaign membership by
-this command, not by a person reviewing the queue (ADR-0022). Of the two rates on this
-page — recovery and precision — the lower of the two numbers is the more trustworthy,
-and this is deliberate: either one can flatter the system while the other quietly
-fails. Recovery and the false-grouping rate are reported together on this page;
-neither number appears alone.
+{shares}. Each figure is named with its depth: a precision number is never
+published without one. Measured against the Planted
+Campaign membership by this command, not by a person reviewing the queue
+(ADR-0022).
+
+Of the two rates on this page — recovery and precision — the lower of the two
+numbers is the more trustworthy, and this is deliberate: either one can
+flatter the system while the other quietly fails. Recovery and the
+false-grouping rate are reported together on this page; neither number
+appears alone.
 
 ## What it was measured against
 
