@@ -302,8 +302,16 @@ def candidate_row(
 
     Both evidence lists are written out because the reader refuses a row holding a field it
     does not know, and refuses nothing about a field it does: a candidate resting on one
-    edge carries an empty list for the other.
+    edge carries an empty list for the other. The timing is written for the same reason,
+    and the reader checks it against the evidence the row names, so the gaps here and the
+    pieces they belong to cannot disagree.
     """
+    gaps = [{"kind": "registration", "value": domain,
+             "closest_seconds": 0, "span_seconds": 0}
+            for domain in domains]
+    gaps += [{"kind": "Contact Point", "value": value,
+              "closest_seconds": 0, "span_seconds": 0}
+             for value in points]
     return {
         "candidate_id": candidate_id,
         "accounts": list(accounts),
@@ -322,6 +330,13 @@ def candidate_row(
             }
             for value in points
         ],
+        "corroboration": gaps,
+        "timing": {
+            "window_seconds": 86_400,
+            "pieces": len(gaps),
+            "corroborated": len(gaps),
+            "closest_seconds": 0,
+        },
         "first_seen": first_seen,
     }
 

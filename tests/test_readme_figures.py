@@ -46,6 +46,7 @@ from reddit_fraud_intelligence.categories import ANNEX_CATEGORIES, CAFC_CATEGORI
 REPO_ROOT = Path(__file__).parent.parent
 README = REPO_ROOT / "README.md"
 BASE_RATES = REPO_ROOT / "data" / "cafc" / "base_rates.jsonl"
+CANDIDATES = REPO_ROOT / "data" / "campaigns" / "campaign-candidates.jsonl"
 COMPOSITION_REPORT = REPO_ROOT / "docs" / "corpus-composition.md"
 CONTACTS = REPO_ROOT / "data" / "contacts" / "post-contacts.jsonl"
 CONTACT_POINTS_REPORT = REPO_ROOT / "docs" / "contact-points.md"
@@ -119,6 +120,21 @@ def nested(row: Row, field: str) -> list[Row]:
     value = row[field]
     assert isinstance(value, list), f"{field} should be a list, is {value!r}"
     return [entry for entry in value if isinstance(entry, dict)]
+
+
+def inner(row: Row, field: str) -> Row:
+    """A field holding one object, as that object."""
+    value = row[field]
+    assert isinstance(value, dict), f"{field} should be a row, is {value!r}"
+    return value
+
+
+def integer(row: Row, field: str) -> int:
+    value = row[field]
+    assert isinstance(value, int) and not isinstance(value, bool), (
+        f"{field} should be a whole number, is {value!r}"
+    )
+    return value
 
 
 def tables(path: Path) -> dict[str, dict[str, tuple[str, ...]]]:
@@ -219,6 +235,40 @@ def test_the_registrations_the_readme_reports_withheld_are_the_ones_the_corpus_r
     ), (
         f"README.md does not report {withheld} of {len(resolved)} registrations and "
         f"{at_withheld} of {len(published)} Contact Points withheld"
+    )
+
+
+def test_the_timing_the_readme_quotes_is_the_timing_the_candidates_file_publishes() -> None:
+    """The corroboration figure, counted off the file the grouping wrote.
+
+    The candidates file is the committed record of which pieces of evidence the window
+    corroborates and which it does not, so the README's count is derived from it rather
+    than transcribed: a window change or a Corpus change moves the file and the README
+    would otherwise be a commit behind, which is what this file exists to stop. Both halves
+    of the figure are counted, because a README that quoted the candidates without the
+    pieces would look the same whether the clock had agreed with every edge or one.
+    """
+    candidates = records_of(CANDIDATES)
+    pieces = [piece for record in candidates for piece in nested(record, "corroboration")]
+    corroborated = [
+        piece
+        for record in candidates
+        for piece in nested(record, "corroboration")
+        if integer(piece, "span_seconds") <= integer(inner(record, "timing"), "window_seconds")
+    ]
+    with_something = [
+        record
+        for record in candidates
+        if integer(inner(record, "timing"), "corroborated") > 0
+    ]
+
+    assert candidates and pieces, "the committed candidates carry no timing at all"
+    assert found(
+        rf"\b{len(with_something)} of {len(candidates)} candidates and "
+        rf"{len(corroborated)} of {len(pieces)} pieces of evidence corroborated\b"
+    ), (
+        f"README.md does not quote {len(with_something)} of {len(candidates)} candidates "
+        f"and {len(corroborated)} of {len(pieces)} pieces of evidence corroborated"
     )
 
 

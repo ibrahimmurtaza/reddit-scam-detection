@@ -20,7 +20,9 @@ projection of those categories down to ten Scam Categories, and the comparison o
 the Corpus's own distribution against those base rates. The pipeline itself: the
 Registrable Domain of every link, then the Contact Points every post names, then
 the Campaign Candidates those registrations and Contact Points produce, with
-known-shared infrastructure filtered out as published data, then the Policy Score those
+known-shared infrastructure filtered out as published data and with temporal
+proximity reported beside every candidate as corroboration that can deprioritise
+one and never create one, then the Policy Score those
 same links and posts add up to, with the arithmetic printed beside it, then the Content
 Embeddings every post is stored with under a similarity index. And the
 measurement: how many of the two Planted Campaigns that grouping recovered, as X of N,
@@ -28,9 +30,9 @@ joined by a command that runs after it rather than inside it, with the method's 
 bound stated as a count beside it. The Review Queue those scores are ordered into, at a
 stated depth. The false-grouping rate beside that recovery figure, and the Review
 Queue's precision at several depths, are measured by the same evaluator.
-The Confidence, the corroborated grouping tier, and the graph report are not built yet.
-Their tickets are numbered #25 to #28 in the tracker; this README is updated as
-they land.
+The Confidence, the content-similarity corroboration, the cohesion system, and the graph
+report are not built yet. Their tickets are numbered #24 to #28 in the tracker; this
+README is updated as they land.
 
 ## Running it
 
@@ -62,7 +64,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | `rfi campaign-candidates`, which reads them from the Corpus rather than from here, and a reader |
-| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, and the shared registrations and Contact Points that join them. | `rfi campaign-recovery`, `rfi review-queue`, then the corroboration ticket #24 |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, the shared registrations and Contact Points that join them, and the temporal proximity of each. | `rfi campaign-recovery`, `rfi review-queue`, then the content-similarity corroboration ticket #24 |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, and the recovery report beside it |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
@@ -309,7 +311,7 @@ uv run rfi campaign-candidates   # reads the Corpus, the Public Suffix List, and
 
 | File | Holds |
 | --- | --- |
-| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, each shared registration with the accounts and posts that reach it, and each shared Contact Point with the accounts that published it and every spelling the Corpus wrote it in. |
+| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, each shared registration with the accounts and posts that reach it, each shared Contact Point with the accounts that published it and every spelling the Corpus wrote it in, and the temporal proximity of each of those. |
 
 **The second edge is what makes a desk that pays for a domain per post visible.** Its
 registrations move every time the advert is posted and nothing joins the accounts that
@@ -317,7 +319,7 @@ share them; one Telegram Contact Point published throughout is the same infrastr
 any other name. On this Corpus that is `syn-nuisance-obfuscated-copperlantern`: one desk
 publishing one Contact Point three ways — written out with a full stop between its
 characters, written out with spaces, and with a digit standing in for a letter — where two
-of the three accounts reach no registration at all. It comes out as `cc-02`.
+of the three accounts reach no registration at all. It comes out as `cc-04`.
 
 **The two edges are not equally good, and every candidate says which one it rests on.**
 A registration is somebody's property and this project resolves it against the published
@@ -326,14 +328,44 @@ recall against the Labelled Set, and a candidate built on a Contact Point alone 
 on its own line rather than leaving the reader to work it out from the section heading:
 
 ```
-cc-02  3 accounts, 7 posts, first seen 2026-06-06T14:23:00Z
-  justified by  Contact Points, the weaker of the two readings; `rfi contact-points` has the measured recall
+cc-04  3 accounts, 7 posts, first seen 2026-06-06T14:23:00Z
+  justified by  Contact Points, the weaker of the two readings; `rfi contact-points` has the measured recall, no two accounts under it posted inside the window
+  timing        0 of 1 piece of evidence within the 24-hour window; nearest pair 42m apart
   shared contact points
-    syn_copperlantern  telegram, 3 accounts, 3 posts  written @s y n _ c o p p e r l a n t e r n, @s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n, @syn_c0pperlantern
+    syn_copperlantern  telegram, 3 accounts, 3 posts  22d14h16m across, outside the 24-hour window  written @s y n _ c o p p e r l a n t e r n, @s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n, @syn_c0pperlantern
 ```
 
 The label is worked out from the two evidence lists rather than stored, so the file and
 the table cannot hold different opinions about which edge a candidate rests on.
+
+**Timing corroborates a grouping and can never produce one.** Accounts sharing a
+registration and posting within a tight window are more likely one operator, so every
+candidate carries the temporal proximity of the things it rests on: the span from the
+earliest post by any account reaching one to the latest, and the gap between the nearest
+two. The window is a figure in the output rather than a rule in the code — 24 hours by
+default, `--window-hours` to change it — and a piece of evidence is corroborated when its
+span falls inside it:
+
+```
+  window        24 hours between two accounts on one piece of evidence
+  timing        3 of 4 candidates and 4 of 6 pieces of evidence corroborated; no candidate removed
+```
+
+It may deprioritise and nothing else. A candidate the window corroborates nothing under is
+printed in full, with the gap beside each of its pieces of evidence, named again below the
+table under a heading of its own, and moved to the end of the list — which is why the desk
+above is `cc-04` and not `cc-02`, seven posts over three weeks being not what a 24-hour
+window calls one operator. **Nothing is removed for want of timing**, because a domain two
+accounts reached months apart may be a domain that changed hands and a campaign may simply
+be a patient one. What it refuses is the case ADR-0005 was written about:
+`tests/test_campaign_candidates.py` runs four accounts posting in the same minute with
+nothing shared at a window of a year and requires an empty file, so the rule is about
+timing rather than about the default.
+
+The other half of the finding is inside `cc-01`, where the two edges disagree: the
+registration puts three accounts inside two and a quarter hours and the Telegram handle
+brings in a fourth account two weeks later, which is the very account that costs the
+project a recovery.
 
 Both Planted Campaigns come out on their own registration — alpha on
 `vantage-ledger.example`, which one of its accounts reaches through a mirror hostname,
@@ -352,7 +384,9 @@ lost money to the desk and published the desk's Telegram Contact Point while wri
 complaint down. Nothing in this project can tell an operator from a customer, so the
 candidate holds the membership and one account from outside it, alpha's outcome becomes
 `partial`, and the recovery figure below is 1 of 2 rather than 2 of 2. `cc-01` names the
-account that cost it, and the false-grouping rate rises with it.
+account that cost it, and the false-grouping rate rises with it. The timing says the same
+thing independently: the registration is corroborated and the Contact Point that joined the
+complaint is not.
 
 ## Known-shared infrastructure
 

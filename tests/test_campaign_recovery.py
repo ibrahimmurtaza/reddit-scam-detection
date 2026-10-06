@@ -151,6 +151,12 @@ def records(row: Row, field: str) -> list[Row]:
     return [entry for entry in value if isinstance(entry, dict)]
 
 
+def nested(row: Row, field: str) -> Row:
+    value = row[field]
+    assert isinstance(value, dict), f"{field} should be a row, is {value!r}"
+    return value
+
+
 def write_rows(path: Path, written: Iterable[Row]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -189,15 +195,27 @@ def candidate(
     posts: Iterable[str],
     *domains: str,
     points: Iterable[str] = (),
+    closest_seconds: int = 0,
 ) -> Row:
     """One row of `campaign-candidates.jsonl`, hand-written.
 
     `domains` and `points` are the two edges ADR-0005 allows and the reader refuses a
     row with neither, so a test that wanted a candidate resting on nothing would have to
-    say so in the source rather than leave a row the command turns down.
+    say so in the source rather than leave a row the command turns down. The timing is
+    written too, and is checked by the reader against the evidence the row names — one
+    gap per piece, a count of the pieces, and the nearest of the gaps — so a test cannot
+    hand the evaluator a candidate whose clock disagrees with itself. Every piece here is
+    written with a gap of nothing, which is what a Corpus of posts written at one instant
+    gives; `closest_seconds` moves the whole row when a test needs a gap.
     """
     accounts = sorted(accounts)
     posts = sorted(posts)
+    gaps = [{"kind": "registration", "value": domain,
+             "closest_seconds": closest_seconds, "span_seconds": closest_seconds}
+            for domain in domains]
+    gaps += [{"kind": "Contact Point", "value": value,
+              "closest_seconds": closest_seconds, "span_seconds": closest_seconds}
+             for value in points]
     return {
         "candidate_id": candidate_id,
         "accounts": accounts,
@@ -215,6 +233,13 @@ def candidate(
             }
             for value in points
         ],
+        "corroboration": gaps,
+        "timing": {
+            "window_seconds": 86_400,
+            "pieces": len(gaps),
+            "corroborated": len(gaps),
+            "closest_seconds": closest_seconds,
+        },
         "first_seen": "2026-01-05T09:00:00Z",
     }
 
@@ -1039,7 +1064,7 @@ def test_the_two_planted_campaigns_come_out_and_one_of_them_is_no_longer_a_recov
 ) -> None:
     """The shipped figure, which a reader can check against four candidates by hand.
 
-    `cc-04` holds all of beta's two accounts, so beta is recovered. `cc-01` holds alpha's
+    `cc-03` holds all of beta's two accounts, so beta is recovered. `cc-01` holds alpha's
     three accounts and one more: `syn_greyloch_6612`, a Hard Negative that published the
     desk's Telegram handle while complaining about the desk. ADR-0005 makes a shared
     Contact Point a grouping edge and nothing in this project can tell an operator from
@@ -1048,7 +1073,7 @@ def test_the_two_planted_campaigns_come_out_and_one_of_them_is_no_longer_a_recov
     figure falls from what it was, and the extra account is named beside the figure so a
     reader can see exactly which claim cost it.
 
-    `cc-03` is three accounts of one shop sharing one domain: ADR-0005 says they group,
+    `cc-02` is three accounts of one shop sharing one domain: ADR-0005 says they group,
     the grouping is right to produce them, and they are not planted, so they are printed
     as a candidate holding no Planted Campaign rather than counted against N.
     """
@@ -1064,12 +1089,12 @@ def test_the_two_planted_campaigns_come_out_and_one_of_them_is_no_longer_a_recov
     assert [text(row, "outcome") for row in recovered] == ["partial", "recovered"]
     assert [
         text(records(row, "candidates")[0], "candidate_id") for row in recovered
-    ] == ["cc-01", "cc-04"]
+    ] == ["cc-01", "cc-03"]
     assert texts(records(recovered[0], "candidates")[0], "extra") == ["syn_greyloch_6612"]
     assert texts(records(recovered[1], "candidates")[0], "extra") == []
 
     assert "1 of 4 candidates" in printed
-    assert "cc-03" in printed
+    assert "cc-02" in printed
     assert "rivermill-bikes.example" in page
     assert "1 of 2 Planted Campaigns" in page
     assert "syn_greyloch_6612" in printed and "syn_greyloch_6612" in page
@@ -1089,12 +1114,18 @@ def test_the_corpus_holds_a_desk_the_second_edge_finds_and_the_first_could_not(
 
     It is not a Planted Campaign, so it is counted as a false grouping under the
     definition in ADR-0022: accounts of no campaign, grouped correctly, never a recovery.
+
+    It is also `cc-04` rather than `cc-02`, because it is the one candidate the 24-hour
+    timing window corroborates nothing under: three accounts holding one handle across
+    three weeks is not what a tight window calls one operator, so the clock has put it at
+    the end of the table and the identifier with it (ADR-0025). The candidate is still
+    proposed, still printed in full and still counted; only its place in the list moved.
     """
     _, report, printed = run(tmp_path, capsys=capsys)
     page = report.read_text(encoding="utf-8")
 
     assert "syn_copperlantern" in printed
-    assert "cc-02" in printed
+    assert "cc-04" in printed
     assert "3 of 4 Campaign Candidates" in page
     assert "syn_copperlantern" in page
     # The edge is named beside the value in both views, because a Contact Point and a
@@ -1265,16 +1296,16 @@ def test_the_false_grouping_rate_is_reported_against_the_nuisance_structure(
 
     On the committed Corpus the figure is three false groupings of four candidates:
     `cc-01`, which holds the alpha Planted Campaign and the Hard Negative that named its
-    handle; `cc-02`, the desk behind the obfuscated Telegram handles, which belongs to no
-    campaign at all; and `cc-03`, the shop's accounts, grouped because ADR-0005 puts them
-    together and counted as false because they belong to no Planted Campaign. `cc-04`
+    handle; `cc-04`, the desk behind the obfuscated Telegram handles, which belongs to no
+    campaign at all; and `cc-02`, the shop's accounts, grouped because ADR-0005 puts them
+    together and counted as false because they belong to no Planted Campaign. `cc-03`
     recovers beta's whole membership and is not false.
     """
     _, report, printed = run(tmp_path, capsys=capsys)
     page = report.read_text(encoding="utf-8")
 
     assert "3 of 4 Campaign Candidates" in page
-    for candidate_id in ("cc-01", "cc-02", "cc-03"):
+    for candidate_id in ("cc-01", "cc-02", "cc-04"):
         assert candidate_id in page and candidate_id in printed
     assert "no Planted Campaign" in page
     # The rate is named beside the Nuisance Structure it was measured against.
@@ -1545,6 +1576,224 @@ def test_the_run_refuses_a_candidates_file_carrying_a_field_it_does_not_know(
         )
 
     assert "campaign_id" in str(refusal.value)
+
+
+def timing_disagreement(
+    tmp_path: Path, **overrides: object
+) -> tuple[Path, Path]:
+    """A candidates file whose timing disagrees with itself, one way at a time.
+
+    The evaluator reads what the grouping published and does no timing of its own, so a
+    row that claims something about when its accounts posted that the rest of the row does
+    not bear out is a row it would print as though the clock had said so. The refusals are
+    checked here rather than in the grouping's own tests because this is the command that
+    has to stop rather than measure, and it reads the file the other reader reads.
+    """
+    corpus = corpus_of(
+        tmp_path,
+        post("syn_p_0001", "syn_alpha_0001"),
+        post("syn_p_0002", "syn_beta_0002"),
+    )
+    candidates = write_rows(
+        tmp_path / "campaign-candidates.jsonl",
+        [
+            {
+                **candidate(
+                    "cc-01",
+                    ("syn_alpha_0001", "syn_beta_0002"),
+                    ("syn_p_0001", "syn_p_0002"),
+                    "vantage-ledger.example",
+                    closest_seconds=3_600,
+                ),
+                **overrides,
+            }
+        ],
+    )
+    return corpus, candidates
+
+
+def recovery_argv(tmp_path: Path, corpus: Path, candidates: Path) -> list[str]:
+    """The evaluator over a candidates file this test wrote, refusing nothing itself.
+
+    The membership and the manifest are written into the same temporary directory and the
+    refusal has to come from the reader rather than from a file that was never there,
+    because a test that fails because it forgot a fixture is a test about fixtures.
+    """
+    truth = write_rows(
+        tmp_path / "truth.jsonl",
+        [campaign("syn-campaign-one", ("syn_alpha_0001", "syn_beta_0002"), ("syn_p_0001",))],
+    )
+    nuisance_path = write_rows(
+        tmp_path / "nuisance.jsonl",
+        [nuisance("syn-nuisance-single", NuisanceKind.SINGLE_ACCOUNT_DOMAIN)],
+    )
+    return [
+        "campaign-recovery",
+        "--corpus",
+        str(corpus),
+        "--candidates",
+        str(candidates),
+        "--truth",
+        str(truth),
+        "--nuisance",
+        str(nuisance_path),
+        "--recovery",
+        str(tmp_path / "recovery.jsonl"),
+        "--report",
+        str(tmp_path / "campaign-recovery.md"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "said"),
+    (
+        pytest.param(
+            {"corroboration": []}, "is joined on", id="no gaps beside its evidence"
+        ),
+        pytest.param(
+            {
+                "corroboration": [
+                    {
+                        "kind": "registration",
+                        "value": "signal-harbor.example",
+                        "closest_seconds": 3_600,
+                        "span_seconds": 3_600,
+                    }
+                ]
+            },
+            "is joined on",
+            id="a gap for something else",
+        ),
+        pytest.param(
+            {
+                "timing": {
+                    "window_seconds": 86_400,
+                    "pieces": 2,
+                    "corroborated": 1,
+                    "closest_seconds": 3_600,
+                }
+            },
+            "says it times 2 pieces of evidence",
+            id="more pieces than it carries",
+        ),
+        pytest.param(
+            {
+                "timing": {
+                    "window_seconds": 86_400,
+                    "pieces": 1,
+                    "corroborated": 1,
+                    "closest_seconds": 60,
+                }
+            },
+            "publishes gaps of",
+            id="a nearest pair none of its gaps show",
+        ),
+        pytest.param(
+            {
+                "corroboration": [
+                    {
+                        "kind": "registration",
+                        "value": "vantage-ledger.example",
+                        "closest_seconds": 7_200,
+                        "span_seconds": 3_600,
+                    }
+                ]
+            },
+            "cannot be shorter than the gap inside it",
+            id="a span shorter than its gap",
+        ),
+        pytest.param(
+            {
+                "corroboration": [
+                    {
+                        "kind": "url",
+                        "value": "vantage-ledger.example",
+                        "closest_seconds": 3_600,
+                        "span_seconds": 3_600,
+                    }
+                ]
+            },
+            "the names are",
+            id="a kind this build does not read",
+        ),
+        pytest.param(
+            {
+                "corroboration": [
+                    {
+                        "kind": "registration",
+                        "value": "vantage-ledger.example",
+                        "closest_seconds": 3_600,
+                        "span_seconds": 172_800,
+                    }
+                ]
+            },
+            "of which 0 do",
+            id="a count of corroborated pieces its spans deny",
+        ),
+        pytest.param(
+            {
+                "timing": {
+                    "window_seconds": 60,
+                    "pieces": 1,
+                    "corroborated": 0,
+                    "closest_seconds": 3_600,
+                }
+            },
+            "a window has to be at least one hour",
+            id="a window the grouping refuses to run at",
+        ),
+    ),
+)
+def test_the_run_refuses_a_candidates_file_whose_timing_disagrees_with_itself(
+    tmp_path: Path, overrides: Mapping[str, object], said: str
+) -> None:
+    """A gap nothing recomputes is a claim, and the two readers of this file need it to be
+    one the grouping can be held to.
+
+    Six ways for a row to say something about when its accounts posted that the rest of the
+    row does not bear out, and each is refused by name: a candidate carrying no gaps beside
+    the evidence it is joined on, a gap for a piece of evidence it is not joined on, a
+    count of pieces it does not carry, a nearest pair smaller than any gap beside it, a
+    span shorter than the gap inside it, a kind of evidence this build does not publish, a
+    count of corroborated pieces its own spans deny, and a window so short the grouping
+    would have refused to run at it. None of them looks wrong on its own line, which is the
+    reason each is checked rather than assumed — the corroborated count in particular is
+    the figure the ordering of this project and the heading below the table both rest on.
+    """
+    corpus, candidates = timing_disagreement(tmp_path, **overrides)
+
+    with pytest.raises(SystemExit) as refusal:
+        main(recovery_argv(tmp_path, corpus, candidates))
+
+    assert said in str(refusal.value)
+    assert not (tmp_path / "recovery.jsonl").exists()
+
+
+def test_the_run_refuses_a_candidates_file_counted_at_two_windows(
+    tmp_path: Path,
+) -> None:
+    """A corroborated count means nothing without the window it was counted against.
+
+    Two rows, each internally consistent, each holding a different window — which is what
+    a file written by two runs at two `--window-hours` settings looks like. Read as one
+    figure it would say `1 of 2 candidates`, and no reader of that sentence could tell
+    which two candidates or which two windows, so the file is refused instead. The same
+    rule `read_policy_scores` applies to one published weight set.
+    """
+    corpus, candidates = timing_disagreement(tmp_path)
+    published = rows(candidates)
+    second = {
+        **published[0],
+        "candidate_id": "cc-02",
+        "timing": {**nested(published[0], "timing"), "window_seconds": 3_600},
+    }
+    two_windows = write_rows(candidates, [*published, second])
+
+    with pytest.raises(SystemExit) as refusal:
+        main(recovery_argv(tmp_path, corpus, two_windows))
+
+    assert "seconds of timing window" in str(refusal.value)
+    assert not (tmp_path / "recovery.jsonl").exists()
 
 
 def test_the_command_refuses_to_write_the_report_over_the_membership(
