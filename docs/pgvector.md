@@ -103,6 +103,12 @@ $env:PGPASSWORD="..."     # never committed
 uv run rfi content-embeddings
 ```
 
+On this machine the password is not in an environment variable at all: libpq reads it
+from `%APPDATA%\postgresql\pgpass.conf`, which is the only place it is recorded, so the
+first two lines are enough and the third can be dropped. `PGPASSWORD` is needed in the
+environment only for the one test that asserts the password does not appear in the
+command's own output; it skips with that reason when it is not set.
+
 `RFI_DATABASE_URL` is read first if it is set, so a hosted database is one
 variable rather than five. With neither it nor any `PG*` variable set the
 command refuses rather than letting libpq pick a database by itself.
