@@ -312,6 +312,16 @@ def candidate_row(
     gaps += [{"kind": "Contact Point", "value": value,
               "closest_seconds": 0, "span_seconds": 0}
              for value in points]
+    twins = [
+        {
+            "post": post,
+            "account": accounts[index % len(accounts)],
+            "nearest": posts[(index + 1) % len(posts)],
+            "nearest_account": accounts[(index + 1) % len(accounts)],
+            "distance": 0.0,
+        }
+        for index, post in enumerate(posts)
+    ]
     return {
         "candidate_id": candidate_id,
         "accounts": list(accounts),
@@ -336,6 +346,13 @@ def candidate_row(
             "pieces": len(gaps),
             "corroborated": len(gaps),
             "closest_seconds": 0,
+        },
+        "similarity": twins,
+        "content_similarity": {
+            "threshold": 0.5,
+            "pieces": len(posts),
+            "corroborated": len(posts),
+            "closest_distance": 0.0,
         },
         "first_seen": first_seen,
     }
@@ -678,13 +695,13 @@ def test_every_entry_names_the_campaign_candidates_it_sits_in(
             candidate_row(
                 "syn_c_001",
                 ("syn_c_0001", "syn_c_0002"),
-                ("syn_p_0001",),
+                ("syn_p_0001", "syn_p_0002"),
                 "signal-harbor.example",
             ),
             candidate_row(
                 "syn_c_002",
                 ("syn_c_0001", "syn_c_0003"),
-                ("syn_p_0001",),
+                ("syn_p_0001", "syn_p_0002"),
                 "harbour-yards.example",
             ),
         ),
@@ -723,7 +740,7 @@ def test_a_candidate_joined_on_a_contact_point_names_it(
             candidate_row(
                 "syn_c_001",
                 ("syn_c_0001", "syn_c_0002"),
-                ("syn_p_0001",),
+                ("syn_p_0001", "syn_p_0002"),
                 points=("syn_shared_desk",),
             ),
         ),
@@ -746,12 +763,13 @@ def test_a_candidate_joined_on_a_contact_point_names_it(
     with_domain = candidate_row(
         "syn_c_001",
         ("syn_c_0001", "syn_c_0002"),
-        ("syn_p_0001",),
+        ("syn_p_0001", "syn_p_0002"),
         "signal-harbor.example",
     )
     scores_path, candidates_path = published(
         tmp_path / "second",
         score_row("syn_p_0001", "syn_c_0001", ("domain_frequency", PUBLISHED["domain_frequency"])),
+        score_row("syn_p_0002", "syn_c_0002", ("payment_request", PUBLISHED["payment_request"])),
         candidates=(with_domain,),
     )
     printed = run(scores_path, candidates_path, capsys, depth=50)
@@ -775,11 +793,12 @@ def test_a_post_no_candidate_holds_says_so(
         tmp_path,
         score_row("syn_p_0001", "syn_c_0001", ("domain_frequency", PUBLISHED["domain_frequency"])),
         score_row("syn_p_0002", "syn_c_0002", ("payment_request", PUBLISHED["payment_request"])),
+        score_row("syn_p_0003", "syn_c_0003", ("domain_frequency", PUBLISHED["domain_frequency"])),
         candidates=(
             candidate_row(
                 "syn_c_002",
                 ("syn_c_0002", "syn_c_0003"),
-                ("syn_p_0002",),
+                ("syn_p_0002", "syn_p_0003"),
                 "harbour-yards.example",
             ),
         ),

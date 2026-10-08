@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import SCRATCH_TABLE, needs_database, seed_vectors
+from reddit_fraud_intelligence.campaigns import DEFAULT_SIMILARITY_THRESHOLD
 from reddit_fraud_intelligence.cli import DEFAULT_CORPUS_PATH, DEFAULT_SEED, main
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 
@@ -48,6 +50,11 @@ COMMITTED_SHARED_HOSTS = REPO_ROOT / "data" / "infrastructure" / "shared-hosts.j
 
 Row = Mapping[str, object]
 
+# Every test here runs `group()`, which reads the stored vectors, so the whole file
+# skips rather than failing when no database is configured. The reason is on the
+# marker; the offline half of the same Signal is `tests/test_content_similarity.py`.
+pytestmark = needs_database
+
 
 def run(
     directory: Path,
@@ -55,6 +62,7 @@ def run(
     capsys: pytest.CaptureFixture[str] | None = None,
     shared: Path | None = None,
     window: int | None = None,
+    threshold: float | None = None,
 ) -> tuple[Path, str]:
     candidates_path = directory / "campaign-candidates.jsonl"
     argv = [
@@ -63,11 +71,16 @@ def run(
         str(corpus),
         "--candidates",
         str(candidates_path),
+        "--table",
+        SCRATCH_TABLE,
     ]
+    seed_vectors(corpus)
     if shared is not None:
         argv += ["--shared-infrastructure", str(shared)]
     if window is not None:
         argv += ["--window-hours", str(window)]
+    if threshold is not None:
+        argv += ["--similarity-threshold", str(threshold)]
     exit_code = main(argv)
     assert exit_code == 0
     printed = capsys.readouterr().out if capsys is not None else ""
@@ -102,6 +115,15 @@ def integer(row: Row, field: str) -> int:
         f"{field} is not a whole number: {value!r}"
     )
     return value
+
+
+def measure(row: Row, field: str) -> float:
+    """One figure the file published as a number rather than as a whole number."""
+    value = row[field]
+    assert isinstance(value, (int, float)) and not isinstance(value, bool), (
+        f"{field} is not a number: {value!r}"
+    )
+    return float(value)
 
 
 def nested(row: Row, field: str) -> Row:
@@ -354,13 +376,17 @@ def test_the_printed_table_shows_each_candidate_with_the_evidence_for_it(
         "justified by",
         "shared registrations",
         "timing",
+        "similarity",
     ):
         assert column in heading
     index_line = next(line for line in printed.splitlines() if line.startswith("cc-01 "))
     assert "signal-harbor.example, vantage-ledger.example" in index_line
-    assert index_line.rstrip().endswith("2 of 2 corroborated"), index_line
+    assert "2 of 2 corroborated" in index_line
+    assert index_line.rstrip().endswith("4 of 4 corroborated"), index_line
 
     block = printed.split("cc-01  3 accounts, 4 posts, first seen")[1]
+    assert "similarity" in block
+    assert "threshold" in printed
     for account in ("syn_alpha_0001", "syn_beta_0002", "syn_gamma_0003"):
         assert account in block
     for post_id in ("syn_p_9021", "syn_p_9022", "syn_p_9023", "syn_p_9024"):
@@ -1170,22 +1196,25 @@ def test_the_filtered_groupings_are_the_two_planted_campaigns_the_shop_and_the_o
     evaluator publishes is measured against a list this small that a reader can check by
     hand.
 
-    The obfuscated desk comes last because it is the one candidate the 24-hour window
-    corroborates nothing under: seven posts over three weeks, and one handle held by three
-    accounts throughout. The identifier says where a candidate sits in this output and
-    nothing else, so moving it to the end of the table moves the identifier with it.
+    The shop comes first because it is the one candidate both signals corroborate:
+    its window spans two hours and its accounts recycle the same updates, so the clock
+    agrees and the vectors agree. The obfuscated desk comes last because it is the one
+    candidate the window corroborates nothing under and the vectors corroborate
+    nothing under either: seven posts over three weeks. The
+    identifier says where a candidate sits in this output and nothing else, so moving
+    it to the end of the table moves the identifier with it.
     """
     candidates_path, _ = run(tmp_path)
     written = by_accounts(candidates_path)
 
     assert list(written) == [
+        ("syn_rivermill_4417", "syn_rivermill_6620", "syn_rivermill_9085"),
         (
             "syn_greyloch_6612",
             "syn_harborlight_5517",
             "syn_pinecrest_9032",
             "syn_quantproof_2841",
         ),
-        ("syn_rivermill_4417", "syn_rivermill_6620", "syn_rivermill_9085"),
         ("syn_clearpathwork_3184", "syn_northwindhire_7736"),
         ("syn_halberdmoor_8823", "syn_thrushmoot_5524", "syn_wintermarch_4417"),
     ]
@@ -1609,9 +1638,9 @@ def test_the_shipped_corpus_agrees_with_itself_about_which_candidate_the_clock_h
     """What the clock has something to say about on the Corpus this project ships.
 
     Two candidates, both of them the project's hard cases rather than a fixture's easy
-    one. `cc-01`'s registration puts three accounts in the same morning and its Telegram
+    one. `cc-02`'s registration puts three accounts in the same morning and its Telegram
     handle brings in a fourth account two weeks later, which is the very account that
-    costs the project a recovery — so the candidate is corroborated by one of its two
+    costs the project a recovery - so the candidate is corroborated by one of its two
     pieces of evidence and the block says which. `cc-04` is the desk behind the
     obfuscated handles: one handle, three accounts, seven posts over three weeks, and a
     24-hour window that calls none of that one operator. It is deprioritised, named below
@@ -1635,10 +1664,10 @@ def test_the_shipped_corpus_agrees_with_itself_about_which_candidate_the_clock_h
         f"timing        3 of 4 candidates and {corroborated} of {len(pieces)} pieces of "
         "evidence corroborated; no candidate removed" in printed
     )
-    assert by_span[("cc-01", "vantage-ledger.example")] == 8_100, "2h15m apart"
-    assert by_span[("cc-01", "syn_vantageledger")] == 1_242_960, "14d9h16m apart"
+    assert by_span[("cc-02", "vantage-ledger.example")] == 8_100, "2h15m apart"
+    assert by_span[("cc-02", "syn_vantageledger")] == 1_242_960, "14d9h16m apart"
 
-    block = printed.split("cc-01  4 accounts")[1].split("\n\n")[0]
+    block = printed.split("cc-02  4 accounts")[1].split("\n\n")[0]
     assert "2h15m across, inside the 24-hour window" in block
     assert "14d9h16m across, outside the 24-hour window" in block
     assert "1 of 2 pieces of evidence within the 24-hour window" in block
@@ -1873,6 +1902,7 @@ def test_a_post_stamped_without_an_offset_is_refused_by_name(
         ),
     )
 
+    seed_vectors(corpus)
     with pytest.raises(SystemExit) as refusal:
         main(
             [
@@ -1881,6 +1911,8 @@ def test_a_post_stamped_without_an_offset_is_refused_by_name(
                 str(corpus),
                 "--candidates",
                 str(tmp_path / "campaign-candidates.jsonl"),
+                "--table",
+                SCRATCH_TABLE,
             ]
         )
 
@@ -2010,6 +2042,157 @@ def test_every_shared_domain_is_one_the_resolved_links_published(tmp_path: Path)
         for entry in records(row, "shared_domains"):
             assert text(entry, "domain") in resolved
             assert len(texts(entry, "posts")) > 1
+
+
+def test_the_similarity_signal_is_reported_but_never_grouped_on(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ticket #24's own acceptance, at the command level.
+
+    The threshold is a figure in the output; every candidate says whether the vectors
+    corroborated it or not, and the filtered ones are named below the table rather
+    than dropped. The same run recovers the staggered-paraphrase Planted Campaign from
+    its registration: the Signal deprioritises but cannot discard it, because its
+    posts are paraphrases, and paraphrases are not the same words. And the near-
+    identical decoy text with no shared infrastructure is not in the grouping at all -
+    the grouping's own union-find never saw it, whatever the vectors said.
+    """
+    candidates_path, printed = run(tmp_path, capsys=capsys)
+
+    written = rows(candidates_path)
+    for row in written:
+        similarity = nested(row, "content_similarity")
+        distances = [measure(piece, "distance") for piece in records(row, "similarity")]
+
+        assert measure(similarity, "threshold") == DEFAULT_SIMILARITY_THRESHOLD
+        assert integer(similarity, "pieces") == len(texts(row, "posts"))
+        assert integer(similarity, "corroborated") == len(
+            [distance for distance in distances if distance <= DEFAULT_SIMILARITY_THRESHOLD]
+        )
+        assert measure(similarity, "closest_distance") == min(distances)
+
+    assert "threshold     cosine distance at most 0.50" in printed
+    assert "similarity    " in printed
+    assert "filtered by similarity  3 of 4 candidates deprioritised" in printed
+    assert "no candidate removed" in printed
+
+    alpha = next(
+        row
+        for row in written
+        if set(texts(row, "posts")) >= {"syn_p_0001", "syn_p_0002", "syn_p_0003", "syn_p_0004"}
+    )
+    assert set(texts(alpha, "accounts")) >= {
+        "syn_quantproof_2841",
+        "syn_harborlight_5517",
+        "syn_pinecrest_9032",
+    }
+    assert len(records(alpha, "similarity")) == len(texts(alpha, "posts"))
+
+    decoy_accounts = {"syn_draycott_5583", "syn_underhill_7420", "syn_pellworth_3196"}
+    grouped = {account for row in written for account in texts(row, "accounts")}
+    assert decoy_accounts.isdisjoint(grouped)
+
+
+def test_the_threshold_is_a_parameter_and_moves_what_the_vectors_corroborate(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The figure in the output is a number the caller sets, and it decides.
+
+    The shipped Corpus at three thresholds: the default, a threshold so tight that no
+    post on it has a twin, and one so wide that every post has several. The counts in
+    the figure line, the verdict on every candidate, and the below-table section all
+    move with the argument rather than with the Corpus, which is what makes the
+    published threshold a thing a reader can disagree with rather than a constant
+    dressed as a decision.
+    """
+    _, tight = run(tmp_path / "tight", capsys=capsys, threshold=0.01)
+    _, loose = run(tmp_path / "loose", capsys=capsys, threshold=1.0)
+
+    assert "threshold     cosine distance at most 0.01" in tight
+    assert "similarity    0 of 4 candidates" in tight
+    assert "filtered by similarity  4 of 4 candidates deprioritised" in tight
+
+    assert "threshold     cosine distance at most 1.00" in loose
+    assert "similarity    4 of 4 candidates and 18 of 18 pieces" in loose
+    assert (
+        "filtered by similarity  none: every candidate above holds a near-twin for every "
+        "post within 1.00" in loose
+    )
+
+
+@pytest.mark.parametrize("threshold", (0, -0.1, 1.5))
+def test_a_threshold_that_could_not_discriminate_anything_is_refused(
+    threshold: float, tmp_path: Path
+) -> None:
+    """Zero corroborates nothing whatever this corpus holds, and past one everything
+    would - a threshold nothing can fail is a signal that fires on nothing, which is a
+    claim. The refusal names the argument, because the figure a caller meant to set is
+    the one they can check against what they typed."""
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_9601", "syn_alpha_0001", "https://vantage-ledger.example/entry"),
+            post("syn_p_9602", "syn_beta_0002", "https://vantage-ledger.example/intake"),
+        ),
+    )
+    seed_vectors(corpus)
+
+    with pytest.raises(SystemExit) as refusal:
+        main(
+            [
+                "campaign-candidates",
+                "--corpus",
+                str(corpus),
+                "--candidates",
+                str(tmp_path / "campaign-candidates.jsonl"),
+                "--table",
+                SCRATCH_TABLE,
+                "--similarity-threshold",
+                str(threshold),
+            ]
+        )
+
+    assert f"--similarity-threshold is {threshold}" in str(refusal.value)
+
+
+def test_the_decoy_text_groups_nothing_at_any_threshold(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The refusal, asked at the two thresholds the pasted advert answers.
+
+    The Corpus's own copy of the case, written out by hand: three accounts pasting one
+    advert word for word, each linking its own registration, sharing no registrable
+    domain and no Contact Point between any two of them. At a threshold of 1.0 the run
+    agrees that every one of those posts has a near-identical twin by another account
+    and still writes no candidate, because the grouping is a union-find over shared
+    infrastructure and never consulted a vector. At 0.05 the texts are nowhere near
+    each other and the file is the same. The threshold moves the figures; it never
+    moves the grouping.
+    """
+    advert = (
+        "Remote annotation work, 26 an hour, six hours a day, kit posted out, starts "
+        "Monday. No experience needed, they train you over the first two days."
+    )
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post("syn_p_9701", "syn_draycott_5583", "https://anvil-labels.example/a", body=advert),
+            post(
+                "syn_p_9702",
+                "syn_underhill_7420",
+                "https://underhilltalent.example/a",
+                body=advert,
+            ),
+            post("syn_p_9703", "syn_pellworth_3196", "https://pellworthwork.example/a", body=advert),
+        ),
+    )
+    loose_path, loose = run(tmp_path / "loose", corpus, capsys, threshold=1.0)
+    tight_path, tight = run(tmp_path / "tight", corpus, capsys, threshold=0.05)
+
+    assert rows(loose_path) == []
+    assert rows(tight_path) == []
+    assert "cc-01" not in loose
+    assert "cc-01" not in tight
 
 
 def test_the_command_refuses_to_write_the_corpus_away(tmp_path: Path) -> None:

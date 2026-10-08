@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import SCRATCH_TABLE, needs_database, seed_vectors
 from reddit_fraud_intelligence.cli import (
     DEFAULT_CANDIDATES_PATH,
     DEFAULT_CORPUS_PATH,
@@ -216,6 +217,16 @@ def candidate(
     gaps += [{"kind": "Contact Point", "value": value,
               "closest_seconds": closest_seconds, "span_seconds": closest_seconds}
              for value in points]
+    twins = [
+        {
+            "post": post,
+            "account": accounts[index % len(accounts)],
+            "nearest": posts[(index + 1) % len(posts)],
+            "nearest_account": accounts[(index + 1) % len(accounts)],
+            "distance": 0.0,
+        }
+        for index, post in enumerate(posts)
+    ]
     return {
         "candidate_id": candidate_id,
         "accounts": accounts,
@@ -239,6 +250,13 @@ def candidate(
             "pieces": len(gaps),
             "corroborated": len(gaps),
             "closest_seconds": closest_seconds,
+        },
+        "similarity": twins,
+        "content_similarity": {
+            "threshold": 0.5,
+            "pieces": len(posts),
+            "corroborated": len(posts),
+            "closest_distance": 0.0,
         },
         "first_seen": "2026-01-05T09:00:00Z",
     }
@@ -971,6 +989,7 @@ def test_the_console_output_is_ascii_and_wrapped(
 # --- the boundary between the two steps -------------------------------------------
 
 
+@needs_database
 def test_the_evaluation_reads_the_membership_and_the_grouping_never_does(
     tmp_path: Path,
 ) -> None:
@@ -982,11 +1001,17 @@ def test_the_evaluation_reads_the_membership_and_the_grouping_never_does(
     reads the candidates the grouping published — and opens neither the Public Suffix
     List nor the shared-infrastructure list, because it does no grouping of its own and
     cannot reach inference even by accident.
+
+    The grouping is run here rather than read from the committed file so the two halves
+    of the boundary are read off one run, and it is run against a scratch vector table
+    because the grouping reads the stored vectors (ADR-0026) — which is a database and
+    not a file, and so changes nothing about which files this test watches.
     """
     opened = _Opened()
     sys.addaudithook(opened)
     grouped = tmp_path / "campaign-candidates.jsonl"
 
+    seed_vectors(DEFAULT_CORPUS_PATH)
     opened.recording = True
     try:
         assert main(
@@ -996,6 +1021,8 @@ def test_the_evaluation_reads_the_membership_and_the_grouping_never_does(
                 str(DEFAULT_CORPUS_PATH),
                 "--candidates",
                 str(grouped),
+                "--table",
+                SCRATCH_TABLE,
             ]
         ) == 0
     finally:
@@ -1073,7 +1100,7 @@ def test_the_two_planted_campaigns_come_out_and_one_of_them_is_no_longer_a_recov
     figure falls from what it was, and the extra account is named beside the figure so a
     reader can see exactly which claim cost it.
 
-    `cc-02` is three accounts of one shop sharing one domain: ADR-0005 says they group,
+    `cc-01` is three accounts of one shop sharing one domain: ADR-0005 says they group,
     the grouping is right to produce them, and they are not planted, so they are printed
     as a candidate holding no Planted Campaign rather than counted against N.
     """
@@ -1089,7 +1116,7 @@ def test_the_two_planted_campaigns_come_out_and_one_of_them_is_no_longer_a_recov
     assert [text(row, "outcome") for row in recovered] == ["partial", "recovered"]
     assert [
         text(records(row, "candidates")[0], "candidate_id") for row in recovered
-    ] == ["cc-01", "cc-03"]
+    ] == ["cc-02", "cc-03"]
     assert texts(records(recovered[0], "candidates")[0], "extra") == ["syn_greyloch_6612"]
     assert texts(records(recovered[1], "candidates")[0], "extra") == []
 
@@ -1135,6 +1162,7 @@ def test_the_corpus_holds_a_desk_the_second_edge_finds_and_the_first_could_not(
     assert "weaker of the two readings" in page
 
 
+@needs_database
 def test_the_figure_is_reproducible_from_the_seed_the_report_names(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1177,6 +1205,7 @@ def test_the_figure_is_reproducible_from_the_seed_the_report_names(
         assert written.read_bytes() == committed.read_bytes(), committed.name
 
     rebuilt = tmp_path / "rebuilt"
+    seed_vectors(generated / "corpus.jsonl")
     assert main(
         [
             "campaign-candidates",
@@ -1184,6 +1213,8 @@ def test_the_figure_is_reproducible_from_the_seed_the_report_names(
             str(generated / "corpus.jsonl"),
             "--candidates",
             str(rebuilt / "campaign-candidates.jsonl"),
+            "--table",
+            SCRATCH_TABLE,
         ]
     ) == 0
     rebuilt_recovery, rebuilt_report, rebuilt_printed = run(
@@ -1803,6 +1834,233 @@ def test_the_run_refuses_a_candidates_file_counted_at_two_windows(
         main(recovery_argv(tmp_path, corpus, two_windows))
 
     assert "seconds of timing window" in str(refusal.value)
+    assert not (tmp_path / "recovery.jsonl").exists()
+
+
+def similarity_disagreement(
+    tmp_path: Path, **overrides: object
+) -> tuple[Path, Path]:
+    """A candidates file whose similarity disagrees with itself, one way at a time.
+
+    The same argument as `timing_disagreement`, about the other Signal: the evaluator
+    does no vector arithmetic of its own, so a row claiming something about how close
+    its accounts' words are that the rest of the row does not bear out would be
+    printed as though the vectors had said so.
+    """
+    corpus = corpus_of(
+        tmp_path,
+        post("syn_p_0001", "syn_alpha_0001"),
+        post("syn_p_0002", "syn_beta_0002"),
+    )
+    candidates = write_rows(
+        tmp_path / "campaign-candidates.jsonl",
+        [
+            {
+                **candidate(
+                    "cc-01",
+                    ("syn_alpha_0001", "syn_beta_0002"),
+                    ("syn_p_0001", "syn_p_0002"),
+                    "vantage-ledger.example",
+                    closest_seconds=3_600,
+                ),
+                **overrides,
+            }
+        ],
+    )
+    return corpus, candidates
+
+
+@pytest.mark.parametrize(
+    ("overrides", "said"),
+    (
+        pytest.param(
+            {"similarity": []},
+            "holds similarity rows for [] and lists posts",
+            id="no twins beside its posts",
+        ),
+        pytest.param(
+            {
+                "similarity": [
+                    {
+                        "post": "syn_p_0001",
+                        "account": "syn_alpha_0001",
+                        "nearest": "syn_p_0002",
+                        "nearest_account": "syn_beta_0002",
+                        "distance": 0.1,
+                    },
+                    {
+                        "post": "syn_p_0002",
+                        "account": "syn_beta_0002",
+                        "nearest": "syn_p_0001",
+                        "nearest_account": "syn_alpha_0001",
+                        "distance": 0.1,
+                    },
+                ],
+                "content_similarity": {
+                    "threshold": 0.5,
+                    "pieces": 3,
+                    "corroborated": 3,
+                    "closest_distance": 0.1,
+                },
+            },
+            "says it has 3 similarity rows and publishes 2",
+            id="a count of posts its twins deny",
+        ),
+        pytest.param(
+            {
+                "content_similarity": {
+                    "threshold": 0.5,
+                    "pieces": 2,
+                    "corroborated": 1,
+                    "closest_distance": 0.0,
+                }
+            },
+            "says 1 of its posts fall inside the 0.5 threshold",
+            id="a corroborated count its twins deny",
+        ),
+        pytest.param(
+            {
+                "content_similarity": {
+                    "threshold": 0.5,
+                    "pieces": 2,
+                    "corroborated": 2,
+                    "closest_distance": 0.9,
+                }
+            },
+            "says its closest pair is 0.9 apart",
+            id="a nearest pair none of its twins show",
+        ),
+        pytest.param(
+            {
+                "content_similarity": {
+                    "threshold": 0,
+                    "pieces": 2,
+                    "corroborated": 0,
+                    "closest_distance": 0.0,
+                }
+            },
+            "counts as near-identical only above zero and at most one",
+            id="a threshold the grouping refuses to run at",
+        ),
+        pytest.param(
+            {
+                "similarity": [
+                    {
+                        "post": "syn_p_0001",
+                        "account": "syn_alpha_0001",
+                        "nearest": "syn_p_0001",
+                        "nearest_account": "syn_beta_0002",
+                        "distance": 0.0,
+                    },
+                    {
+                        "post": "syn_p_0002",
+                        "account": "syn_beta_0002",
+                        "nearest": "syn_p_0001",
+                        "nearest_account": "syn_alpha_0001",
+                        "distance": 0.0,
+                    },
+                ]
+            },
+            "names syn_p_0001 as its own twin",
+            id="a post that is its own twin",
+        ),
+        pytest.param(
+            {
+                "similarity": [
+                    {
+                        "post": "syn_p_0001",
+                        "account": "syn_alpha_0001",
+                        "nearest": "syn_p_0002",
+                        "nearest_account": "syn_alpha_0001",
+                        "distance": 0.0,
+                    },
+                    {
+                        "post": "syn_p_0002",
+                        "account": "syn_beta_0002",
+                        "nearest": "syn_p_0001",
+                        "nearest_account": "syn_beta_0002",
+                        "distance": 0.0,
+                    },
+                ]
+            },
+            "a twin by the same account is that account's own text",
+            id="a twin by the same account",
+        ),
+    ),
+)
+def test_the_run_refuses_a_candidates_file_whose_similarity_disagrees_with_itself(
+    tmp_path: Path, overrides: Mapping[str, object], said: str
+) -> None:
+    """The same argument as the timing rows, about the distances.
+
+    Seven ways for a row to say something about how close its accounts' words are that
+    the rest of the row does not bear out: no twins beside posts it holds, a count of
+    posts the twins deny, a corroborated count the twins deny, a nearest pair smaller
+    than any twin shows, a threshold nothing can fail, a post standing as its own twin,
+    and a twin by the very account it belongs to - which is an account's habits rather
+    than corroboration of a grouping. None of them looks wrong on its own line.
+    """
+    corpus, candidates = similarity_disagreement(tmp_path, **overrides)
+
+    with pytest.raises(SystemExit) as refusal:
+        main(recovery_argv(tmp_path, corpus, candidates))
+
+    assert said in str(refusal.value), str(refusal.value)
+    assert not (tmp_path / "recovery.jsonl").exists()
+
+
+def test_the_run_refuses_a_candidates_file_counted_at_two_thresholds(
+    tmp_path: Path,
+) -> None:
+    """The same rule the two-window refusal applies, to the other threshold.
+
+    Two rows, each internally consistent, each counted against a different cosine
+    distance — which is what a file written by two runs at two `--similarity-threshold`
+    settings looks like. Read as one figure it would say how many posts were near
+    identical without saying what near-identical meant.
+    """
+    corpus, candidates = similarity_disagreement(tmp_path)
+    published = rows(candidates)
+    second = {
+        **published[0],
+        "candidate_id": "cc-02",
+        "accounts": ["syn_gamma_0003", "syn_delta_0004"],
+        "shared_domains": [
+            {
+                "domain": "vantage-ledger.example",
+                "accounts": ["syn_gamma_0003", "syn_delta_0004"],
+                "posts": ["syn_p_0001", "syn_p_0002"],
+            }
+        ],
+        "similarity": [
+            {
+                "post": "syn_p_0001",
+                "account": "syn_gamma_0003",
+                "nearest": "syn_p_0002",
+                "nearest_account": "syn_delta_0004",
+                "distance": 0.2,
+            },
+            {
+                "post": "syn_p_0002",
+                "account": "syn_delta_0004",
+                "nearest": "syn_p_0001",
+                "nearest_account": "syn_gamma_0003",
+                "distance": 0.2,
+            },
+        ],
+        "content_similarity": {
+            "threshold": 0.25,
+            "pieces": 2,
+            "corroborated": 2,
+            "closest_distance": 0.2,
+        },
+    }
+    two_thresholds = write_rows(candidates, [*published, second])
+
+    with pytest.raises(SystemExit) as refusal:
+        main(recovery_argv(tmp_path, corpus, two_thresholds))
+
+    assert "of similarity threshold" in str(refusal.value)
     assert not (tmp_path / "recovery.jsonl").exists()
 
 

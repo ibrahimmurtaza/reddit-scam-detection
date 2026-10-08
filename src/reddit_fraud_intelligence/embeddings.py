@@ -2,9 +2,10 @@
 
 This is the substrate ticket: one vector per Content Item, in a column a similarity query
 can be asked of, under an index chosen on purpose. It builds no grouping, corroborates
-nothing and decides nothing. Ticket #24 is the first thing to read these vectors, and every
-acceptance criterion here is about that reading being possible later rather than about it
-being good now.
+nothing and decides nothing itself — `rfi campaign-candidates` reads these vectors back out
+of this table to corroborate each candidate on content similarity (ADR-0026), and every
+acceptance criterion here is about that reading being possible rather than about it being
+good now.
 
 **What is embedded is the post's own title, its own body, and its links, and nothing
 else.** No account, no subreddit, no timestamp, and no field the Corpus file does not
@@ -26,8 +27,9 @@ what a reader needs is a statement of what the model does.
 The model is lexical. It reads shared words and the pairs of adjacent words inside one
 field, and it does not read meaning: two posts making the same pitch in different words
 can be far apart, and two posts linking the same shortener share the tokens of that host.
-Both are limits rather than surprises and both are printed, because ticket #24 rests on
-this and a substrate that quietly oversells itself is worse than one that admits what it is.
+Both are limits rather than surprises and both are printed, because the content-similarity
+corroboration rests on this (ADR-0026) and a substrate that quietly oversells itself is
+worse than one that admits what it is.
 
 **A vector is computed once and reused.** Every row carries the SHA-256 of the text it was
 computed from, so a rerun over an unchanged Corpus embeds nothing and prints that it
@@ -101,6 +103,11 @@ activity change is read on the way (ADR-0007)."""
 # worst version of this bug, since every stored vector would still parse.
 MODEL_NAME = "hashed-word-ngrams-v1"
 DIMENSIONS = 256
+
+# The table every command that reads the store reads from unless told otherwise, so the
+# `content-embeddings` writer and the `campaign-candidates` reader cannot drift onto
+# different names without somebody changing it in one place and seeing it in the other.
+DEFAULT_TABLE = "content_embedding"
 
 # What the model does, in one paragraph, and the digest of it beside the name and the width.
 # Published rather than derived from this file: a digest taken over the code would move
@@ -177,7 +184,8 @@ class Neighbour:
 
     `distance` is cosine distance as pgvector computes it: 0 is the same direction, 1 is
     orthogonal, and above 1 is opposite. It is a distance between directions rather than a
-    claim about either post, which is the only reading a threshold in ticket #24 can use.
+    claim about either post, which is the only reading a similarity threshold can use
+    (ADR-0026).
     """
 
     post_id: str
@@ -815,6 +823,57 @@ def nearest(connection: Database, table: str, post_id: str, limit: int = 1) -> t
     )
 
 
+def stored_vectors(
+    connection: Database, table: str, post_ids: Iterable[str]
+) -> dict[str, tuple[float, ...]]:
+    """Every stored vector the named Content Items hold, parsed from the column's text.
+
+    One query for the whole set rather than one per post: the Corpus is small and the
+    question is always over the whole of it. A post the Corpus names but the table does
+    not hold is refused rather than skipped, because the comparison a candidate asks
+    for is over its whole membership, and a figure quiet about one of the posts is a
+    figure about a different candidate. An absent table is refused with the remedy
+    rather than an SQL error, which is the same refusal `_stored_vector` gives a post
+    with no vector.
+    """
+    requested = list(post_ids)
+    try:
+        rows = connection.execute(
+            sql.SQL(
+                "SELECT post_id, embedding::text AS literal FROM {table} WHERE post_id = ANY(%s)"
+            ).format(table=sql.Identifier(table)),
+            (requested,),
+        ).fetchall()
+    except psycopg.Error as refusal:
+        raise ValueError(
+            f"{table} holds no vectors to read: {refusal}. Run `rfi content-embeddings` "
+            "over the Corpus first"
+        ) from refusal
+    held: dict[str, tuple[float, ...]] = {}
+    for row in rows:
+        post_id = _text(_mapping(row), "post_id")
+        literal = _text(_mapping(row), "literal")
+        held[post_id] = _vector_of(literal)
+    missing = sorted(set(requested) - set(held))
+    if missing:
+        raise ValueError(
+            f"{missing[0]} has no stored vector in {table}, so the posts of its "
+            f"candidate cannot be compared: run `rfi content-embeddings` over a Corpus "
+            f"holding {missing[0]} first"
+        )
+    return held
+
+
+def _vector_of(literal: str) -> tuple[float, ...]:
+    """The stored vector as the numbers it is, parsed from the column's text."""
+    try:
+        return tuple(float(part) for part in literal.strip().strip("[]").split(","))
+    except ValueError as refusal:
+        raise ValueError(
+            f"the stored vector {literal[:16]}... is not a list of numbers"
+        ) from refusal
+
+
 def _stored_vector(connection: Database, table: str, post_id: str) -> str:
     """The vector the table holds for one post, as the text pgvector reads a vector from.
 
@@ -1143,8 +1202,9 @@ def _footer(embedded: Embedded) -> str:
         The model is lexical. It reads shared words and the pairs of adjacent words inside one
         field, and it does not read meaning: two posts making the same pitch in different words
         can come out far apart, and a post and a loose paraphrase of it can come out close
-        without saying the same thing. Ticket #24 rests on this and inherits the limit, which
-        is the whole of why it may corroborate a grouping and never establish one.
+        without saying the same thing. The content-similarity corroboration rests on this and
+        inherits the limit, which is the whole of why it may corroborate a grouping and never
+        establish one (ADR-0026).
         """,
         f"""
         What a distance between two of these vectors is a statement about is shared vocabulary,

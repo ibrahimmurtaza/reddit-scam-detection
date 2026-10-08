@@ -15,7 +15,7 @@ them up and get N rather than take the numerator on trust.
 
 | Planted Campaign | Outcome | Accounts | Posts | Candidates |
 | --- | --- | ---: | ---: | --- |
-| syn-campaign-alpha | partial | 3 | 4 | cc-01 |
+| syn-campaign-alpha | partial | 3 | 4 | cc-02 |
 | syn-campaign-beta | recovered | 2 | 3 | cc-03 |
 
 A Campaign Candidate counts as a recovery only when it holds a Planted Campaign's whole
@@ -29,7 +29,7 @@ number a reader has to take on trust (ADR-0004).
 ### The joins behind it
 
 - **syn-campaign-alpha** — 3 accounts, 4 posts, outcome `partial`.
-  - `cc-01` holds `syn_harborlight_5517`, `syn_pinecrest_9032`, `syn_quantproof_2841`; also holds `syn_greyloch_6612`, which the membership does not name
+  - `cc-02` holds `syn_harborlight_5517`, `syn_pinecrest_9032`, `syn_quantproof_2841`; also holds `syn_greyloch_6612`, which the membership does not name
 - **syn-campaign-beta** — 2 accounts, 3 posts, outcome `recovered`.
   - `cc-03` holds `syn_clearpathwork_3184`, `syn_northwindhire_7736`
 
@@ -39,7 +39,7 @@ number a reader has to take on trust (ADR-0004).
 
 Of the 4 candidates published, 2 reach no account of any Planted Campaign.
 Each is printed with the registrations and Contact Points that join it, and with the edge they rest on, because that is the whole of the reason its accounts are together:
-- `cc-02` — 3 accounts, 3 posts, registrations: `rivermill-bikes.example`.
+- `cc-01` — 3 accounts, 3 posts, registrations: `rivermill-bikes.example`.
 - `cc-04` — 3 accounts, 7 posts, Contact Points: `syn_copperlantern`.
 
 None of these is counted against the figure above, and none of them is a miss. ADR-0005
@@ -79,8 +79,8 @@ false-grouping rate over a clean sweep is a number nobody can falsify (ADR-0022)
 
 | Candidate | Accounts | Why it is a false grouping | Nuisance records |
 | --- | ---: | --- | --- |
-| `cc-01` | 4 | holds accounts that belong to no Planted Campaign | syn-nuisance-hard-negative-scam_complaint-syn_greyloch_6612 (hard_negative), syn-nuisance-paraphrase-alpha (staggered_paraphrase), syn-nuisance-shared-pastevault (known_shared_infrastructure) |
-| `cc-02` | 3 | holds accounts that belong to no Planted Campaign | syn-nuisance-decoy-shop (decoy_account_cluster) |
+| `cc-01` | 3 | holds accounts that belong to no Planted Campaign | syn-nuisance-decoy-shop (decoy_account_cluster) |
+| `cc-02` | 4 | holds accounts that belong to no Planted Campaign | syn-nuisance-hard-negative-scam_complaint-syn_greyloch_6612 (hard_negative), syn-nuisance-paraphrase-alpha (staggered_paraphrase), syn-nuisance-shared-pastevault (known_shared_infrastructure) |
 | `cc-04` | 3 | holds accounts that belong to no Planted Campaign | syn-nuisance-obfuscated-copperlantern (obfuscated_contact) |
 
 ## Precision in the Review Queue at several depths
@@ -191,7 +191,7 @@ this page was written:
 | File | SHA-256 |
 | --- | --- |
 | `data/corpus/corpus.jsonl` | `3dbda898eb9a262ffdc9fa817c8bbadfd394315e45ca8211218da6615c20703f` |
-| `data/campaigns/campaign-candidates.jsonl` | `329731b3d922f29727a6e728b095fd67ac3e75bfa77d8e91deb1b6473028ae18` |
+| `data/campaigns/campaign-candidates.jsonl` | `c7a91d8e747b13156432260c71ac2c3e32218928395514f80ce957c15ab895ef` |
 | `data/corpus/truth.jsonl` | `fcb21f160c9eb213400716e559cc8d1239c074340997454b1ef3e8be913f8f7c` |
 | `data/corpus/nuisance.jsonl` | `702b4824be49aed370d41ceceeb11addf8f9089275d33be73805b9900a9be2ec` |
 | `data/signals/policy-scores.jsonl` | `2157650e7914f181faf093e833550b86e38c575bf438a2df296dc8c7dd7f1fa3` |

@@ -15,6 +15,7 @@ from reddit_fraud_intelligence.cafc import (
     write_provenance,
 )
 from reddit_fraud_intelligence.campaigns import (
+    DEFAULT_SIMILARITY_THRESHOLD,
     DEFAULT_WINDOW_HOURS,
     group as group_accounts,
     render_table as render_candidates,
@@ -41,6 +42,7 @@ from reddit_fraud_intelligence.domains import (
     survey as survey_domains,
     write_post_domains,
 )
+from reddit_fraud_intelligence.embeddings import DEFAULT_TABLE
 from reddit_fraud_intelligence.evaluation import (
     DEFAULT_DEPTHS,
     RECOVERY_PATH,
@@ -55,6 +57,7 @@ from reddit_fraud_intelligence.embeddings import (
     render_table as render_embeddings_table,
     write_content_records,
 )
+from reddit_fraud_intelligence.embeddings import DEFAULT_TABLE
 from reddit_fraud_intelligence.generator import (
     corpus_items,
     nuisance_records,
@@ -112,7 +115,10 @@ DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
 DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
 DEFAULT_EMBEDDINGS_PATH = Path("data/embeddings/content-embeddings.jsonl")
-DEFAULT_EMBEDDING_TABLE = "content_embedding"
+# Aliased rather than repeated: `content-embeddings` writes this table and
+# `campaign-candidates` reads it, and two literals for one table name is how the two
+# commands stop reading each other's vectors.
+DEFAULT_EMBEDDING_TABLE = DEFAULT_TABLE
 DEFAULT_REVIEW_DEPTH = 50
 DEFAULT_PRECISION_DEPTHS = ",".join(str(depth) for depth in DEFAULT_DEPTHS)
 
@@ -187,6 +193,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 shared_path=Path(str(args.shared_infrastructure)),
                 candidates_path=Path(str(args.candidates)),
                 window_hours=int(args.window_hours),
+                threshold=float(args.similarity_threshold),
+                table=str(args.table),
             )
         case "corpus-composition":
             return _corpus_composition(
@@ -535,7 +543,13 @@ def _parser() -> argparse.ArgumentParser:
             "(ADR-0009). Every candidate is printed with the accounts, the posts, and "
             "the shared domains that put them together, so a reader can check the "
             "claim rather than take it, and the output reports how many components "
-            "the filter removed. Reads no network."
+            "the filter removed. Temporal proximity and content similarity are read as "
+            "corroboration: each orders and deprioritises, neither creates a candidate, "
+            "and each states the threshold it judged by (ADR-0025, ADR-0026). The "
+            "similarity is computed from the vectors `rfi content-embeddings` stored, "
+            "read out of the vector table over the environment's connection, which is "
+            "why this command needs the database as well as the three files. Reads no "
+            "network."
         ),
     )
     candidates.add_argument(
@@ -577,6 +591,26 @@ def _parser() -> argparse.ArgumentParser:
             "Contact Point corroborate it; timing corroborates and never groups, so a "
             "window moves a candidate down the list and renumbers it, and nothing else "
             f"(default: {DEFAULT_WINDOW_HOURS})"
+        ),
+    )
+    candidates.add_argument(
+        "--similarity-threshold",
+        type=float,
+        default=DEFAULT_SIMILARITY_THRESHOLD,
+        help=(
+            "the cosine distance, at most, for two posts in one candidate to count as "
+            "near-identical; similarity corroborates and never groups, so a threshold "
+            "moves a candidate down the list and renumbers it, and nothing else "
+            f"(default: {DEFAULT_SIMILARITY_THRESHOLD})"
+        ),
+    )
+    candidates.add_argument(
+        "--table",
+        type=str,
+        default=DEFAULT_EMBEDDING_TABLE,
+        help=(
+            "the table to read the stored vectors from, which is where another model's "
+            f"vectors would live rather than this one's (default: {DEFAULT_EMBEDDING_TABLE})"
         ),
     )
 
@@ -1153,6 +1187,8 @@ def _campaign_candidates(
     shared_path: Path,
     candidates_path: Path,
     window_hours: int,
+    threshold: float,
+    table: str,
 ) -> int:
     _refuse_shared_paths(
         {
@@ -1170,7 +1206,14 @@ def _campaign_candidates(
     )
 
     try:
-        grouping = group_accounts(corpus_path, list_path, shared_path, window_hours)
+        grouping = group_accounts(
+            corpus_path,
+            list_path,
+            shared_path,
+            window_hours,
+            threshold,
+            table,
+        )
     except ValueError as refusal:
         raise SystemExit(refusal) from refusal
     write_campaign_candidates(candidates_path, grouping.candidates)

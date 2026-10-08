@@ -194,15 +194,31 @@ never put two accounts in a candidate that shared infrastructure would not.
 _Avoid_: Burst detection, velocity, recency (all name something else), "time
 window" (say the window and its figure)
 
+**Content Similarity**:
+How close the posts inside a Campaign Candidate are to one another in the stored
+Content Embeddings: for each post, the nearest post by a different account in
+the same candidate, by cosine distance, measured against a stated threshold.
+Corroborating evidence and never sufficient: it may order candidates and it may
+deprioritise one, and it can never put two accounts in a candidate that shared
+infrastructure would not. Its limit is structural — a scam template converges
+across unrelated operators, so near-identical text is what a converged template
+looks like and says nothing about who runs it.
+_Avoid_: Similarity score (it is a distance against a threshold), text matching
+(it is the embedding model's reading of the text), near-duplicate detection (that
+is what the vectors are for in the database, not what this project decides from
+them)
+
 **Corroboration**:
-What temporal proximity adds to a Campaign Candidate that shared infrastructure
-already put in it: the gap between the accounts behind each shared registration or
-Contact Point, measured against a stated window. Corroboration orders and
-deprioritises and never creates, so two accounts with no shared registration and
-no shared Contact Point are never a candidate however close together they post.
+What temporal proximity and content similarity add to a Campaign Candidate that
+shared infrastructure already put in it: the gaps between the accounts behind
+each shared registration or Contact Point, and the distances between the posts
+inside the component, each measured against a stated threshold. Corroboration
+orders and deprioritises and never creates, so two accounts with no shared
+registration and no shared Contact Point are never a candidate however close
+together they post or however alike their words.
 _Avoid_: Evidence (too broad — a shared registration is the grouping's evidence
-and corroboration is what the clock adds to it), confidence (that is the model's,
-ADR-0003)
+and corroboration is what the clock and the vectors add to it), confidence (that
+is the model's, ADR-0003)
 
 **Contact Point**:
 An off-platform contact identifier extracted from content — a Telegram handle,
