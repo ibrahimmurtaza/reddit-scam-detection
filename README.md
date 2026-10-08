@@ -21,8 +21,8 @@ the Corpus's own distribution against those base rates. The pipeline itself: the
 Registrable Domain of every link, then the Contact Points every post names, then
 the Campaign Candidates those registrations and Contact Points produce, with
 known-shared infrastructure filtered out as published data and with temporal
-proximity reported beside every candidate as corroboration that can deprioritise
-one and never create one, then the Policy Score those
+proximity and content similarity reported beside every candidate as corroboration
+that can deprioritise one and never create one, then the Policy Score those
 same links and posts add up to, with the arithmetic printed beside it, then the Content
 Embeddings every post is stored with under a similarity index. And the
 measurement: how many of the two Planted Campaigns that grouping recovered, as X of N,
@@ -30,8 +30,8 @@ joined by a command that runs after it rather than inside it, with the method's 
 bound stated as a count beside it. The Review Queue those scores are ordered into, at a
 stated depth. The false-grouping rate beside that recovery figure, and the Review
 Queue's precision at several depths, are measured by the same evaluator.
-The Confidence, the content-similarity corroboration, the cohesion system, and the graph
-report are not built yet. Their tickets are numbered #24 to #28 in the tracker; this
+The Confidence, the cohesion system, and the graph
+report are not built yet. Their tickets are numbered #26 to #28 in the tracker; this
 README is updated as they land.
 
 ## Running it
@@ -44,8 +44,10 @@ uv sync
 uv run rfi generate-corpus
 ```
 
-One step needs a database: `rfi content-embeddings` stores its vectors in Postgres
-through pgvector, so `pgvector` has to be built and activated first — see
+Two steps need a database: `rfi content-embeddings` stores its vectors in Postgres
+through pgvector, and `rfi campaign-candidates` reads them back out of that table to
+corroborate each candidate on content similarity — so `pgvector` has to be built and
+activated first — see
 `docs/pgvector.md`, which holds the build and the activation step. The connection
 comes from the environment (`RFI_DATABASE_URL`, or the `PG*` variables libpq
 reads), never from an argument.
@@ -64,7 +66,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | `rfi campaign-candidates`, which reads them from the Corpus rather than from here, and a reader |
-| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, the shared registrations and Contact Points that join them, and the temporal proximity of each. | `rfi campaign-recovery`, `rfi review-queue`, then the content-similarity corroboration ticket #24 |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, the shared registrations and Contact Points that join them, the temporal proximity of each, and the content similarity of every post in it. | `rfi campaign-recovery` and `rfi review-queue`, both of which check the figures row by row without acting on them |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, and the recovery report beside it |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
@@ -302,16 +304,18 @@ report — an index of the candidates, then for each one the accounts, the posts
 shared registrations and Contact Points that put them together — and it carries its own
 evidence with it because a grouping a reader cannot check is a claim rather than a
 result. The Contact Points are read out of the Corpus by the same rule
-`rfi contact-points` publishes, so the grouping stays a function of the Corpus and of
-the two lists it names: it still opens three files and no fourth.
+`rfi contact-points` publishes, and the vectors are read out of the table
+`rfi content-embeddings` fills, so the grouping is a function of the Corpus, of the two
+lists it names, and of the vectors over the Corpus's own text: it still opens three
+files and no fourth.
 
 ```
-uv run rfi campaign-candidates   # reads the Corpus, the Public Suffix List, and the list
+uv run rfi campaign-candidates   # reads the Corpus, the two lists, and the vector table
 ```
 
 | File | Holds |
 | --- | --- |
-| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, each shared registration with the accounts and posts that reach it, each shared Contact Point with the accounts that published it and every spelling the Corpus wrote it in, and the temporal proximity of each of those. |
+| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, each shared registration with the accounts and posts that reach it, each shared Contact Point with the accounts that published it and every spelling the Corpus wrote it in, the temporal proximity of each of those, and the content similarity of every post in the candidate against a stated threshold. |
 
 **The second edge is what makes a desk that pays for a domain per post visible.** Its
 registrations move every time the advert is posted and nothing joins the accounts that
@@ -331,6 +335,7 @@ on its own line rather than leaving the reader to work it out from the section h
 cc-04  3 accounts, 7 posts, first seen 2026-06-06T14:23:00Z
   justified by  Contact Points, the weaker of the two readings; `rfi contact-points` has the measured recall, no two accounts under it posted inside the window
   timing        0 of 1 piece of evidence within the 24-hour window; nearest pair 42m apart
+  similarity    2 of 7 posts within the 0.50 cosine-distance threshold; nearest pair 0.40 apart
   shared contact points
     syn_copperlantern  telegram, 3 accounts, 3 posts  22d14h16m across, outside the 24-hour window  written @s y n _ c o p p e r l a n t e r n, @s.y.n._.c.o.p.p.e.r.l.a.n.t.e.r.n, @syn_c0pperlantern
 ```
@@ -354,15 +359,48 @@ span falls inside it:
 It may deprioritise and nothing else. A candidate the window corroborates nothing under is
 printed in full, with the gap beside each of its pieces of evidence, named again below the
 table under a heading of its own, and moved to the end of the list — which is why the desk
-above is `cc-04` and not `cc-02`, seven posts over three weeks being not what a 24-hour
-window calls one operator. **Nothing is removed for want of timing**, because a domain two
+above is `cc-04` and not one of the three ahead of it, seven posts over three weeks being not
+what a 24-hour window calls one operator. **Nothing is removed for want of timing**, because a domain two
 accounts reached months apart may be a domain that changed hands and a campaign may simply
 be a patient one. What it refuses is the case ADR-0005 was written about:
 `tests/test_campaign_candidates.py` runs four accounts posting in the same minute with
 nothing shared at a window of a year and requires an empty file, so the rule is about
 timing rather than about the default.
 
-The other half of the finding is inside `cc-01`, where the two edges disagree: the
+**Content similarity corroborates a grouping and can never establish one.** Accounts whose
+posts are near-identical are more likely running the same playbook, so every candidate
+carries the content similarity of the posts inside it: for each post, the distance to its
+nearest post by a *different* account in the same candidate, over the stored vectors. The
+threshold is a figure in the output rather than a rule in the code — cosine distance at most
+0.50 by default, `--similarity-threshold` to change it — and a candidate is corroborated
+only when *every* post in it has a near-twin inside that distance:
+
+```
+  threshold     cosine distance at most 0.50 between two posts in one candidate
+  similarity    1 of 4 candidates and 5 of 18 pieces of evidence corroborated; no candidate removed
+```
+
+It may deprioritise and nothing else, exactly as timing does: a candidate the threshold
+corroborates nothing under is printed in full, with its nearest pair beside it, and named
+again below the table under a heading of its own. The order carries two keys, the clock's
+first and the vectors' second, so a candidate both corroborate is printed ahead of every
+candidate the clock corroborates and the vectors do not. **Nothing is removed for want of
+similarity**, and the reason it may not establish anything is the reason a threshold is
+published beside every figure it judged: a scam template converges across unrelated
+operators, so two unrelated desks pasting the same advert are evidence about the template and
+not about who runs it. The Corpus's own copy of that case is
+`syn-nuisance-decoy-converged`, whose three accounts paste one advert word for word — the
+nearest text on this Corpus, at 0.1504 to 0.2091 apart — and reach no candidate at all,
+because the only thing they share is the link shortener the filter withholds.
+
+The order on this Corpus is the finding. `cc-01` is the shop: both signals agree, its three
+accounts recycling the same updates at 0.45 to 0.48. `cc-02` is the alpha Planted Campaign,
+whose four staggered paraphrases of one offer read as *different words* to a model that
+reads words and not meaning — 0.59 at the nearest — so the clock corroborates it and the
+vectors do not, and it is still proposed and still recovered. `cc-03` is beta, same verdict.
+`cc-04` is the desk, which neither signal corroborates.
+
+The other half of the finding is inside `cc-02`, where the two edges disagree: the
 registration puts three accounts inside two and a quarter hours and the Telegram handle
 brings in a fourth account two weeks later, which is the very account that costs the
 project a recovery.
@@ -383,7 +421,7 @@ nothing about the output depends on matching a name rather than a registration.
 lost money to the desk and published the desk's Telegram Contact Point while writing the
 complaint down. Nothing in this project can tell an operator from a customer, so the
 candidate holds the membership and one account from outside it, alpha's outcome becomes
-`partial`, and the recovery figure below is 1 of 2 rather than 2 of 2. `cc-01` names the
+`partial`, and the recovery figure below is 1 of 2 rather than 2 of 2. `cc-02` names the
 account that cost it, and the false-grouping rate rises with it. The timing says the same
 thing independently: the registration is corroborated and the Contact Point that joined the
 complaint is not.
@@ -904,12 +942,14 @@ which `tests/test_embedding_store.py` checks by watching which files the run ope
 
 **What the model is and is not, in its own words.** It reads shared vocabulary and nothing
 else, so the closest pair on this Corpus is `syn_p_0012` and `syn_p_0013` at a distance of
-`0.1504` — one Planted Campaign's staggered paraphrase of a single offer, found by vocabulary
-alone, with `syn_p_0014` at `0.2091` from the first of them — and it does not read meaning:
-two posts making the same pitch in different words can come out far apart. That distance is
-only legible against a baseline, and this command does not publish one, because a baseline
+`0.1504` — one advert pasted word for word by three accounts that share nothing, found by
+vocabulary alone, with `syn_p_0014` at `0.2091` from the first of them — and it does not read
+meaning: two posts making the same pitch in different words come out far apart, which is
+exactly what the alpha Planted Campaign's staggered paraphrases do at `0.59`. That distance
+is only legible against a baseline, and this command does not publish one, because a baseline
 over every pair is quadratic in the database and the figure belongs to the step that uses it.
-Ticket #24 measures it and states its threshold beside it.
+`rfi campaign-candidates` now measures it per candidate and states its threshold beside every
+figure it judged (ADR-0026).
 
 **And the links are part of what is embedded, which is a limit rather than a detail.** Two
 posts sharing nothing but a link shortener share the words of that host whichever pitch they

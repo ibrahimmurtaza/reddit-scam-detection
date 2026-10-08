@@ -65,15 +65,33 @@ not a rule buried here, and nothing is removed for want of it: a registration tw
 accounts reached months apart may be a registration that changed hands, and a campaign may
 simply be a patient one.
 
+The stored vectors are read here too, and they are read as corroboration and nothing else
+(ADR-0026). Every candidate carries the content similarity of the posts inside it — for each
+post, the cosine distance to its nearest post by a *different* account in the same candidate,
+over the vectors `embeddings.py` stored — and a candidate is corroborated when every one of
+its posts has a near-twin by another account inside a stated threshold. That verdict joins
+nothing at any threshold, and the reason is worth more than the rule: a scam template
+converges across unrelated operators, so near-identical text is what a converged template
+looks like and says nothing about who runs it. What the threshold does is order the output as
+a second key under the clock's, and say so: a candidate both corroborate is printed ahead of
+every candidate the clock corroborates and the vectors do not, and one neither corroborates is
+named below the table with the nearest distance beside its posts, because a miss nobody can
+see is a miss nobody can diagnose. Nothing is removed for want of it either: a genuine
+campaign that paraphrases its own advert reads as different words to a lexical model, which
+is a limit to state rather than a campaign to discard. This is the one thing read from
+outside the Corpus's own files, and it is read from the table `rfi content-embeddings`
+wrote, so a Corpus a reader cannot embed cannot be grouped either — said here rather than
+as a surprise at the first refusal.
+
 What this cannot reach is stated here rather than left in the tickets. A campaign that
 rotates both its registrations and its Contact Points shares nothing with itself, so no
 grouping resting on either edge can propose it; the count of campaigns in that position
 is the method's recall bound, and the evaluator reports it beside the recovery figure
 (ADR-0023).
 
-Nothing here reads the truth file. The Corpus, the published Public Suffix List, and the
-shared-infrastructure list are the whole input, and the truth file is joined by the
-evaluator after this has finished (ADR-0008).
+Nothing here reads the truth file. The Corpus, the published Public Suffix List, the
+shared-infrastructure list, and the stored vectors are the whole input, and the truth file
+is joined by the evaluator after this has finished (ADR-0008).
 """
 
 from __future__ import annotations
@@ -90,6 +108,12 @@ from reddit_fraud_intelligence.contacts import (
     SharedContact,
     extract as read_contact_points,
     reach as shared_contact_points,
+)
+from reddit_fraud_intelligence.embeddings import (
+    DEFAULT_TABLE,
+    connection_string,
+    open_store,
+    stored_vectors,
 )
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
@@ -116,6 +140,12 @@ Every entry is a proposal, not a finding about who is behind them."""
 # make differently, and because a figure whose rule is buried in the code cannot be
 # disagreed with: the output names this number on every run and `--window-hours` sets it.
 DEFAULT_WINDOW_HOURS = 24
+
+# The cosine distance two posts may be apart and still count as the same text, stated
+# rather than buried. A distance at most this wide reads as near-identical; the model's
+# own near-twins on this Corpus sit at about 0.15-0.21 and its retellings of one offer at
+# 0.53-0.74, so 0.5 separates "the same advert pasted" from "the same offer retold".
+DEFAULT_SIMILARITY_THRESHOLD = 0.5
 
 # What justified a candidate, in the run's own words. Three and no fourth, because
 # ADR-0005 permits two edges and a candidate of two or more accounts cannot have used
@@ -263,6 +293,7 @@ class _Joined:
     domains: tuple[SharedDomain, ...]
     points: tuple[SharedContact, ...]
     timing: tuple[EvidenceTiming, ...]
+    similarity: tuple[SimilarityEvidence, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -338,6 +369,55 @@ class Timing:
 
 
 @dataclass(frozen=True, slots=True)
+class SimilarityEvidence:
+    """One post of a candidate, and its nearest post by another account.
+
+    The same shape of figure `EvidenceTiming` is for timing: a per-member measurement
+    that the candidate-level summary counts over rather than absorbs. The nearest post
+    is measured across accounts rather than inside one, because two posts from one
+    account are that account's own habits and not evidence about a group. It is
+    published whole rather than summarised, and it is never allowed to group anything:
+    see `ContentSimilarity`.
+    """
+
+    post: str
+    account: str
+    nearest: str
+    nearest_account: str
+    distance: float
+
+
+@dataclass(frozen=True, slots=True)
+class ContentSimilarity:
+    """Within-component content similarity across a whole candidate.
+
+    `pieces` is how many posts the candidate holds and `corroborated` is how many of
+    them have a near-twin by a different account within the threshold, so a candidate
+    reads `0 of 5` through `5 of 5` and never collapses to a yes. `closest_distance`
+    is the smallest such gap in the candidate, published whatever the threshold says:
+    it is the figure a reader needs to disagree with the threshold rather than the
+    number the threshold produced.
+    """
+
+    threshold: float
+    pieces: int
+    corroborated: int
+    closest_distance: float
+
+    @property
+    def corroborates(self) -> bool:
+        """Whether every post in the candidate has a near-twin by another account.
+
+        All of the posts rather than the luckiest pair: a candidate is a claim about a
+        group, and one coincidence inside it is not the group. This is the same
+        reading ADR-0025 defends for the window: the span across the whole piece,
+        which decides on all of it, rather than the closest pair, which decides on the
+        luckiest two.
+        """
+        return self.pieces > 0 and self.corroborated == self.pieces
+
+
+@dataclass(frozen=True, slots=True)
 class CampaignCandidate:
     """A proposed grouping of accounts, and everything a reader needs to check it.
 
@@ -345,8 +425,9 @@ class CampaignCandidate:
     are why, and `evidence` says which of the two the candidate rests on. `first_seen`
     is the earliest post by any account in the component, which is the only date in the
     Corpus that says anything about when the group was active. `corroboration` and
-    `timing` are what the clock adds, which is corroboration and never the reason the
-    candidate exists (ADR-0025).
+    `timing` are what the clock adds, and `similarity` and `content_similarity` what
+    the stored vectors add: both are corroboration and never the reason the candidate
+    exists (ADR-0025, ADR-0026).
     """
 
     candidate_id: str
@@ -356,6 +437,8 @@ class CampaignCandidate:
     shared_contact_points: tuple[SharedContact, ...]
     corroboration: tuple[EvidenceTiming, ...]
     timing: Timing
+    similarity: tuple[SimilarityEvidence, ...]
+    content_similarity: ContentSimilarity
     first_seen: str
 
     @property
@@ -466,17 +549,43 @@ class Corroboration:
 
 
 @dataclass(frozen=True, slots=True)
+class SimilarityCorroboration:
+    """What the stored vectors added to this run, which is evidence for and against
+    and never a grouping edge (ADR-0005, ADR-0026).
+
+    Mirrors `Corroboration`: beside `SharedFilter`, which removes accounts from the
+    graph, this one removes nothing. `deprioritised` is every candidate the threshold
+    corroborates nothing under, and it is carried whole rather than counted so the
+    output can name each one: a grouping that got weaker for want of a second account
+    retelling the same words is a decision, and a decision a reader cannot see is the
+    same as a defect nobody noticed. The heading it is printed under says `filtered`,
+    which is the Ticket's word, and the sentence under that heading says that none of
+    them is removed for it.
+    """
+
+    threshold: float
+    candidates: int
+    corroborated: int
+    pieces: int
+    corroborated_pieces: int
+    deprioritised: tuple[CampaignCandidate, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Grouping:
     """Everything one run establishes, so the table and the file cannot disagree.
 
-    The Corpus is carried because the printed table quotes its posts: the claims are
-    about content in that file, and the evidence is read from it rather than
-    transcribed.
+    `temporal` is what the clock added across the run and `content` what the stored
+    vectors added, one value each rather than a score over both, because #26 is where
+    the two become one number. The Corpus is carried because the printed table quotes
+    its posts: the claims are about content in that file, and the evidence is read
+    from it rather than transcribed.
     """
 
     facts: GroupingFacts
     filtered: SharedFilter
     temporal: Corroboration
+    content: SimilarityCorroboration
     candidates: tuple[CampaignCandidate, ...]
     corpus: tuple[CorpusItem, ...] = field(repr=False)
 
@@ -486,8 +595,11 @@ def group(
     list_path: Path,
     shared_path: Path,
     window_hours: int = DEFAULT_WINDOW_HOURS,
+    threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    table: str = DEFAULT_TABLE,
 ) -> Grouping:
-    """Read the three files and return the candidates, the figures, and the Corpus.
+    """Read the three files and the stored vectors, and return the candidates, the
+    figures, and the Corpus.
 
     One call, because the figures, the candidates, and the printed evidence are three
     views of one pass over the Corpus. A caller that resolved the links and then asked
@@ -508,27 +620,42 @@ def group(
     file would make the result depend on whether somebody had remembered to run the
     step before it.
 
+    The vectors are the exception, and they are read from the table rather than
+    recomputed: they are the one input this call cannot have another answer to, and
+    reading them is what makes the similarity figures the ones a similarity query over
+    that table would return (ADR-0026). A post the table does not hold refuses the run
+    by name, because a figure about a candidate that quietly skipped one of its posts is
+    a figure about a different candidate.
+
     Candidates come out largest first, then by the accounts' names, so a fixed Corpus
-    produces a fixed list under fixed identifiers — with every candidate the timing
-    corroborates ahead of every candidate it does not, because that is the whole of
-    what timing is allowed to do here (ADR-0005). The identifier says where a
-    candidate sits in the output and nothing else: it is not an identity that survives
-    the Corpus changing underneath it.
+    produces a fixed list under fixed identifiers — under the clock's key and then the
+    vectors', because that is the whole of what either is allowed to do here
+    (ADR-0005). The identifier says where a candidate sits in the output and nothing
+    else: it is not an identity that survives the Corpus changing underneath it, or the
+    threshold moving.
     """
+    window_seconds = _window_seconds(window_hours)
+    _require_threshold(threshold)
     suffixes = PublicSuffixes.read(list_path)
     corpus = read_corpus(corpus_path)
     shared = SharedInfrastructure.read(shared_path, suffixes)
     rows = post_domains(corpus, suffixes)
     points = shared_contact_points(read_contact_points(corpus))
     created_at = {item.post_id: item.created_at for item in corpus}
+    items = {item.post_id: item for item in corpus}
 
-    window_seconds = _window_seconds(window_hours)
+    connection = open_store(connection_string())
+    try:
+        vectors = stored_vectors(connection, table, items.keys())
+    finally:
+        connection.close()
+
     withheld = shared.withheld()
-    kept = _Reach.of(rows, points, created_at, withheld)
-    unfiltered = _Reach.of(rows, points, created_at, frozenset())
+    kept = _Reach.of(rows, points, created_at, withheld, items, vectors)
+    unfiltered = _Reach.of(rows, points, created_at, frozenset(), items, vectors)
     candidates = tuple(
-        kept.candidate(f"cc-{number:02d}", accounts, window_seconds)
-        for number, accounts in enumerate(kept.ordered(window_seconds), start=1)
+        kept.candidate(f"cc-{number:02d}", accounts, window_seconds, threshold)
+        for number, accounts in enumerate(kept.ordered(window_seconds, threshold), start=1)
     )
     shared_filter = _filter(rows, unfiltered, points, candidates, shared, withheld)
     return Grouping(
@@ -543,6 +670,7 @@ def group(
         ),
         filtered=shared_filter,
         temporal=_corroboration(window_seconds, candidates),
+        content=_similarity_corroboration(threshold, candidates),
         candidates=candidates,
         corpus=corpus,
     )
@@ -563,6 +691,42 @@ def _window_seconds(window_hours: int) -> int:
             "nothing falls inside a window of less than that"
         )
     return window_hours * 3_600
+
+
+def _require_threshold(threshold: float) -> None:
+    """The threshold, refused when it cannot discriminate anything.
+
+    Zero would corroborate nothing whatever this corpus holds, and past one cosine
+    distance the model calls every text near-identical: a threshold nothing can fail
+    is a Signal that fires on nothing, which is a claim. This is the same shape of
+    refusal `_window_seconds` makes for a window of nothing.
+    """
+    if threshold <= 0 or threshold > 1.0:
+        raise ValueError(
+            f"--similarity-threshold is {threshold}, and a cosine distance between two "
+            "posts counts as near-identical only when it is above zero and at most one: "
+            "at or below zero nothing corroborates, and above one everything would"
+        )
+
+
+def _similarity_corroboration(
+    threshold: float, candidates: Sequence[CampaignCandidate]
+) -> SimilarityCorroboration:
+    """What the vectors say across the whole run, and which candidates they say
+    nothing for. Counted off the candidates themselves, so the figure and the rows
+    under each candidate cannot disagree."""
+    return SimilarityCorroboration(
+        threshold=threshold,
+        candidates=len(candidates),
+        corroborated=sum(1 for candidate in candidates if candidate.content_similarity.corroborates),
+        pieces=sum(len(candidate.similarity) for candidate in candidates),
+        corroborated_pieces=sum(
+            candidate.content_similarity.corroborated for candidate in candidates
+        ),
+        deprioritised=tuple(
+            candidate for candidate in candidates if not candidate.content_similarity.corroborates
+        ),
+    )
 
 
 def _corroboration(
@@ -614,6 +778,8 @@ class _Reach:
     posts_by_account: dict[str, set[str]]
     first_seen: dict[str, str]
     moments: dict[str, tuple[datetime, ...]]
+    items: Mapping[str, CorpusItem]
+    vectors: Mapping[str, Sequence[float]]
 
     @classmethod
     def of(
@@ -622,6 +788,8 @@ class _Reach:
         points: Mapping[tuple[ContactKind, str], SharedContact],
         created_at: dict[str, str],
         withheld: frozenset[str],
+        items: Mapping[str, CorpusItem],
+        vectors: Mapping[str, Sequence[float]],
     ) -> _Reach:
         """What the rows reach, with `withheld` kept out of the graph entirely.
 
@@ -634,7 +802,7 @@ class _Reach:
         The posts of both still count towards the accounts that wrote them, because a
         post is why an account is silent, not why its other posts do not exist.
         """
-        reach = cls({}, {}, {}, {}, {}, {})
+        reach = cls({}, {}, {}, {}, {}, {}, items, vectors)
         for row in rows:
             reach.posts_by_account.setdefault(row.account, set()).add(row.post_id)
             _earliest(reach.first_seen, row.account, created_at[row.post_id])
@@ -662,19 +830,25 @@ class _Reach:
         """
         return (-len(accounts), -len(self.posts_of(accounts)), tuple(sorted(accounts)))
 
-    def ordered(self, window_seconds: int) -> list[frozenset[str]]:
+    def ordered(self, window_seconds: int, threshold: float) -> list[frozenset[str]]:
         """The components, the corroborated ones first, then the usual order.
 
-        The only thing the clock is allowed to do to the output. Corroborated ahead of
-        uncorroborated is a deprioritising and not a filter: both are reported, and
-        which is which is under every candidate's name. Sorting on it at all is the
-        difference between the ordering being the run's opinion and the clock being a
-        column of a table somebody can ignore.
+        Two keys, in that order of precedence: whether the clock corroborates the
+        component, then whether the stored vectors do. The clock keeps its precedence
+        because it had this job first (ADR-0025) and nothing here retires it, and the
+        vectors get the second key because a threshold is also only allowed to
+        deprioritise (ADR-0026) - never to remove, and never to promote anything the
+        clock has put behind a candidate it corroborates nothing under. Within both,
+        the usual order: largest first, then most posts, then by name.
+
+        Sorting on it at all is the difference between the ordering being the run's
+        opinion and a figure being a column of a table somebody can ignore.
         """
         return sorted(
             self.components(),
             key=lambda accounts: (
                 not self.timing(accounts, window_seconds).corroborates,
+                not self.content_similarity(accounts, threshold).corroborates,
                 *self.order_key(accounts),
             ),
         )
@@ -704,6 +878,24 @@ class _Reach:
         component, so there is nothing for the two to disagree about.
         """
         return _summary(self.corroboration(accounts), window_seconds)
+
+    def content_similarity(self, accounts: frozenset[str], threshold: float) -> ContentSimilarity:
+        """What the stored vectors say about one component, against a stated threshold.
+
+        Worked out from the same rows the candidate publishes, by the same function, so
+        the ordering and the figure under a candidate cannot disagree about which
+        candidates the vectors corroborate. Worked out twice - once to sort the
+        components and once to build the candidate they become - because the order has
+        to be settled before any identifier is assigned, and the rows are a pure
+        function of the component, so there is nothing for the two to disagree about.
+        """
+        return _similarity_summary(self.similarity(accounts), threshold)
+
+    def similarity(self, accounts: frozenset[str]) -> tuple[SimilarityEvidence, ...]:
+        """The similarity rows of every post of one component."""
+        return within_component_similarity(
+            [self.items[post_id] for post_id in self.posts_of(accounts)], self.vectors
+        )
 
     def corroboration(self, accounts: frozenset[str]) -> tuple[EvidenceTiming, ...]:
         """The timing of every piece of evidence a component is joined on."""
@@ -747,6 +939,9 @@ class _Reach:
             domains=domains,
             points=points,
             timing=tuple(self._gap(kind, value, reaching) for kind, value, reaching in pieces),
+            similarity=within_component_similarity(
+                [self.items[post_id] for post_id in self.posts_of(accounts)], self.vectors
+            ),
         )
 
     def _gap(self, kind: EvidenceKind, value: str, reaching: Collection[str]) -> EvidenceTiming:
@@ -791,7 +986,11 @@ class _Reach:
         )
 
     def candidate(
-        self, candidate_id: str, accounts: frozenset[str], window_seconds: int
+        self,
+        candidate_id: str,
+        accounts: frozenset[str],
+        window_seconds: int,
+        threshold: float,
     ) -> CampaignCandidate:
         """One component, with the shared registrations and Contact Points that join it
         rather than every one it touches, and the timing of each.
@@ -818,6 +1017,8 @@ class _Reach:
             shared_contact_points=joined.points,
             corroboration=joined.timing,
             timing=_summary(joined.timing, window_seconds),
+            similarity=joined.similarity,
+            content_similarity=_similarity_summary(joined.similarity, threshold),
             first_seen=min(self.first_seen[account] for account in accounts),
         )
 
@@ -890,6 +1091,93 @@ def _summary(pieces: Sequence[EvidenceTiming], window_seconds: int) -> Timing:
         pieces=len(pieces),
         corroborated=sum(1 for piece in pieces if piece.within(window_seconds)),
         closest_seconds=min((piece.closest_seconds for piece in pieces), default=0),
+    )
+
+
+def within_component_similarity(
+    posts: Sequence[CorpusItem], vectors: Mapping[str, Sequence[float]]
+) -> tuple[SimilarityEvidence, ...]:
+    """Each post's nearest post by another account, by cosine distance over the stored vectors.
+
+    The unit vectors the store holds make distance a dot product away: `1 - dot(u, v)` is
+    the cosine distance the database computes itself, so the figure a candidate publishes
+    is the one a similarity query over the same table would return. Rows come out in post
+    order, so the published figure and the file carrying it move together.
+
+    A post missing from `vectors` is refused rather than skipped: the figure would say
+    "every post has a twin this close" while one post was never asked, and a candidate
+    flattered by a question nothing asked is the shape of miss this command exists to
+    make visible. Two vectors of different widths are refused rather than left to the
+    zip, which would silently compare the shared prefix of two different kinds of number.
+    """
+    widths = {len(vectors.get(post.post_id, ())) for post in posts}
+    if 0 in widths:
+        missing = sorted(post.post_id for post in posts if post.post_id not in vectors)
+        raise ValueError(
+            f"{missing[0]} has no stored vector, so its posts cannot be compared: run "
+            "`rfi content-embeddings` over the Corpus first"
+        )
+    if len(widths) > 1:
+        raise ValueError(
+            f"the stored vectors have {sorted(widths)} widths, and a vector of one "
+            "width has no distance to a vector of another"
+        )
+    rows: list[SimilarityEvidence] = []
+    for post in sorted(posts, key=lambda item: item.post_id):
+        nearest: SimilarityEvidence | None = None
+        for other in posts:
+            if other.account == post.account:
+                continue
+            distance = 1.0 - sum(
+                left * right
+                for left, right in zip(
+                    vectors[post.post_id], vectors[other.post_id], strict=True
+                )
+            )
+            if nearest is None or distance < nearest.distance:
+                nearest = SimilarityEvidence(
+                    post=post.post_id,
+                    account=post.account,
+                    nearest=other.post_id,
+                    nearest_account=other.account,
+                    distance=distance,
+                )
+        if nearest is None:
+            raise ValueError(
+                f"{post.post_id} has no post by another account to be compared with, and a "
+                "candidate of one account is not a candidate"
+            )
+        rows.append(nearest)
+    return tuple(rows)
+
+
+def _similarity_summary(
+    rows: Sequence[SimilarityEvidence], threshold: float
+) -> ContentSimilarity:
+    """One candidate's similarity, counted from the rows it publishes.
+
+    The one place the four figures are counted, so the ordering decision, the line
+    under the candidate and the line in the file are the same arithmetic.
+    `closest_distance` is published whatever the threshold says: it is the gap a
+    reader needs in order to disagree with the threshold rather than the number the
+    threshold produced.
+
+    An empty row list is refused rather than counted as zero. A component of two or
+    more accounts always holds two or more posts, so an empty one means the rows were
+    never worked out — and publishing "nearest pair 0.00 apart" for a candidate with
+    no pair at all would be the figure that reads like the strongest agreement there
+    is.
+    """
+    if not rows:
+        raise ValueError(
+            "a Campaign Candidate of two or more accounts always holds posts to "
+            "compare, so a candidate with no similarity rows has had none worked out"
+        )
+    return ContentSimilarity(
+        threshold=threshold,
+        pieces=len(rows),
+        corroborated=sum(1 for row in rows if row.distance <= threshold),
+        closest_distance=min(row.distance for row in rows),
     )
 
 
@@ -1109,6 +1397,22 @@ def write_campaign_candidates(path: Path, candidates: Sequence[CampaignCandidate
                     "corroborated": candidate.timing.corroborated,
                     "closest_seconds": candidate.timing.closest_seconds,
                 },
+                "similarity": [
+                    {
+                        "post": row.post,
+                        "account": row.account,
+                        "nearest": row.nearest,
+                        "nearest_account": row.nearest_account,
+                        "distance": row.distance,
+                    }
+                    for row in candidate.similarity
+                ],
+                "content_similarity": {
+                    "threshold": candidate.content_similarity.threshold,
+                    "pieces": candidate.content_similarity.pieces,
+                    "corroborated": candidate.content_similarity.corroborated,
+                    "closest_distance": candidate.content_similarity.closest_distance,
+                },
                 "first_seen": candidate.first_seen,
             }
 
@@ -1159,6 +1463,13 @@ def read_campaign_candidates(path: Path) -> tuple[CampaignCandidate, ...]:
             "its rows, and a corroborated count means nothing without the window it was "
             "counted against"
         )
+    thresholds = {candidate.content_similarity.threshold for candidate in candidates}
+    if len(thresholds) > 1:
+        raise ValueError(
+            f"{path.as_posix()} publishes {sorted(thresholds)} of similarity threshold "
+            "across its rows, and a corroborated count means nothing without the "
+            "threshold it was counted against"
+        )
     return candidates
 
 
@@ -1181,10 +1492,12 @@ def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
     points = _entries(where, record, "shared_contact_points")
     names = _joined_on(where, shared, points)
     pieces = _gaps(where, record, names)
+    posts = read_names(where, record, "posts")
+    similarity_rows = _similarity(where, record, accounts, posts)
     return CampaignCandidate(
         candidate_id=read_text(where, record, "candidate_id"),
         accounts=accounts,
-        posts=read_names(where, record, "posts"),
+        posts=posts,
         shared_domains=tuple(
             _shared(where, entry, accounts) for entry in shared if isinstance(entry, dict)
         ),
@@ -1193,6 +1506,8 @@ def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
         ),
         corroboration=pieces,
         timing=_timing(where, record, names, pieces),
+        similarity=similarity_rows,
+        content_similarity=_content_similarity(where, record, similarity_rows),
         first_seen=read_text(where, record, "first_seen"),
     )
 
@@ -1352,6 +1667,152 @@ def _timing(
     )
 
 
+def _similarity(
+    where: str, record: JsonObject, accounts: tuple[str, ...], posts: tuple[str, ...]
+) -> tuple[SimilarityEvidence, ...]:
+    """One row's similarity rows, checked against the posts that row lists.
+
+    Both directions, the same two ways the file could lie that `_gaps` checks the
+    timing rows for: a similarity row for a post the candidate does not hold is a twin
+    a reader would weigh against a grouping that does not contain it, and a held post
+    with no row is a figure the reader cannot check. Every row also names accounts the
+    candidate's own holds, for the same reason `shared_domains` rows are asked to, and
+    its twin by another one, because a twin by the same account is that account's own
+    text.
+    """
+    entries = _entries(where, record, "similarity")
+    rows = tuple(_similarity_row(where, entry) for entry in entries if isinstance(entry, dict))
+    refuse_repeated(
+        f"{where} similarity",
+        (row.post for row in rows),
+        "one post has two twins, and a reader cannot tell which is the run's",
+    )
+    named = {row.post for row in rows}
+    if named != set(posts):
+        raise ValueError(
+            f"{where} holds similarity rows for {sorted(named)} and lists posts "
+            f"{sorted(posts)}, so its similarity is about something other than this "
+            "candidate"
+        )
+    for row in rows:
+        if row.nearest not in posts:
+            raise ValueError(
+                f"{where} names {row.nearest} as a twin, and that post is not in the "
+                "candidate the row is printed under"
+            )
+        for account in (row.account, row.nearest_account):
+            _named_by(where, (account,), accounts, "an account")
+        if row.account == row.nearest_account:
+            raise ValueError(
+                f"{where} names {row.account}'s twin by {row.nearest_account}, and a "
+                "twin by the same account is that account's own text, not corroboration"
+            )
+    return rows
+
+
+def _similarity_row(where: str, record: JsonObject) -> SimilarityEvidence:
+    """One similarity row, checked as a row of its own before it is read."""
+    vocabulary = tuple(field.name for field in fields(SimilarityEvidence))
+    if set(record) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds a similarity row with {sorted(record)}, which is not the "
+            f"similarity vocabulary {sorted(vocabulary)}"
+        )
+    distance = record["distance"]
+    if (
+        isinstance(distance, bool)
+        or not isinstance(distance, (int, float))
+        or distance < 0
+        or distance > 2
+    ):
+        raise ValueError(
+            f"{where} has distance={distance!r}, and a cosine distance lies in [0, 2]"
+        )
+    post = read_text(where, record, "post")
+    nearest = read_text(where, record, "nearest")
+    account = read_text(where, record, "account")
+    nearest_account = read_text(where, record, "nearest_account")
+    if nearest == post:
+        raise ValueError(
+            f"{where} names {post} as its own twin, and the twin has to be a different "
+            "post"
+        )
+    return SimilarityEvidence(
+        post=post,
+        account=account,
+        nearest=nearest,
+        nearest_account=nearest_account,
+        distance=float(distance),
+    )
+
+
+def _content_similarity(
+    where: str, record: JsonObject, rows: Sequence[SimilarityEvidence]
+) -> ContentSimilarity:
+    """One row's similarity summary, checked against the twins the row publishes.
+
+    The checks are the ones `Timing` gets: the counts the row says it holds have to
+    be the counts the rows above it hold, the nearest gap has to be the smallest one
+    among them, the corroborated count has to be the number of rows inside the
+    threshold, and the threshold cannot be a distance nothing can fail.
+    """
+    carried = record["content_similarity"]
+    if not isinstance(carried, dict):
+        raise ValueError(f"{where} has content_similarity={carried!r}, which is not a row")
+    vocabulary = tuple(field.name for field in fields(ContentSimilarity))
+    if set(carried) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds content_similarity with {sorted(carried)}, which is not "
+            f"the similarity vocabulary {sorted(vocabulary)}"
+        )
+    threshold = carried["threshold"]
+    if (
+        isinstance(threshold, bool)
+        or not isinstance(threshold, (int, float))
+        or threshold <= 0
+        or threshold > 1.0
+    ):
+        raise ValueError(
+            f"{where} has threshold={threshold!r}, and a cosine-distance threshold "
+            "counts as near-identical only above zero and at most one"
+        )
+    pieces = _seconds(where, carried, "pieces")
+    corroborated = _seconds(where, carried, "corroborated")
+    closest = carried["closest_distance"]
+    if isinstance(closest, bool) or not isinstance(closest, (int, float)) or closest < 0:
+        raise ValueError(
+            f"{where} has closest_distance={closest!r}, which is not a non-negative "
+            "cosine distance"
+        )
+    if pieces != len(rows):
+        raise ValueError(
+            f"{where} says it has {pieces} similarity rows and publishes {len(rows)}"
+        )
+    if corroborated > pieces:
+        raise ValueError(
+            f"{where} corroborates {corroborated} of its {pieces} posts, and there are "
+            "only that many to corroborate"
+        )
+    gaps = [row.distance for row in rows]
+    if gaps and min(gaps) != closest:
+        raise ValueError(
+            f"{where} says its closest pair is {closest} apart and publishes twins of "
+            f"{sorted(gaps)}"
+        )
+    inside = sum(1 for row in rows if row.distance <= threshold)
+    if inside != corroborated:
+        raise ValueError(
+            f"{where} says {corroborated} of its posts fall inside the {threshold} "
+            f"threshold and publishes twins of {sorted(gaps)}, of which {inside} do"
+        )
+    return ContentSimilarity(
+        threshold=float(threshold),
+        pieces=pieces,
+        corroborated=corroborated,
+        closest_distance=float(closest),
+    )
+
+
 def _seconds(where: str, record: JsonObject, field_name: str) -> int:
     """One duration in seconds, refused when it is anything else.
 
@@ -1456,17 +1917,23 @@ def render_table(grouping: Grouping) -> str:
     by_post = _posts_by_id(grouping.corpus)
     sections = (
         f"{_HEADING}\n\n{_SUBHEADING}",
-        _figures(grouping.facts, grouping.filtered, grouping.temporal),
+        _figures(grouping.facts, grouping.filtered, grouping.temporal, grouping.content),
         _index(grouping.candidates),
         "\n\n".join(_block(candidate, by_post) for candidate in grouping.candidates),
         _uncorroborated(grouping.temporal),
+        _deprioritised_by_similarity(grouping.content),
         _withheld(grouping.filtered),
-        _footer(grouping.filtered, grouping.temporal),
+        _footer(grouping.filtered, grouping.temporal, grouping.content),
     )
     return "\n\n".join(section for section in sections if section) + "\n"
 
 
-def _figures(facts: GroupingFacts, shared: SharedFilter, temporal: Corroboration) -> str:
+def _figures(
+    facts: GroupingFacts,
+    shared: SharedFilter,
+    temporal: Corroboration,
+    similarity: SimilarityCorroboration,
+) -> str:
     """What was read, and what came of it. One figure per line, labelled.
 
     The four account counts are a partition of the accounts, so a reader can add them
@@ -1475,9 +1942,10 @@ def _figures(facts: GroupingFacts, shared: SharedFilter, temporal: Corroboration
     candidate resting on one handle and a candidate resting on one domain are not the
     same claim and the reader is entitled to know which of them is which.
 
-    The window is a line of its own and the two timing counts are a line of their own,
-    because a corroborated count without the threshold it was counted against is not a
-    figure: `3 of 4` beside a window nobody can see is a score out of an unknown number.
+    The window and the threshold are lines of their own and the two counts are lines
+    of their own, because a corroborated count without the threshold it was counted
+    against is not a figure: `3 of 4` beside a threshold nobody can see is a score
+    out of an unknown number.
     """
     fields = (
         ("corpus", facts.corpus_path),
@@ -1503,9 +1971,31 @@ def _figures(facts: GroupingFacts, shared: SharedFilter, temporal: Corroboration
         ("filtered", _withheld_counts(shared)),
         ("window", f"{_window(temporal.window_seconds)} between two accounts on one piece of evidence"),
         ("timing", _timing_counts(temporal)),
+        ("threshold", f"cosine distance at most {_distance(similarity.threshold)} between two posts in one candidate"),
+        ("similarity", _similarity_counts(similarity)),
     )
     width = max(len(name) for name, _ in fields)
     return "\n".join(f"  {name.ljust(width)}  {value}" for name, value in fields)
+
+
+def _similarity_counts(similarity: SimilarityCorroboration) -> str:
+    """What the stored vectors corroborated, and the rule that it removed nothing.
+
+    The trailing clause is on every run rather than only on one where it mattered,
+    because a reader looking for the candidates the vectors dropped and finding none
+    has to be able to tell that from a store that was never asked. The candidates it
+    did not corroborate are below the table under their own heading.
+    """
+    return (
+        f"{_of(similarity.corroborated, similarity.candidates, 'candidate')} and "
+        f"{_of(similarity.corroborated_pieces, similarity.pieces, 'piece')} of evidence "
+        "corroborated; no candidate removed"
+    )
+
+
+def _distance(value: float) -> str:
+    """The threshold as a figure a reader can compare two posts with."""
+    return f"{value:.2f}"
 
 
 def _timing_counts(temporal: Corroboration) -> str:
@@ -1587,6 +2077,7 @@ def _index(candidates: Sequence[CampaignCandidate]) -> str:
         "justified by",
         "shared registrations",
         "timing",
+        "similarity",
     )
     rows = [
         (
@@ -1597,6 +2088,7 @@ def _index(candidates: Sequence[CampaignCandidate]) -> str:
             candidate.evidence.value,
             ", ".join(shared.domain for shared in candidate.shared_domains),
             f"{candidate.timing.corroborated} of {candidate.timing.pieces} corroborated",
+            f"{candidate.content_similarity.corroborated} of {candidate.content_similarity.pieces} corroborated",
         )
         for candidate in candidates
     ]
@@ -1630,6 +2122,7 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
         f"{len(candidate.posts)} posts, first seen {candidate.first_seen}",
         f"  justified by  {_justified(candidate)}",
         f"  timing        {_candidate_timing(candidate)}",
+        f"  similarity    {_candidate_similarity(candidate)}",
     ]
     if candidate.shared_domains:
         lines.append("  shared registrations")
@@ -1684,6 +2177,24 @@ def _candidate_timing(candidate: CampaignCandidate) -> str:
         f"{timing.corroborated} of {timing.pieces} {pieces} of evidence within the "
         f"{_window_of(timing.window_seconds)} window; nearest pair "
         f"{_gap(timing.closest_seconds)} apart"
+    )
+
+
+def _candidate_similarity(candidate: CampaignCandidate) -> str:
+    """One candidate against the threshold, and the gap that decided it.
+
+    The count of posts rather than a yes or a no, because a candidate can be
+    corroborated by one Signal and not the other and both halves of that are
+    findings: the registration is corroborated by the clock and its posts are a
+    fortnight apart, but the texts in it are the same playbook read aloud, so
+    the two figures together say more than either one alone.
+    """
+    summary = candidate.content_similarity
+    pieces = "post" if summary.pieces == 1 else "posts"
+    return (
+        f"{summary.corroborated} of {summary.pieces} {pieces} within the "
+        f"{_distance(summary.threshold)} cosine-distance threshold; nearest pair "
+        f"{_distance(summary.closest_distance)} apart"
     )
 
 
@@ -1789,6 +2300,42 @@ def _uncorroborated(temporal: Corroboration) -> str:
     return "\n".join(lines)
 
 
+def _deprioritised_by_similarity(similarity: SimilarityCorroboration) -> str:
+    """Every candidate the threshold corroborates nothing under, named.
+
+    Printed on every run, including one where there are none: a section that only
+    appears when it is bad is a section a reader cannot tell from a missing one, and
+    a candidate the vectors had nothing to say about and vectors never asked are two
+    different things. Nothing is dropped - this is a deprioritising, so the candidate
+    is in the table above with its nearest pair beside its posts and named again here
+    with the gap a reader needs to disagree with the threshold.
+
+    The heading says `filtered` because the Ticket says it, and the word is a
+    deprecising here rather than a removing one: the sentence under it says that none
+    of them is removed for it, and the code beside it is called `deprioritised`,
+    because `filtered` already means removal in this module and a reader of the file
+    should not have to work out which of the two it is looking at.
+    """
+    threshold = _distance(similarity.threshold)
+    if not similarity.deprioritised:
+        return (
+            f"filtered by similarity  none: every candidate above holds a near-twin for "
+            f"every post within {threshold}"
+        )
+    lines = [
+        f"filtered by similarity  {_of(len(similarity.deprioritised), similarity.candidates, 'candidate')} "
+        f"deprioritised: in none of them does every post have a near-twin by another "
+        f"account within {threshold}, and none of them is removed for it"
+    ]
+    for candidate in similarity.deprioritised:
+        lines.append(
+            f"  {candidate.candidate_id}  {len(candidate.accounts)} accounts, "
+            f"{len(candidate.posts)} posts, nearest pair of posts "
+            f"{_distance(candidate.content_similarity.closest_distance)} apart"
+        )
+    return "\n".join(lines)
+
+
 def _withheld(shared: SharedFilter) -> str:
     """Everything the filter kept out of the graph, on either edge, one block each.
 
@@ -1865,7 +2412,7 @@ def _kinds(item: WithheldRegistration) -> tuple[str, ...]:
     return tuple(dict.fromkeys(host.kind.value.replace("_", " ") for host in item.hosts))
 
 
-def _footer(shared: SharedFilter, temporal: Corroboration) -> str:
+def _footer(shared: SharedFilter, temporal: Corroboration, similarity: SimilarityCorroboration) -> str:
     """What the run can and cannot claim, and where the filter comes from.
 
     The list is named rather than described, because the claim that the junk is gone
@@ -1874,9 +2421,9 @@ def _footer(shared: SharedFilter, temporal: Corroboration) -> str:
     """
     return f"""\
 Every candidate above rests on a shared registrable domain, a shared Contact Point, or
-both, and on nothing else. Timing is read as corroboration and content similarity is not
-read at all, and neither could produce a candidate on its own, which is what ADR-0005
-requires.
+both, and on nothing else. Timing and content similarity are read as corroboration
+and neither could produce a candidate on its own, which is what ADR-0005 and
+ADR-0026 require.
 
 Timing corroborates a grouping and never creates one. Two accounts that post in the same
 minute and share nothing are not grouped, and this run would not group them whatever the
@@ -1887,6 +2434,24 @@ gap beside its evidence and named again below the table. Nothing is dropped for 
 timing. A domain two accounts reached months apart may be a domain that changed hands and
 a campaign may simply be a patient one, so the gap is published as a figure a reviewer can
 weigh rather than acted on as a decision, and the window that judged it is named above.
+
+Content similarity corroborates a grouping and never creates one either (ADR-0026). Two
+accounts that paste the same advert, hour for hour, and share no registrable domain and
+no Contact Point are not grouped, whatever the threshold is set to: the Corpus's own copy
+of that case is the decoy cluster, whose text is the nearest on the Corpus and whose
+accounts reach only a link shortener between them. What the threshold does is order this
+list and say so, the same way the window does. The reason content similarity can never
+establish a grouping is written here because it is the question every reader will ask:
+a scam template converges across unrelated operators, and near-identical text is what
+such a convergence looks like when it crosses. An advert that two unrelated desks both
+paste is evidence about the template, not about the operator behind it, and an account
+sharing nothing but that text cannot be told from the unrelated operator two hours and
+a different country away. The model reads words and not meaning, which the vectors' own
+footer states: two posts making the same pitch in different words come out distant, as
+this Corpus's own Planted Campaign does, and a signal that corroborates nothing would be
+no signal at all. So the threshold is stated beside every figure it was counted against,
+the candidates it corroborates nothing under are named with the nearest distance rather
+than discarded, and the only candidate-level verdict it can carry is corroboration.
 
 The two edges are not equally good, and each candidate says which one it rests on. A
 registration is somebody's property and this project resolves it against the published
