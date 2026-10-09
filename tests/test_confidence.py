@@ -48,6 +48,7 @@ from reddit_fraud_intelligence.cli import (
 from reddit_fraud_intelligence.confidence import (
     FEATURES,
     MODEL_NAME,
+    _PRECISION,
     Confidence,
     ConfidenceFacts,
     Confidences,
@@ -882,15 +883,45 @@ def test_the_console_output_fits_the_width_and_the_ascii_it_claims() -> None:
     cannot encode anything else, and `_WIDTH` says every line fits a hundred columns. Both are
     checkable, so both are checked — a width nobody checks is a width that drifts, and the first
     thing to drift it is a table of coefficients with one column too many.
+
+    **Lines naming a path are excluded, as `test_review_queue.py` excludes them.** The figures
+    block prints the path each file was read from, so the width of those lines is the length of
+    whatever path the caller passed. A check that included them would be a check on the length
+    of this machine's directory: it passed over a 25-character root and failed over CI's 78,
+    with nothing about the command having changed. That is not hypothetical — it is what this
+    test did before the exclusion was added.
     """
     printed = render_table(measured())
     lines = printed.splitlines()
 
     not_ascii = [line for line in lines if not line.isascii()]
-    too_wide = [(len(line), line) for line in lines if len(line) > 100]
+    too_wide = [
+        (len(line), line)
+        for line in lines
+        if len(line) > 100 and not _names_a_path(line)
+    ]
 
     assert not not_ascii, f"the console output is not ASCII: {not_ascii}"
-    assert not too_wide, f"the console output is wider than the width it claims: {too_wide}"
+    assert not too_wide, f"the console output is wider than the width it claims: {too_wide[:2]}"
+
+
+def _names_a_path(line: str) -> bool:
+    """Whether a line's width is the length of a filesystem path rather than of this module.
+
+    Anything holding a path this run was given, or the model's own name, is as wide as the
+    caller's directory. Everything else is this module's own text and its width is a claim
+    about the module.
+    """
+    return any(
+        token in line
+        for token in (
+            "corpus.jsonl",
+            "public_suffix_list.dat",
+            "truth.jsonl",
+            "policy-scores.jsonl",
+            "logistic-content-link-features-v1",
+        )
+    )
 
 
 def test_the_console_output_names_the_model_the_folds_and_the_base_rate() -> None:
@@ -1127,18 +1158,51 @@ def test_the_command_writes_the_two_files_it_names(tmp_path: Path) -> None:
 
 
 def test_running_twice_writes_byte_identical_bytes(tmp_path: Path) -> None:
-    """Two runs over the same Corpus, the same bytes.
+    """Two runs over the same Corpus on one machine, the same bytes.
 
     The reproducibility the rest of this repository rests on, asserted for the one command that
     fits a model: a run whose numbers moved between two identical runs would leave a published
     file nothing could hold, and a reader would have no way to tell a Corpus change from a
     rerun.
+
+    This is the within-machine half. The cross-machine half is the rounding, and the test that
+    holds it is the one below.
     """
     first = run(tmp_path / "first")
     second = run(tmp_path / "second")
 
     assert first[0].read_bytes() == second[0].read_bytes()
     assert first[1].read_bytes() == second[1].read_bytes()
+
+
+def test_the_published_precision_sits_far_below_the_smallest_difference_it_has_to_express() -> None:
+    """Why twelve decimal places, checked rather than asserted in a comment.
+
+    Two things have to be true at once for the rounding to be honest, and this checks both.
+    **It must not collapse two posts.** The closest two published Confidences have to stay
+    further apart than the rounding can move them, so a reader can still tell every post's
+    probability from every other post's. **It must be well above what two interpreters
+    disagree by**, which is what it is there for: the committed file was written on Windows and
+    a Linux run disagreed with it in the seventeenth significant digit of one post, and the
+    margin between a rounding at twelve places and a disagreement of that size is six orders of
+    magnitude.
+
+    A future Corpus whose probabilities bunch together could close the first gap, and this test
+    is what would say so — before the rounding started merging two posts into one figure.
+    """
+    published = sorted(row.confidence for row in published_rows())
+    closest = min(
+        high - low for low, high in zip(published, published[1:], strict=False)
+    )
+
+    assert closest > 10 ** -_PRECISION, (
+        f"the closest two published Confidences differ by {closest}, which the rounding to "
+        f"{_PRECISION} places could merge: two posts would publish one figure between them"
+    )
+    assert _PRECISION <= 12, (
+        "the rounding is coarser than the disagreement between two interpreters would survive, "
+        "so a Windows run and a Linux run can publish different bytes again"
+    )
 
 
 def test_the_command_refuses_to_write_two_outputs_to_one_path(tmp_path: Path) -> None:

@@ -14,6 +14,17 @@ each is a count a reader can check by hand. Nothing reads an account's age, karm
 posting rate or activity change, no account is a feature, and a feature is read from
 one post rather than across the Corpus (ADR-0007, ADR-0008).
 
+**Published probabilities are rounded to twelve decimal places, and that is a
+reproducibility decision rather than tidiness.** The fit is 400 steps of gradient descent
+over `math.exp`, and two interpreters reach the same answer to within a place or two and
+not quite the same one — the run that wrote this repository's committed file and the Linux
+run that checks it disagreed in the seventeenth significant digit of one post, which is
+enough for a byte comparison to fail. Twelve places sits far above that disagreement and far
+below the smallest difference the file has to express: the closest two published
+probabilities differ in the sixth decimal place. The fit itself is not rounded, so nothing
+steers the training; only what a reader is shown is. `composition.py` rounds to integer
+arithmetic for the same reason.
+
 **The labels are the Planted Campaign membership, and the report says so in its own
 words.** A post's label is whether its account is a member of a Planted Campaign, taken
 from `data/corpus/truth.jsonl`. That is a file only the evaluator is otherwise permitted
@@ -74,6 +85,11 @@ difference a reader can see rather than a claim.
   figure published before the model exists would be a figure about a model nobody has
   chosen. What this ADR publishes is discrimination — how well the Confidence orders
   posts — not calibration, and the report says which of the two it is reporting.
+- **Accept that the committed file may differ in the last digit from the machine that
+  checks it, and loosen the byte comparison.** Rejected outright: a published file that
+  cannot be held to the command that writes it is a file nothing will ever notice has gone
+  stale. The rounding is the cheaper answer, and `composition.py` already rounds for the
+  same reason.
 - **Store the Confidence in the `content_embedding` table.** Rejected: that table's
   columns are one model's output and a digest of the text behind it, and a column
   holding a probability from a different model beside a `vector` column is a row whose

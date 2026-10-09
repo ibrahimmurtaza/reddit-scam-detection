@@ -52,11 +52,17 @@ nothing, which is why no figure on this page comes from one.
 ## The model
 
 `logistic-content-link-features-v1`, fitted by batch gradient descent at a learning rate of 0.5 for 400 steps with an L2
-penalty of 0.01 on the coefficients and none on the intercept. There is no seed and nothing to tune:
-two runs over the same Corpus produce the same bytes, which is what lets the published file be held
-to what this code produces. The name and a digest of the recipe travel on every row of
-`data/model/confidences.jsonl`, for the reason ADR-0024 gives for the embeddings — a version number is a
-promise somebody has to keep and the digest is the promise checked.
+penalty of 0.01 on the coefficients and none on the intercept. There is no seed and nothing to tune,
+so two runs over the same Corpus produce the same bytes — and so do a Windows run and a Linux one,
+which is not free. Four hundred steps of gradient descent over `math.exp` reach the same answer to
+within a place or two on any given interpreter and not quite the same one: the run that wrote this
+page and the Linux run that checks it disagreed in the seventeenth significant digit of one post.
+Every published probability is therefore rounded to twelve decimal places. That is far below the
+smallest difference this file has to express — the closest two probabilities differ in the sixth
+decimal — and far above the disagreement, which is the whole margin. The name and a digest of the
+recipe travel on every row of `data/model/confidences.jsonl`, for the reason ADR-0024 gives for the
+embeddings — a version number is a promise somebody has to keep and the digest is the promise
+checked, and the digest covers the rounding as well as the fit.
 
 Logistic regression rather than a tree ensemble because 7 positives cannot
 support one: a forest would fit the fitting rows exactly and have nothing to say about a post it had

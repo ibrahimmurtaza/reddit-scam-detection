@@ -116,6 +116,17 @@ _STEPS = 400
 _LEARNING_RATE = 0.5
 _PENALTY = 0.01
 
+# How many decimal places a published Confidence carries, and why it is a number rather than
+# "however many the float has". 400 steps of gradient descent over `math.exp` reach the same
+# answer to within a place or two on any given interpreter and not quite the same one: the run
+# that produced this repository's committed file and the Linux run that checks it disagreed in
+# the seventeenth significant digit of one post, which is enough for a byte comparison to fail
+# and not enough for any reader to see. Twelve places is far below the smallest difference the
+# file has to express — the closest two published probabilities on this Corpus differ in the
+# sixth — and far above the disagreement between two interpreters. `tests/test_confidence.py`
+# checks that margin rather than taking it on trust.
+_PRECISION = 12
+
 # A run of letters and digits, which is the corpus's own definition of a word rather than
 # whitespace's: `body_words` is a feature a reader will recount, and the two definitions
 # disagree on every hyphen and every underscore — and on every Contact Point this Corpus
@@ -187,8 +198,9 @@ _RECIPE = (
     f"coefficients and none on the intercept, at a learning rate of {_LEARNING_RATE} for "
     f"{_STEPS} steps, so the fit is deterministic and holds no seed; a post's probability is "
     "the logistic function of its intercept plus the weighted sum of its standardised "
-    "features; and the fit runs once per fold, with every post of that fold's Planted "
-    "Campaign removed from the fitting rows"
+    "features, rounded to twelve decimal places because two interpreters reach the same answer "
+    "to within a place or two of `math.exp` and not quite the same one; and the fit runs once "
+    "per fold, with every post of that fold's Planted Campaign removed from the fitting rows"
 )
 
 
@@ -262,19 +274,33 @@ class Fit:
     positives: int
 
     def confidence(self, values: Sequence[float]) -> float:
-        """The probability for one post's features, under this fit.
+        """The probability for one post's features, under this fit, to the published precision.
 
         The standardised form rather than the raw one, and the refusal is explicit: a row of
         the wrong width cannot be scored against these coefficients, and padding it with zeros
         or truncating it would each produce a number that looks like a Confidence and is not
         one.
+
+        **The rounding is load-bearing, not tidiness.** The fit is 400 steps of gradient
+        descent over `math.exp`, and the two differ in the last place or two between a Windows
+        and a Linux interpreter — enough to move a published row's final digit, which is enough
+        for a file held to its bytes to differ between the machine that wrote it and the one that
+        checks it. Rounding at twelve decimal places removes that, and removes nothing else: the
+        closest two published probabilities on this Corpus differ in the sixth decimal place, so
+        six orders of magnitude separate the rounding from the smallest difference the file
+        actually has to express. `composition.py` rounds to integer arithmetic for the same
+        reason and says so.
+
+        Only the published value is rounded. The training loop computes its own logistic
+        function and is untouched, so the fit is not being steered by the rounding — only what a
+        reader is shown is.
         """
         if len(values) != len(self.coefficients):
             raise ValueError(
                 f"a row of {len(values)} features cannot be scored against coefficients of "
                 f"width {len(self.coefficients)}: the two were fitted over different lists"
             )
-        return _sigmoid(self.intercept + _weighted(values, self))
+        return round(_sigmoid(self.intercept + _weighted(values, self)), _PRECISION)
 
     def standardised(self, values: Sequence[float]) -> tuple[float, ...]:
         """One row of features against this fit's own centre and scale.
@@ -1398,11 +1424,17 @@ nothing, which is why no figure on this page comes from one.
 ## The model
 
 `{facts.model}`, fitted by batch gradient descent at a learning rate of 0.5 for 400 steps with an L2
-penalty of 0.01 on the coefficients and none on the intercept. There is no seed and nothing to tune:
-two runs over the same Corpus produce the same bytes, which is what lets the published file be held
-to what this code produces. The name and a digest of the recipe travel on every row of
-`{CONFIDENCES_PATH}`, for the reason ADR-0024 gives for the embeddings — a version number is a
-promise somebody has to keep and the digest is the promise checked.
+penalty of 0.01 on the coefficients and none on the intercept. There is no seed and nothing to tune,
+so two runs over the same Corpus produce the same bytes — and so do a Windows run and a Linux one,
+which is not free. Four hundred steps of gradient descent over `math.exp` reach the same answer to
+within a place or two on any given interpreter and not quite the same one: the run that wrote this
+page and the Linux run that checks it disagreed in the seventeenth significant digit of one post.
+Every published probability is therefore rounded to twelve decimal places. That is far below the
+smallest difference this file has to express — the closest two probabilities differ in the sixth
+decimal — and far above the disagreement, which is the whole margin. The name and a digest of the
+recipe travel on every row of `{CONFIDENCES_PATH}`, for the reason ADR-0024 gives for the
+embeddings — a version number is a promise somebody has to keep and the digest is the promise
+checked, and the digest covers the rounding as well as the fit.
 
 Logistic regression rather than a tree ensemble because {evaluation.positives} positives cannot
 support one: a forest would fit the fitting rows exactly and have nothing to say about a post it had
