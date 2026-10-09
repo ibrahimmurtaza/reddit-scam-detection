@@ -45,5 +45,10 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
   halves: the first holds the model and `data/embeddings/content-embeddings.jsonl` to
   their bytes, the second the within-component similarity figures to the vectors the same
   model produces.
-- `psycopg` is the one runtime dependency. The embedding model is this project's own and
-  needs no wheel, which is deliberate (ADR-0024).
+- `rfi confidence` needs no database: it reads the Corpus, the published Public Suffix List,
+  the Planted Campaign membership (its training labels) and the published Policy Scores, and
+  writes `data/model/confidences.jsonl` and `docs/confidence.md`. Nothing reads that file
+  back, because the Confidence is displayed nowhere (ADR-0027, ADR-0003).
+  `tests/test_confidence.py` and `tests/test_confidence_store.py` are both offline.
+- `psycopg` is the one runtime dependency. The embedding model and the Confidence model are
+  this project's own and need no wheel, which is deliberate (ADR-0024, ADR-0027).

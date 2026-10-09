@@ -10,14 +10,12 @@ The project builds against a Corpus it generates. Nothing here reads real Reddit
 content, and no account name, domain, or Contact Point in this repository
 corresponds to a real person.
 
-## Where it is
-
-Six things are built. The Corpus generator, which is the credibility boundary the
+Seven things are built. The Corpus generator, which is the credibility boundary the
 rest of the system rests on, and the Nuisance Structure it plants around the two
 Planted Campaigns. The CAFC extract: real, analyst-reviewed fraud reports, cached
 and committed, with the base rate of every thematic category computed from it. The
-projection of those categories down to ten Scam Categories, and the comparison of
-the Corpus's own distribution against those base rates. The pipeline itself: the
+projection of those categories down to ten Scam Categories, and the comparison of the
+Corpus's own distribution against those base rates. The pipeline itself: the
 Registrable Domain of every link, then the Contact Points every post names, then
 the Campaign Candidates those registrations and Contact Points produce, with
 known-shared infrastructure filtered out as published data and with temporal
@@ -30,9 +28,12 @@ joined by a command that runs after it rather than inside it, with the method's 
 bound stated as a count beside it. The Review Queue those scores are ordered into, at a
 stated depth. The false-grouping rate beside that recovery figure, and the Review
 Queue's precision at several depths, are measured by the same evaluator.
-The Confidence, the cohesion system, and the graph
-report are not built yet. Their tickets are numbered #26 to #28 in the tracker; this
-README is updated as they land.
+And the Confidence: one probability per Content Item, fitted here over seven counts read
+off the post, measured out of fold against the base rate and the Policy Score, and
+displayed nowhere.
+The cohesion system and the graph report are not built yet. Their tickets are
+numbered #26 and #28 in the tracker; confidence calibration is #27; this README is
+updated as they land.
 
 ## Running it
 
@@ -52,7 +53,7 @@ activated first — see
 comes from the environment (`RFI_DATABASE_URL`, or the `PG*` variables libpq
 reads), never from an argument.
 
-That writes four files; the other three in the table below are written by later
+That writes four files; the others in the table below are written by later
 steps, which are named against each row. Every file has one reader:
 
 | File | Holds | Read by |
@@ -71,6 +72,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
 | `data/embeddings/content-embeddings.jsonl` | Which post, which model, how wide, under which recipe, and the digest of the text each stored vector was computed from. No vector, and no account. | the reuse rule, and a reader recomputing the digests |
+| `data/model/confidences.jsonl` | Every post's Confidence: the probability, the model, and the digest of the recipe. No Policy Score, no label, and no fold. | nobody yet — the Confidence is displayed nowhere, and the calibration ticket #27 is what will read it |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -960,6 +962,79 @@ corroborate a Campaign Candidate and never establish one.
 `tests/test_content_embeddings.py` demonstrates it with two posts whose only shared vocabulary
 is one host.
 
+## The Confidence
+
+**Every Content Item has a Confidence, and no reviewer ever sees one.** It is the model's
+probability that a post exhibits the pattern the model was trained on, fitted here over seven
+counts read off the post's own title, body and links. It goes to
+`data/model/confidences.jsonl` and to `docs/confidence.md`, and it is displayed nowhere: not in
+the Review Queue, not beside a Campaign Candidate, not as a number out of a hundred, and never
+added to the Policy Score (ADR-0003, ADR-0027).
+
+```
+uv run rfi confidence   # reads the Corpus, the list, the membership and the scores; writes two files
+```
+
+| File | Holds |
+| --- | --- |
+| `data/model/confidences.jsonl` | One line per post: the probability, the model that produced it, and the digest of the recipe. |
+| `docs/confidence.md` | The report: the figure out of fold, both baselines, every coefficient, and what the figure is not. |
+
+**The model is published, and its performance is measured rather than assumed.**
+`logistic-content-link-features-v1`, fitted by gradient descent at a stated step count, learning
+rate and penalty, over seven features a reader can recount by hand from the post in front of
+them. Logistic regression rather than a tree ensemble because seven positives cannot support one,
+and no wheel rather than scikit-learn for the reason ADR-0024 gives for refusing a downloaded
+sentence-transformer: a repository whose claim is that every published figure can be recomputed
+should not depend on a 30 MB artefact to produce one. Two runs over the same Corpus produce the
+same bytes, so the published file is held to what this code produces.
+
+**Every probability is out of fold, and the folds are the Planted Campaigns.** A post's
+Confidence comes from a fit trained without that post and without every other post of its
+campaign, and the negatives are held out by their **account** rather than by their post, so two
+posts by one voice cannot sit on either side of a fold. A training fit over seven positives would
+be perfect by construction and would say nothing, which is why no figure on the page comes from
+one.
+
+**Two baselines, and the finding is uncomfortable.** The model's AUC beside the base rate's 0.5000
+and the Policy Score's own ordering of the same posts:
+
+```
+  predictor                          AUC     log loss  Brier
+  logistic-content-link-features-v1  0.7143  0.6048    0.1538
+  constant base rate                 0.5000  0.5084    0.1635
+  policy score                       1.0000  -         -
+```
+
+So on this Corpus the classifier orders the planted posts better than a coin and worse than the
+rules engine this project already ships, and it is scored worse than the constant by a proper
+scoring rule. `docs/confidence.md` says so in a sentence of its own rather than leaving it to be
+subtracted out of a table, because a model that cannot beat the base rate is worse than saying
+nothing and a reader who has to work that out has been handed the work. The Policy Score gets no
+log loss and no Brier score, and the dash is the point: a 0-100 editorial figure has no
+probability reading, and publishing a likelihood from one would be the fused score ADR-0003 rules
+out.
+
+**The training labels are the Planted Campaign membership, so this measures recovery of planted
+structure and not a rate of fraud found in anything.** The generator wrote the posts and wrote
+the labels; nobody reviewed any of it, and nothing here has seen real Reddit content. The report
+gives that a section of its own — "What these figures are not" — rather than a footnote, because
+it is the part a reader would otherwise skip and skipping it is what makes a number from that page
+mean something it does not. **Calibration is not measured here at all** (ADR-0003): what is
+published is discrimination and two proper scoring rules, and deciding whether the probability is
+calibrated is ticket #27.
+
+**It is displayed nowhere, and that is structural rather than promised.** `cli.py` is the only
+module in this repository that imports the Confidence, so `rfi review-queue` and
+`rfi campaign-candidates` cannot reach it even by accident.
+`tests/test_confidence.py` checks that by walking the import graph, checks it again by rendering
+the Review Queue and searching its output for the word, for the file, and for every published
+probability in both the form a probability takes and the form a severity takes, and checks that
+every figure the queue prints out of a hundred is a published Policy Score and nothing else. A
+second test walks the AST of every module and refuses any expression with a confidence-named
+thing on one side of an operator and a Policy-Score-named thing on the other — the strongest form
+of "never summed", and one a grep would pass over.
+
 ## The base rates
 
 `docs/cafc-base-rates.md` is the report: the base rate of every one of the
@@ -1148,6 +1223,9 @@ network for nothing at all.
 
 - `GLOSSARY.md` — the vocabulary, enforced by `tests/test_vocabulary.py` against
   the phrases the project must never utter.
+- `docs/confidence.md` — the report ADR-0027 asked for: the Confidence, its model, its
+  features, its out-of-fold figure beside two baselines, and a section saying what the figure
+  is not.
 - `docs/adr/` — the decisions. The ones this code implements are 0001 (Corpus
   Provider), 0004 (evaluate by recovering Planted Campaigns), 0005 (Campaign
   Candidates require registrable infrastructure), 0007 (Signals come only from
@@ -1184,4 +1262,7 @@ network for nothing at all.
   Content Embedding is a published lexical model over a post's own text and links and
   nothing about its account, stored in an HNSW-indexed vector column, reused by the
   digest of the text behind it, and reported with the plan the planner actually chose
-  rather than the index the project would have liked it to choose).
+  rather than the index the project would have liked it to choose), and 0027 (the Confidence is a
+  classifier over seven per-post counts, fitted on Planted Campaign membership, measured out of
+  fold against a constant and the Policy Score, stored in a file of its own, and displayed
+  nowhere).

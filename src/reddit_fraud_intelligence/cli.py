@@ -35,6 +35,15 @@ from reddit_fraud_intelligence.contacts import (
     write_post_contacts,
     write_published,
 )
+from reddit_fraud_intelligence.confidence import (
+    CONFIDENCES_PATH,
+    Sources,
+    confident as measure_confidences,
+    read_confidences,
+    render_report as render_confidence_report,
+    render_table as render_confidence_table,
+    write_confidences,
+)
 from reddit_fraud_intelligence.corpus import read_corpus, write_corpus
 from reddit_fraud_intelligence.domains import (
     post_domains,
@@ -115,6 +124,13 @@ DEFAULT_COMPOSITION_REPORT_PATH = Path("docs/corpus-composition.md")
 DEFAULT_WEIGHTS_PATH = Path("data/signals/weights.jsonl")
 DEFAULT_SCORES_PATH = Path("data/signals/policy-scores.jsonl")
 DEFAULT_EMBEDDINGS_PATH = Path("data/embeddings/content-embeddings.jsonl")
+# Aliased from the module rather than written here, for the reason the two DEFAULT_TABLE lines
+# below give: this command names the file it publishes in its own report, and two literals for
+# one path is how the command and the page it writes stop agreeing.
+DEFAULT_CONFIDENCES_PATH = Path(CONFIDENCES_PATH)
+DEFAULT_CONFIDENCE_REPORT_PATH = Path("docs/confidence.md")
+
+
 # Aliased rather than repeated: `content-embeddings` writes this table and
 # `campaign-candidates` reads it, and two literals for one table name is how the two
 # commands stop reading each other's vectors.
@@ -234,6 +250,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 embeddings_path=Path(str(args.embeddings)),
                 table=str(args.table),
                 replace=bool(args.replace),
+            )
+        case "confidence":
+            return _confidence(
+                corpus_path=Path(str(args.corpus)),
+                list_path=Path(str(args.list)),
+                truth_path=Path(str(args.truth)),
+                scores_path=Path(str(args.scores)),
+                confidences_path=Path(str(args.confidences)),
+                report_path=Path(str(args.report)),
             )
         case _:
             parser.error(f"unknown command: {args.command}")
@@ -894,6 +919,73 @@ def _parser() -> argparse.ArgumentParser:
             "rerun against a rebuilt Corpus wants and what a mistyped --corpus must not do"
         ),
     )
+
+    confidence = commands.add_parser(
+        "confidence",
+        help="produce a Confidence per post, and measure it out of fold against two baselines",
+        description=(
+            "The project's one model, and the one number it publishes that no reviewer ever "
+            "sees. Every Content Item gets a probability: that it exhibits the pattern the "
+            "model was trained on, fitted over seven counts read from the post's own title, "
+            "its own body and its own links. The number goes to a file of its own and is "
+            "displayed nowhere — not in the Review Queue, not beside a Campaign Candidate, "
+            "not as a figure out of a hundred, and never added to the Policy Score, which "
+            "stays the published, hand-checkable rules engine ADR-0003 made it (ADR-0027). "
+            "Every probability is out of fold: the folds are the Planted Campaigns, so a "
+            "post's Confidence comes from a fit trained without it and without every other "
+            "post of its campaign, and both baselines - the base rate and the Policy Score's "
+            "own ordering - are measured over the same rows. The training labels are the "
+            "Planted Campaign membership the generator wrote, so what this measures is "
+            "recovery of planted structure and not a rate of fraud found in the world; the "
+            "report says so in a section of its own. Calibration is ticket #27 and is not "
+            "measured here. Reads no network and needs no database."
+        ),
+    )
+    confidence.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_CORPUS_PATH,
+        help=f"the Corpus to read (default: {DEFAULT_CORPUS_PATH})",
+    )
+    confidence.add_argument(
+        "--list",
+        type=Path,
+        default=DEFAULT_SUFFIX_LIST_PATH,
+        help=(
+            "the published Public Suffix List, which resolves the links the registration "
+            f"features are counted over (default: {DEFAULT_SUFFIX_LIST_PATH})"
+        ),
+    )
+    confidence.add_argument(
+        "--truth",
+        type=Path,
+        default=DEFAULT_TRUTH_PATH,
+        help=(
+            "the Planted Campaign membership the training labels come from, which is the "
+            f"reason this figure is not real-world performance (default: {DEFAULT_TRUTH_PATH})"
+        ),
+    )
+    confidence.add_argument(
+        "--scores",
+        type=Path,
+        default=DEFAULT_SCORES_PATH,
+        help=(
+            "the published Policy Scores, read for the baseline the model is measured "
+            f"against and for nothing else (default: {DEFAULT_SCORES_PATH})"
+        ),
+    )
+    confidence.add_argument(
+        "--confidences",
+        type=Path,
+        default=DEFAULT_CONFIDENCES_PATH,
+        help=f"where to write the Confidence of every post (default: {DEFAULT_CONFIDENCES_PATH})",
+    )
+    confidence.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_CONFIDENCE_REPORT_PATH,
+        help=f"where to write the report (default: {DEFAULT_CONFIDENCE_REPORT_PATH})",
+    )
     return parser
 
 
@@ -1422,4 +1514,65 @@ def _content_embeddings(
     print(render_embeddings_table(embedded))
     print(f"record         {embeddings_path}")
     print(f"vectors        in the table {table}")
+    return 0
+
+
+def _confidence(
+    *,
+    corpus_path: Path,
+    list_path: Path,
+    truth_path: Path,
+    scores_path: Path,
+    confidences_path: Path,
+    report_path: Path,
+) -> int:
+    """Fit the model, write the probabilities, and report how they measure up.
+
+    The record is written and then read back before the run reports success, for the same
+    reason `content-embeddings` does it: a file this project publishes and cannot read is a file
+    nothing will ever hold to its bytes, and the vocabulary check in `read_confidences` is the
+    only thing standing between a Policy Score field and a file nobody examines (ADR-0003,
+    ADR-0008).
+    """
+    _refuse_shared_paths(
+        {
+            "the Corpus": corpus_path,
+            "the Confidences": confidences_path,
+            "the report": report_path,
+        }
+    )
+    _require_present(
+        {
+            "the Corpus": corpus_path,
+            "the Public Suffix List": list_path,
+            "the Planted Campaign membership": truth_path,
+            "the Policy Scores": scores_path,
+        },
+        "Run `rfi generate-corpus`, then `rfi fetch-suffix-list`, then `rfi policy-score` "
+        "first; this command measures what those published.",
+    )
+
+    try:
+        measured = measure_confidences(
+            Sources(
+                corpus=corpus_path,
+                suffix_list=list_path,
+                truth=truth_path,
+                scores=scores_path,
+            )
+        )
+        write_confidences(confidences_path, measured.rows)
+        published = read_confidences(confidences_path)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+    if published != measured.rows:
+        raise SystemExit(
+            f"{confidences_path.as_posix()} does not read back as the {len(published)} "
+            "Confidences this run fitted, so it is not published"
+        )
+    _write_text(report_path, render_confidence_report(measured))
+
+    print(render_confidence_table(measured))
+    print(f"confidences    {confidences_path}")
+    print(f"report         {report_path}")
     return 0
