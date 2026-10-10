@@ -20,20 +20,23 @@ Registrable Domain of every link, then the Contact Points every post names, then
 the Campaign Candidates those registrations and Contact Points produce, with
 known-shared infrastructure filtered out as published data and with temporal
 proximity and content similarity reported beside every candidate as corroboration
-that can deprioritise one and never create one, then the Policy Score those
+that can deprioritise one and never create one, then the cohesion system that
+combines those with agreement on Scam Category and filters the baseline down —
+with both numbers published side by side, because publishing either alone makes
+it a claim rather than a measurement — then the Policy Score those
 same links and posts add up to, with the arithmetic printed beside it, then the Content
 Embeddings every post is stored with under a similarity index. And the
 measurement: how many of the two Planted Campaigns that grouping recovered, as X of N,
 joined by a command that runs after it rather than inside it, with the method's recall
-bound stated as a count beside it. The Review Queue those scores are ordered into, at a
+bound stated as a count beside it and the campaigns the cohesion system would not have
+proposed named with the corroborations that removed them. The Review Queue those scores are ordered into, at a
 stated depth. The false-grouping rate beside that recovery figure, and the Review
 Queue's precision at several depths, are measured by the same evaluator.
 And the Confidence: one probability per Content Item, fitted here over seven counts read
 off the post, measured out of fold against the base rate and the Policy Score, and
 displayed nowhere.
-The cohesion system and the graph report are not built yet. Their tickets are
-numbered #26 and #28 in the tracker; confidence calibration is #27; this README is
-updated as they land.
+The graph report is not built yet; its ticket is #28 in the tracker; confidence
+calibration is #27; this README is updated as they land.
 
 ## Running it
 
@@ -67,7 +70,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | `rfi campaign-candidates`, which reads them from the Corpus rather than from here, and a reader |
-| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, the shared registrations and Contact Points that join them, the temporal proximity of each, and the content similarity of every post in it. | `rfi campaign-recovery` and `rfi review-queue`, both of which check the figures row by row without acting on them |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, the shared registrations and Contact Points that join them, the temporal proximity of each, the content similarity of every post in it, and the Cohesion Score that combines the three. | `rfi campaign-recovery` and `rfi review-queue`, both of which check the figures row by row without acting on them |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, and the recovery report beside it |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
@@ -317,7 +320,7 @@ uv run rfi campaign-candidates   # reads the Corpus, the two lists, and the vect
 
 | File | Holds |
 | --- | --- |
-| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, each shared registration with the accounts and posts that reach it, each shared Contact Point with the accounts that published it and every spelling the Corpus wrote it in, the temporal proximity of each of those, and the content similarity of every post in the candidate against a stated threshold. |
+| `data/campaigns/campaign-candidates.jsonl` | One line per candidate: its accounts, its posts, its first-seen date, each shared registration with the accounts and posts that reach it, each shared Contact Point with the accounts that published it and every spelling the Corpus wrote it in, the temporal proximity of each of those, the content similarity of every post in the candidate against a stated threshold, and the Scam Category tally the cohesion score is counted from. The rows are the direct-adjacency baseline: the cohesion system filters them and does not replace them. |
 
 **The second edge is what makes a desk that pays for a domain per post visible.** Its
 registrations move every time the advert is posted and nothing joins the accounts that
@@ -401,6 +404,56 @@ whose four staggered paraphrases of one offer read as *different words* to a mod
 reads words and not meaning — 0.59 at the nearest — so the clock corroborates it and the
 vectors do not, and it is still proposed and still recovered. `cc-03` is beta, same verdict.
 `cc-04` is the desk, which neither signal corroborates.
+
+**The two tiers ship as a pair, and neither is published as the result** (ADR-0009,
+ADR-0028). The baseline is what direct adjacency found — the union-find, with the
+known-shared registrations withheld, and nothing else. The cohesion system is what it
+retains of that once the three corroborations have each had their say, and the
+difference between the two is the whole of what corroboration bought:
+
+```
+  baseline      4 candidates over 12 accounts, by direct adjacency alone
+  cohesion      3 of 4 candidates and 9 of 12 accounts retained by the cohesion system, 1 filtered
+```
+
+The score is how many of three hold — temporal proximity, content similarity, and
+agreement on Scam Category — and a candidate is retained on two of them. It is a
+count of named verdicts rather than a weighted number, because a weighted total is a
+second account of the facts with the weights hidden inside it. Every candidate says
+which corroborations held and which went against it:
+
+```
+cc-03  2 accounts, 3 posts, first seen 2026-05-30T09:02:00Z
+  justified by  registrations and Contact Points
+  timing        2 of 2 pieces of evidence within the 24-hour window; nearest pair 29m apart
+  similarity    0 of 3 posts within the 0.50 cosine-distance threshold; nearest pair 0.54 apart
+  cohesion      retained on 2 of 3: temporal proximity, category agreement; against: content similarity
+  categories    agreeing on Work and Payroll, from 3 of 3 posts placed: Work and Payroll 3
+```
+
+**Category agreement is the third corroboration, and it is what rescues the two
+staggered-paraphrase Planted Campaigns.** Their posts are paraphrases of one
+another, so a model that reads words and not meaning cannot corroborate either of
+them; every post of both is placed in Work and Payroll, so the accounts behind
+them are visibly making the same pitch, and each is retained on the clock and the
+categories together. Without it they would sit on one corroboration each and both
+`cc-02` and `cc-03` would be filtered, which would cost the project the one
+campaign it recovers whole. It is read over the candidate's own posts rather than
+over the registration, and by the same strict-majority rule ADR-0021 gives a
+Registrable Domain — a strict majority of the postings a list placed, out of the two at
+least that have to be placed before any of them counts. `Other` is never agreed
+on, because a post no list matched makes no claim at all.
+
+The one candidate removed here is `cc-04`, the desk behind the obfuscated handles:
+seven posts over three weeks, and one of the three corroborations holds. It is
+named below the table with the evidence that removed it, and it is still in the
+file with its own evidence under it — removing a candidate is a decision, and a
+decision a reader cannot see is the same as a defect nobody noticed:
+
+```
+filtered by cohesion  1 of 4 candidates removed: fewer than 2 of the 3 corroborations under it hold
+  cc-04  3 accounts, 7 posts  filtered on 1 of 3: category agreement; against: temporal proximity, content similarity
+```
 
 The other half of the finding is inside `cc-02`, where the two edges disagree: the
 registration puts three accounts inside two and a quarter hours and the Telegram handle
@@ -539,6 +592,28 @@ beside the figure rather than leaving the reader to find it.
 ```
   bound              0 of 2 Planted Campaigns have nothing inside them reaching a candidate
 ```
+
+**Both tiers are reported beside the figure, and a campaign the system would not
+have proposed is named.** The recovery figure above belongs to the
+direct-adjacency baseline; the line under it is what the cohesion system retains
+of it, and the difference between the two is what corroboration bought. Each line
+also carries how many Planted Campaigns each tier recovers, so the two are
+figures over the same question rather than one number repeated under two names:
+
+```
+  baseline      4 candidates over 12 accounts by direct adjacency, recovering 1 of 2 Planted Campaigns
+  cohesion      3 of 4 candidates and 9 of 12 accounts retained by the cohesion system, 1 filtered,
+                recovering 1 of 2 Planted Campaigns
+```
+
+A Planted Campaign is lost only when *every* candidate naming one of its accounts
+was removed; one removed candidate beside one retained is not a lost campaign, and
+the run says which of the two happened. Here the two figures agree: the one
+candidate the cohesion system removes is the desk behind the obfuscated handles,
+which is no Planted Campaign at all, so the cost of removing it is nil. That is
+the measurement ADR-0009 asks for rather than an assertion, and the report holds
+the same pair as a table under `## The cohesion system and the baseline it
+filters`.
 
 A campaign with nothing inside its own membership that reaches a Campaign Candidate is
 beyond this method by construction: no candidate can hold two of its accounts without
@@ -1232,7 +1307,7 @@ network for nothing at all.
   observable text and links), 0008 (the Corpus file carries no membership), 0009
   (direct adjacency is the baseline — this command is that baseline, with
   known-shared infrastructure filtered as published data rather than as a list in the
-  query, and its corroborated tier is ticket #26), 0010 (CAFC figures are
+  query, and its corroborated tier is 0028), 0010 (CAFC figures are
   computed from the cache), 0011 (the Nuisance Structure has a file of its own, and
   so does the shared-infrastructure list), 0012 (registrable domains are resolved
   from the published Public Suffix List), 0013 (the Scam Categories are CAFC's
@@ -1265,4 +1340,6 @@ network for nothing at all.
   rather than the index the project would have liked it to choose), and 0027 (the Confidence is a
   classifier over seven per-post counts, fitted on Planted Campaign membership, measured out of
   fold against a constant and the Policy Score, stored in a file of its own, and displayed
-  nowhere).
+  nowhere), and 0028 (the cohesion system retains a Campaign Candidate on two of its
+  three corroborations and removes the rest, the direct-adjacency baseline ships beside
+  it unchanged, and neither tier is published as the result on its own).
