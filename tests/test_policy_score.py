@@ -20,6 +20,7 @@ that it fires, and would still break the claim the score is published under.
 
 from __future__ import annotations
 
+import ast
 import json
 import sys
 import urllib.request
@@ -34,6 +35,7 @@ from reddit_fraud_intelligence.cli import DEFAULT_CORPUS_PATH, DEFAULT_SEED, mai
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 
 REPO_ROOT = Path(__file__).parent.parent
+SOURCE = REPO_ROOT / "src" / "reddit_fraud_intelligence"
 COMMITTED_WEIGHTS = REPO_ROOT / "data" / "signals" / "weights.jsonl"
 COMMITTED_SCORES = REPO_ROOT / "data" / "signals" / "policy-scores.jsonl"
 COMMITTED_CORPUS = REPO_ROOT / "data" / "corpus" / "corpus.jsonl"
@@ -1753,6 +1755,115 @@ def test_renaming_every_account_leaves_every_score_unchanged(tmp_path: Path) -> 
         }
 
     assert scored(after) == scored(before)
+
+
+def test_the_policy_score_is_computed_from_signal_weights_and_no_model_output(
+    tmp_path: Path,
+) -> None:
+    """No probability, and nothing that could carry one, is an input to the score.
+
+    The acceptance criterion behind calibration: a measurement of the Confidence is published
+    beside the Policy Score in `docs/confidence.md`, and the two numbers are measured
+    separately. The Policy Score is the sum of the published weights of the Signals a post
+    carries (ADR-0014), and it stays that sum whatever the classifier does — a score moved
+    toward what a model says would be the fused figure ADR-0003 rules out, arrived at by
+    quietly correcting one number to match the other.
+
+    Checked two ways, because either alone is a habit rather than a fact. Structurally: no
+    module this one reaches imports the Confidence or the Content Embedding, so there is no
+    path by which a probability could arrive. And by running it: a Confidence file full of
+    probabilities sitting beside the Corpus, which the run never opens, produces byte for byte
+    the scores it produces without one there.
+    """
+    reachable = _reachable(SOURCE / "signals.py")
+    forbidden = sorted(
+        name for name in reachable if name.removesuffix(".py") in {"confidence", "embeddings"}
+    )
+    assert forbidden == [], f"a module the Policy Score is computed through imports {forbidden}"
+
+    published = tmp_path / "confidences.jsonl"
+    published.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "account": item.account,
+                    "confidence": 0.999999 if index % 2 else 0.000001,
+                    "model": "logistic-content-link-features-v1",
+                    "post_id": item.post_id,
+                    "recipe": "b" * 64,
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+            for index, item in enumerate(read_corpus(COMMITTED_CORPUS))
+        ),
+        encoding="utf-8",
+    )
+
+    opened = _Opened()
+    sys.addaudithook(opened)
+    opened.recording = True
+    try:
+        with_confidences, _ = run(tmp_path / "beside")
+    finally:
+        opened.recording = False
+
+    without, _ = run(tmp_path / "without")
+
+    assert with_confidences.read_bytes() == without.read_bytes() == (
+        COMMITTED_SCORES.read_bytes()
+    ), "a file of probabilities beside the Corpus changed the scores"
+    assert not [path for path in opened.record() if Path(path).name == published.name], (
+        "the run opened the Confidence file at all"
+    )
+
+    # And what the score is made of, worked out from the weight file rather than from the
+    # run: every post's points are the weights of the Signals its row carries, and nothing
+    # else goes into the number (ADR-0014). This is the "computed only from Signal weights"
+    # half of the claim, and the run above is what holds it there.
+    weights = published_weights()
+    for row in rows(with_confidences):
+        carried = {signal for signal in signals(row)}
+        assert sum(weights[signal] for signal in carried) == count(row, "points"), (
+            f"{text(row, 'post_id')} is not the sum of the published weights it carries"
+        )
+
+
+def _reachable(start: Path) -> set[str]:
+    """Every module of this package `start` reaches, walking imports rather than trusting one.
+
+    A single hop is not enough to say what the Policy Score is computed through: `signals.py`
+    imports its readers, and a reader of this package could import the Confidence on its own
+    account. Missing a second hop would make the check pass over exactly the edit it exists to
+    catch, so the walk continues until it stops finding anything new, and it counts only this
+    package's own modules — a standard-library import cannot reach a probability.
+    """
+    seen: set[str] = set()
+    queue = [start]
+    while queue:
+        path = queue.pop()
+        if path.name in seen or not path.exists():
+            continue
+        seen.add(path.name)
+        queue.extend(
+            SOURCE / f"{name.rpartition('.')[2]}.py"
+            for name in _imported(path)
+            if (SOURCE / f"{name.rpartition('.')[2]}.py").exists()
+        )
+    return seen
+
+
+def _imported(path: Path) -> set[str]:
+    """The modules a file imports, by module name, over both spellings of an import."""
+    imported: set[str] = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8-sig"))):
+        if isinstance(node, ast.ImportFrom):
+            imported.add(node.module or "")
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+    return imported
 
 
 def test_a_corpus_row_carrying_account_history_is_refused_rather_than_ignored(

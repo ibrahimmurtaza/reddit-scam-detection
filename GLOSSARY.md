@@ -162,13 +162,23 @@ not a probability.
 _Avoid_: Risk score, score, scam score
 
 **Confidence**:
-The model's probability that an item exhibits the pattern it was trained to find,
-which in this build is Planted Campaign membership. Held internally, stored in a
-file of its own, and never displayed as a severity number, never rendered as a
-figure out of a hundred, and never summed with the Policy Score. Measured out of
-fold against the base rate and the Policy Score's own ordering before it is
-published; whether the probability is calibrated is a separate measurement of its own.
+The model's probability that an item exhibits the pattern it was trained to
+find, which in this build is Planted Campaign membership. Held internally,
+stored in a file of its own, and never displayed as a severity number, never
+rendered as a figure out of a hundred, and never summed with the Policy Score.
+Measured out of fold against the base rate and the Policy Score's own ordering
+before it is published, and measured separately for whether it is calibrated.
 _Avoid_: Risk score, score, probability of being a scam, likelihood
+
+**Calibration**:
+How far a set of published probabilities is from the frequencies they claim: of
+the posts a model calls 0.20, about a fifth are the ones it is talking about.
+Measured over a stated binning, as a gap per bin and as the expected calibration
+error — the bins' gaps weighted by the posts in them — with the worst single bin
+published beside the average, because an average is how one bad bin hides. A
+question of its own about the Confidence and not an input to the Policy Score,
+which is a 0-100 sum of weights and has no frequency to be measured against.
+_Avoid_: Accuracy, reliability score, goodness of fit
 
 **Feature**:
 One measured input the Confidence is fitted over. Read from a single Content

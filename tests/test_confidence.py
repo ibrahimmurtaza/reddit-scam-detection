@@ -17,6 +17,12 @@ The load-bearing claims, in the order the ticket states them:
 * The model is a published choice over published features, and its performance is measured
   out of fold rather than assumed, beside a constant baseline and the Policy Score's own
   ordering of the same posts.
+* Calibration is measured over a stated binning and reported as a finding in its own voice —
+  which on this Corpus is a finding that the Confidence is not calibrated, and the report
+  says so rather than printing a number that hides it.
+* The calibration figure is the Confidence's own question. It is computed from the
+  probabilities and the labels and nothing else, it is not evidence about whether the Policy
+  Score is sensible, and neither number is corrected toward the other.
 * The training labels come from the Planted Campaign membership, the generator wrote them,
   and the report says so in a section of its own.
 
@@ -46,9 +52,13 @@ from reddit_fraud_intelligence.cli import (
     main,
 )
 from reddit_fraud_intelligence.confidence import (
+    CALIBRATION_BINS,
+    CALIBRATION_METHOD,
+    CALIBRATION_TOLERANCE,
     FEATURES,
     MODEL_NAME,
     _PRECISION,
+    Bin,
     Confidence,
     ConfidenceFacts,
     Confidences,
@@ -57,6 +67,7 @@ from reddit_fraud_intelligence.confidence import (
     Fit,
     Sources,
     _is_better,
+    calibration,
     scored,
     confident,
     confidence_features,
@@ -555,6 +566,320 @@ def test_the_three_published_metrics_are_the_ones_a_reader_can_recompute() -> No
     assert measured_out.mean_confidence == pytest.approx(
         sum(row.confidence for row in published) / len(published)
     )
+
+
+# --- the calibration --------------------------------------------------------------
+
+
+def test_the_calibration_is_measured_over_a_binning_the_output_states() -> None:
+    """Ten equal-width bins over the open unit interval, and a post in the bin it falls in.
+
+    The binning is named in the output rather than left in the code, because a calibration
+    figure with no binning beside it is a claim: the same probabilities binned five ways
+    give five different figures, and a reader cannot redo one they were not told how to
+    build. Every bin's own numbers are the arithmetic of the posts inside it, so the whole
+    table is checkable against the published file.
+    """
+    figure = calibration([(0.05, False), (0.09, False), (0.11, True), (0.95, True)])
+
+    assert len(figure.bins) == CALIBRATION_BINS == 10
+    assert CALIBRATION_METHOD.startswith("10 equal-width bins over the open unit interval")
+
+    edges = [(one.lower, one.upper) for one in figure.bins]
+    assert edges[0] == (0.0, 0.1) and edges[-1] == (0.9, 1.0)
+    assert all(high - low == pytest.approx(0.1) for low, high in edges)
+
+    low, high = figure.bins[0], figure.bins[9]
+    assert (low.posts, low.planted) == (2, 0)
+    assert low.mean_confidence == pytest.approx(0.07)
+    assert low.observed == 0.0
+    assert low.gap == pytest.approx(0.07)
+    assert (high.posts, high.planted) == (1, 1)
+    assert high.observed == 1.0
+
+    middle = figure.bins[1]
+    assert (middle.posts, middle.planted, middle.observed) == (1, 1, 1.0), (
+        "a post at 0.11 belongs to the second bin and nothing else decides that"
+    )
+    assert figure.posts == 4
+    assert figure.positives == 2
+    assert figure.base_rate == pytest.approx(0.5)
+    assert figure.mean_confidence == pytest.approx((0.05 + 0.09 + 0.11 + 0.95) / 4)
+
+
+def test_the_calibration_error_is_each_bins_gap_weighted_by_the_posts_in_it() -> None:
+    """The expected calibration error, done again here over the same rows.
+
+    A mean over bins weighted by nothing would be a mean over ten numbers, three of which
+    are gaps between one post and its own prediction. The weighting is the whole of the
+    definition, so the test reproduces it rather than quoting the module's figure.
+    """
+    rows_in = [(0.02, False), (0.08, False), (0.12, True), (0.42, False), (0.94, True)]
+    figure = calibration(rows_in)
+    weight = sum(
+        one.posts / len(rows_in) * abs((one.mean_confidence or 0.0) - (one.observed or 0.0))
+        for one in figure.bins
+    )
+
+    assert figure.error == pytest.approx(weight)
+    assert figure.error > 0, "these rows are not calibrated, so the error cannot be zero"
+
+
+def test_an_empty_bin_publishes_its_count_and_no_figures() -> None:
+    """No posts means no mean and no observed share, and a dash rather than a zero.
+
+    A bin holding nothing has no average in it, and `0.0000` beside an empty bin is a
+    number a reader would add into the column above it. The count is still printed, because
+    where the posts are not is half of what the table is for.
+    """
+    figure = calibration([(0.05, False), (0.95, True)])
+    empty = figure.bins[4]
+
+    assert empty.posts == 0
+    assert empty.planted == 0
+    assert empty.mean_confidence is None
+    assert empty.observed is None
+    assert empty.gap is None, (
+        "an empty bin has no gap to print and contributes none to the error; a 0.0000 there "
+        "is a number a reader would add into the column above it"
+    )
+    assert sum(one.posts for one in figure.bins) == 2
+
+
+def test_a_calibrated_predictor_is_reported_as_calibrated() -> None:
+    """The verdict is computed from the figures, so it can say the opposite of what it says here.
+
+    Four posts the model calls 0.25 and one of which is planted: the bin says 0.25 and the
+    bin is 0.25 planted, so the gap is nothing and the figure is calibrated. A verdict
+    written into the template rather than computed would say the sentence this page's own
+    finding contradicts.
+    """
+    figure = calibration(
+        [(0.25, True), (0.25, False), (0.25, False), (0.25, False)]
+    )
+
+    assert figure.error == pytest.approx(0.0)
+    assert figure.calibrated is True
+    assert "is calibrated" in figure.verdict
+    assert "is not calibrated" not in figure.verdict
+
+
+def test_a_miscalibrated_predictor_is_reported_as_miscalibrated_in_plain_words() -> None:
+    """The finding is stated, with the figures that make it and the bin that carries it.
+
+    The acceptance criterion the report exists for: a miscalibrated Confidence has to be
+    reported as one rather than as a number a reader has to interpret. So the verdict names
+    the verdict, the error against the bar it fails, the direction of the average, and the
+    single worst bin — because an average gap is the form in which a bad bin hides.
+    """
+    figure = calibration([(0.81, False), (0.95, True), (0.04, False), (0.07, True)])
+
+    assert figure.calibrated is False
+    assert figure.error > CALIBRATION_TOLERANCE
+    assert "is not calibrated" in figure.verdict
+    assert f"{figure.error:.4f}" in figure.verdict, "the figure that failed is in the sentence"
+    assert f"{CALIBRATION_TOLERANCE:.4f}" in figure.verdict, "so is the bar it failed"
+    assert "under" in figure.verdict or "over" in figure.verdict, (
+        "a reader is told which way the model is wrong, not only that it is"
+    )
+    assert figure.worst.span in figure.verdict, (
+        "the bin that carries the error is named: an average gap can hide it"
+    )
+
+
+def test_the_worst_bin_is_published_beside_the_average_gap() -> None:
+    """Two figures, because one of them is an average and averages hide.
+
+    A model whose bins are mostly right and whose top bin is badly wrong has a small
+    expected calibration error and a large worst-bin gap, and publishing only the first
+    would be publishing the half that reads well. Both are properties of the object rather
+    than of one renderer, so both views print them.
+    """
+    rows_in = [(0.25, True), (0.25, False), (0.25, False), (0.25, False), (0.90, False)]
+    figure = calibration(rows_in)
+
+    assert figure.worst.posts == 1
+    assert figure.worst.gap == pytest.approx(0.90)
+    assert figure.error == pytest.approx(0.18), (
+        "the weighting is what makes the average a fifth of the worst bin rather than the "
+        "worst bin itself; a different number means the error is not the weighted mean it "
+        "claims to be"
+    )
+    assert figure.error < (figure.worst.gap or 0.0), (
+        "the weighting is what makes the average smaller than the worst bin; if these are "
+        "equal, the error is not the weighted mean it claims to be"
+    )
+    assert figure.worst.gap == max(one.gap or 0.0 for one in figure.bins), (
+        "the worst bin is the one furthest from its own prediction and not merely one of them"
+    )
+
+
+def test_the_confidence_is_not_calibrated_on_this_corpus_and_the_run_says_so() -> None:
+    """The finding on the committed Corpus, recomputed from the published file.
+
+    Every figure here is arithmetic over `data/model/confidences.jsonl` and the membership,
+    so a reader can do it with the two files and a pencil. What the test adds is the
+    finding: the model's probabilities run from 1.3e-05 to 0.9981 with a mean of 0.1425
+    against a base rate of 0.2059, and its worst bin is a negative it is 0.81 sure about.
+    That is a miscalibrated model and the run has to say so in those words.
+    """
+    measured_out = measured()
+    figure = measured_out.evaluation.calibration
+    published = published_rows()
+    items = items_by_id()
+    labelled = label_set(read_truth(COMMITTED_TRUTH))
+    truth = [(row.confidence, label_for(labelled, items[row.post_id])) for row in published]
+
+    expected = []
+    for index in range(CALIBRATION_BINS):
+        inside = [
+            (value, label)
+            for value, label in truth
+            if index / CALIBRATION_BINS <= value < (index + 1) / CALIBRATION_BINS
+        ]
+        expected.append(
+            len(inside) / len(truth)
+            * abs(
+                sum(value for value, _ in inside) / len(inside)
+                - sum(1 for _, label in inside if label) / len(inside)
+            )
+            if inside
+            else 0.0
+        )
+
+    assert figure.error == pytest.approx(sum(expected))
+    assert figure.mean_confidence == pytest.approx(
+        sum(row.confidence for row in published) / len(published)
+    )
+    assert figure.base_rate == pytest.approx(7 / 34)
+    assert figure.calibrated is False, (
+        "on this Corpus the Confidence is miscalibrated; if that has changed, the finding the "
+        "page leads with is stale and the prose around it needs rewriting rather than the test"
+    )
+    assert "is not calibrated" in figure.verdict
+
+
+def test_the_calibration_is_computed_without_reading_the_policy_scores(tmp_path: Path) -> None:
+    """Scrambling every Policy Score moves the baseline and moves no calibration figure.
+
+    Calibration is the Confidence's own question and the Policy Score is not an input to it,
+    so a run whose scores are in reverse order has to publish the same bins, the same error
+    and the same verdict while the baseline that scores feed moves. It is the same
+    separation the features are held to, asked again at the measurement: a calibration
+    figure fitted to the Policy Score would be the Policy Score's shape reported as a
+    probability, arrived at by the other door.
+    """
+    scrambled = tmp_path / "policy-scores.jsonl"
+    scrambled.write_text(
+        "".join(
+            json.dumps(
+                {
+                    **row,
+                    "score": 100 - int(number(row, "score")),
+                    "points": 130 - int(number(row, "points")),
+                },
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+            for row in reversed(rows(COMMITTED_SCORES))
+        ),
+        encoding="utf-8",
+    )
+
+    honest = measured()
+    flipped = confident(replace(_committed(), scores=scrambled))
+
+    assert flipped.evaluation.calibration == honest.evaluation.calibration
+    assert [figure.auc for figure in flipped.evaluation.baselines] != [
+        figure.auc for figure in honest.evaluation.baselines
+    ], "the Policy Score baseline must be the one thing the scores file moves"
+
+
+def test_both_views_print_the_calibration_over_the_binning_they_state() -> None:
+    """The figure, the table it is computed from, and the method — in both views.
+
+    A metric printed without the binning behind it is a claim, and a metric printed in one
+    view and not the other is two commands' worth of drift. So both the console output and
+    the report carry the method, the expected calibration error, the worst bin, and the
+    verdict sentence, and each bin's row of the table beside them.
+    """
+    one_run = measured()
+    figure = one_run.evaluation.calibration
+
+    for view, where in ((render_table(one_run), "the console output"), (render_report(one_run), "the report")):
+        joined = " ".join(view.split())
+        assert "expected calibration error" in joined, where
+        assert f"{figure.error:.4f}" in joined, where
+        assert f"{figure.worst.gap:.4f}" in joined, where
+        assert "equal-width bins" in joined, f"{where} does not state the binning"
+        assert one_run.evaluation.calibration.verdict in joined, where
+        for one in figure.bins:
+            if one.posts:
+                assert one.span in joined, f"{where} prints no row for the bin {one.span}"
+
+
+def test_both_views_keep_calibration_apart_from_the_policy_score() -> None:
+    """The two questions are named as two, and neither is evidence for the other.
+
+    The Policy Score is not a probability and has no calibration to measure: whether it is
+    *sensible* is an editorial judgement about published weights, which this figure says
+    nothing about. So a miscalibrated Confidence is not an argument against the Policy Score,
+    and the Policy Score's AUC of 1.0000 is not an argument that the Confidence is calibrated.
+    A report that put the two side by side without saying this is how a miscalibrated model
+    gets read as vindicated by a good severity.
+    """
+    one_run = measured()
+
+    for view, where in ((render_table(one_run), "the console output"), (render_report(one_run), "the report")):
+        joined = " ".join(view.split())
+        assert "not a probability" in joined, f"{where} does not say what the Policy Score is"
+        assert "calibration" in joined and "Policy Score" in joined, where
+        assert "says nothing about" in joined, (
+            f"{where} puts the two figures together without saying that neither is evidence "
+            "for the other"
+        )
+
+
+def test_both_views_say_the_confidence_is_still_displayed_nowhere() -> None:
+    """The calibration figure changes where the number is displayed: it does not.
+
+    A miscalibrated model is an argument for not showing it, never for showing it, and the
+    one thing this measurement must not do is move the number onto a screen. So both views
+    say the Confidence stays in its own file whatever the figure above it says — and the
+    structural half of the claim, the import graph that keeps `rfi review-queue` from
+    reaching this module, is unchanged by anything here.
+    """
+    one_run = measured()
+
+    for view, where in ((render_table(one_run), "the console output"), (render_report(one_run), "the report")):
+        joined = " ".join(view.split())
+        assert "displayed nowhere" in joined, where
+        assert "whatever the" in joined, (
+            f"{where} does not tie the calibration figure to where the number is displayed"
+        )
+    assert render_queue(build_queue(COMMITTED_SCORES, COMMITTED_CANDIDATES, 50)).lower().count(
+        "calibrat"
+    ) == 0, "the Review Queue is not where a finding about the Confidence belongs"
+
+
+def test_every_published_probability_falls_in_exactly_one_bin() -> None:
+    """Every published Confidence is inside the open unit interval rather than on an edge.
+
+    A probability that landed on a bin boundary would be in two bins or none, and a bin the
+    run and the page counted differently would be a figure neither could be checked on. The
+    published file is read here rather than the run's own rows, so what is checked is the
+    file the report's table is derived from.
+    """
+    published = published_rows()
+    figure = calibration([(row.confidence, False) for row in published])
+    edges = [one.lower for one in figure.bins] + [figure.bins[-1].upper]
+
+    assert all(0.0 < row.confidence < 1.0 for row in published)
+    assert all(edges[index] < edges[index + 1] for index in range(len(edges) - 1))
+    assert sum(one.posts for one in figure.bins) == len(published)
+    assert edges[0] == 0.0 and edges[-1] == 1.0
 
 
 # --- the three refusals --------------------------------------------------------------

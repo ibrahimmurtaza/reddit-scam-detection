@@ -149,6 +149,74 @@ Policy Score — and this is what it cost: seven counts over a post's own text a
 substitute for six published weights over a registration's reach, and a reader who believed
 otherwise would have been told something the numbers do not support.
 
+## Calibration
+
+A second measurement of the same held-out rows, and on this Corpus a finding in its own right
+rather than a footnote on the AUC above.
+
+**The Confidence is not calibrated on this Corpus: its expected calibration error over 10 equal-width
+bins is 0.1957, against a bar of 0.0500 this project publishes; its mean Confidence is 0.1425
+against a base rate of 0.2059, so the model understates the probability by 0.0634 on average; and
+its worst single bin is off by 0.8098, at [0.8, 0.9), where it says 0.8098 and 0 of the 1 post in it
+is planted.**
+
+The binning is 10 equal-width bins over the open unit interval, a post falling in the bin its own
+probability puts it in; a bin's gap is its mean Confidence away from the share of its posts that are
+planted, and the expected calibration error is each bin's gap weighted by the share of all the posts
+sitting in that bin.
+
+Every figure below is arithmetic over the published probabilities in `data/model/confidences.jsonl` and the
+membership in `data/corpus/truth.jsonl`, so a reader can redo each one with those two files and a
+pencil.
+
+| Bin | Posts | Planted | Predicted | Observed | Gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `[0.0, 0.1)` | 24 | 4 | 0.0173 | 0.1667 | 0.1494 |
+| `[0.1, 0.2)` | 3 | 0 | 0.1219 | 0.0000 | 0.1219 |
+| `[0.2, 0.3)` | 1 | 0 | 0.2067 | 0.0000 | 0.2067 |
+| `[0.3, 0.4)` | 0 | 0 | - | - | - |
+| `[0.4, 0.5)` | 2 | 0 | 0.4334 | 0.0000 | 0.4334 |
+| `[0.5, 0.6)` | 1 | 1 | 0.5140 | 1.0000 | 0.4860 |
+| `[0.6, 0.7)` | 1 | 1 | 0.6692 | 1.0000 | 0.3308 |
+| `[0.7, 0.8)` | 0 | 0 | - | - | - |
+| `[0.8, 0.9)` | 1 | 0 | 0.8098 | 0.0000 | 0.8098 |
+| `[0.9, 1.0)` | 1 | 1 | 0.9981 | 1.0000 | 0.0019 |
+
+**Expected calibration error 0.1957**, against a bar of 0.0500 this project publishes: each bin's
+gap weighted by the share of the posts sitting in it. It is an average, and an average is how a bad
+bin hides - which is why the worst bin is published beside it rather than folded into it.
+
+**Worst single bin 0.8098**, at `[0.8, 0.9)`, where the model says 0.8098 and 0 of the 1 post in it
+is planted. One post is all that bin is: it is published because it is the number a reader would
+otherwise have to find in the table, not because one post settles anything.
+
+**Mean Confidence 0.1425 against a base rate of 0.2059**: the model understates the probability by
+0.0634 on average, which is the whole of the finding in one subtraction. That one needs no binning
+at all - it is the published column added up and divided by 34 - and a model can be right about it
+while its bins are wrong.
+
+**The bins are thin, and the counts say so rather than leaving it to be inferred.** 34 posts over 10
+bins leaves 2 bins holding nothing and 5 bins holding a single post, and a bin holding one post has
+an observed share of 0 or 1 whatever the model said about it. The weighting is what stops that from
+carrying the figure: a bin of one contributes at most 0.0294 of the error, since no gap exceeds 1.
+
+This is the Confidence's own question, and the Policy Score has none: a 0-100 sum of published
+weights is not a probability, so there is no calibration to measure and no frequency to measure it
+against. Whether that score is sensible is an editorial judgement about the weights, and this figure
+says nothing about it. A miscalibrated Confidence is no argument against the Policy Score, and the
+Policy Score's own ordering is no argument that the Confidence is calibrated: neither is evidence
+for the other (ADR-0003).
+
+Nothing here is corrected toward anything. The Policy Scores are the published weights' own
+arithmetic and this command writes none of them, and the probabilities are the model's own output
+with no mapping fitted over them - 7 positives cannot support a recalibration, and a mapped
+probability would no longer be a number this project could recompute from the coefficients this
+output prints. A miscalibrated Confidence is a reason to say so on this page, not a reason to adjust
+either number.
+
+And none of it changes where the number is displayed: the Confidence stays in its own file and is
+displayed nowhere, whatever the figure above says (ADR-0003).
+
 ## What these figures are not
 
 **These figures measure recovery of planted structure, and they are not a rate of fraud found in
@@ -167,9 +235,11 @@ useless to this project — and it is a much narrower one than the question a re
 **7 positives is a very small positive class.** A figure over that many can
 separate a model that generalises from one that has been lucky far less often than a reader would
 assume, and no confidence interval is printed because over seven positives there is nothing to put
-one round. **Calibration is not measured here at all** (ADR-0003): the numbers on this page are
-discrimination and two proper scoring rules, and a proper scoring rule rewards a calibrated
-probability without telling the reader whether it is one. That is ticket #27.
+one round. **Calibration is measured above, and it is a separate question from any of the ones
+above it** (ADR-0003): discrimination asks whether the Confidence orders the planted posts above the
+rest, and a proper scoring rule rewards a calibrated probability without ever telling the reader
+whether it is one. Over this many positives a reliability table is thin, and the section above says
+which of its bins are.
 
 ## Why it is displayed nowhere
 
@@ -177,6 +247,11 @@ The Policy Score is what a reviewer sees: published weights, an additive sum, ar
 beside every figure. The Confidence is a different quantity answering a different question, and
 ADR-0003's decision is that the two are stored in separate files, never summed, and never shown as
 one number.
+
+The calibration figure above does not change that, and is no reason to change it: a miscalibrated
+model is an argument for keeping a number off every screen, never for putting one on it. Both
+views say so where the figure is printed, and the enforcement below does not depend on the figure
+at all.
 
 Enforcement is structural rather than promised. `cli.py` is the only module in this repository
 that imports the Confidence, so `rfi review-queue` and `rfi campaign-candidates` cannot reach it
