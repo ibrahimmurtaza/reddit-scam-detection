@@ -35,8 +35,9 @@ Queue's precision at several depths, are measured by the same evaluator.
 And the Confidence: one probability per Content Item, fitted here over seven counts read
 off the post, measured out of fold against the base rate and the Policy Score, measured
 again for whether it is calibrated, and displayed nowhere.
-The graph report is not built yet; its ticket is #28 in the tracker; this README is
-updated as it lands.
+And the graph report: one self-contained HTML file per Campaign Candidate, drawn from the
+candidates file with inline SVG, which opens in a browser with no network, no build step
+and no `node_modules`.
 
 ## Running it
 
@@ -70,7 +71,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/public-suffix/public_suffix_list.dat` | The Public Suffix List, as published. | `rfi post-domains`, `rfi campaign-candidates` |
 | `data/domains/post-domains.jsonl` | The Registrable Domain of every link, per post. | a reader, and the report |
 | `data/contacts/post-contacts.jsonl` | Every Contact Point a post names, per post, with the spelling and the field it was found in. | `rfi campaign-candidates`, which reads them from the Corpus rather than from here, and a reader |
-| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, the shared registrations and Contact Points that join them, the temporal proximity of each, the content similarity of every post in it, and the Cohesion Score that combines the three. | `rfi campaign-recovery` and `rfi review-queue`, both of which check the figures row by row without acting on them |
+| `data/campaigns/campaign-candidates.jsonl` | Every Campaign Candidate: its accounts, its posts, the shared registrations and Contact Points that join them, the temporal proximity of each, the content similarity of every post in it, and the Cohesion Score that combines the three. | `rfi campaign-recovery`, `rfi review-queue` and `rfi campaign-graph`, all three of which check the figures row by row without acting on them |
 | `data/evaluation/recovery.jsonl` | One line per Planted Campaign: its membership, its outcome, and every candidate that reached it, with the accounts held, missing, and unexpected. | a reader, and the recovery report beside it |
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
@@ -907,6 +908,73 @@ because publishing the input measures anything. The words that would name such a
 appear nowhere in the queue's own prose, which `tests/test_review_queue.py` asserts rather
 than trusting this paragraph.
 
+## The graph report
+
+**One self-contained HTML file per Campaign Candidate, drawn from the candidates file
+alone.** Accounts, posts, registrations and Contact Points are drawn as four kinds of
+shape and the four ways one reaches another as four kinds of line, and the styles, the
+graphics and the data are all inline: the file opens from a thumb drive with no network,
+no build step and no `node_modules`. That is the point of it — the Next.js dashboard was
+deferred precisely because the toolchain costs disk this project does not have, and a
+report a reader needs a package manager for is a report most readers will never open.
+
+```
+uv run rfi campaign-graph   # reads the candidates, writes one page per candidate
+```
+
+| Argument | Reads or writes | Default |
+| --- | --- | --- |
+| `--candidates` | `data/campaigns/campaign-candidates.jsonl`, which `rfi campaign-candidates` wrote | that path |
+| `--graphs` | `docs/campaign-graph/`, where the pages are written | that path |
+
+It opens one file and no other: the Corpus is not re-read, the grouping is not re-run,
+the vector table is not queried, and the Planted Campaign membership is not looked at.
+That is ADR-0018's boundary used for a third purpose, and here it matters most, because a
+picture is the output a reader is most likely to believe on sight — a rendering is
+evidence-shaped in a way a table is not. It costs one thing: a post is a node carrying
+its identifier rather than its text, and the identifier is the key into the Corpus file.
+
+**One page per candidate, and every candidate.** A graph of the largest candidate would
+be a demonstration; this is the output somebody argues with, so a reader who thinks
+`cc-04` is a false grouping opens `cc-04`. Each page is named for its candidate, the
+console lists one line per candidate with the page beside it, and a page this run did not
+write is removed from the directory — otherwise a candidate that left the candidates
+file would take its picture with it into the repository, describing a grouping nothing
+produces.
+
+**Four shapes and four lines, and the line that joins accounts is the strongest thing on
+the page.** An account is a circle, a post a square, a registration a hexagon and a
+Contact Point a rounded bar — shapes rather than colours, because a colour is the first
+thing to go on a page printed in black and white. An account writes a post, a post links
+a registration, a post publishes a Contact Point, and an account shares a registration or
+a Contact Point with another account: four lines, four strokes, and the fourth is drawn
+bowed underneath the other three because it is why the candidate exists (ADR-0005) and
+because it is the one that crosses the whole picture — a straight line from an account to
+a registration would pass behind every post between them and read as though it joined
+one. `cc-04`, which rests on a Contact Point and no registration at all, is drawn with
+no registration on it, which is the shape ADR-0023 says is a claim of its own.
+
+**The page carries the verdict, because a picture without one shows a grouping.** The
+cohesion system retains a candidate on two of its three named corroborations
+(ADR-0028), and four accounts joined to a handle look the same whether the system kept
+them or removed them. So each page names which corroborations held, what each of them
+read, and whether the system kept that candidate or removed it, with the evidence table
+underneath: which accounts reach each shared thing, which posts, how close in time, and
+whether that falls inside the window the row was counted against. Hovering a node says
+what the row already says beside it — an account's share of the candidate's posts, a
+post's nearest twin by another account and how far apart they are, the accounts behind a
+registration.
+
+The Confidence is displayed nowhere here either (ADR-0027, ADR-0003), and no figure about
+fraud is named anywhere on a page (ADR-0004). Each page carries the path of the candidates
+file and its SHA-256, so a reader can tell which bytes the picture came from with one
+command rather than taking the picture's word for it. The four pages in
+`docs/campaign-graph/` are committed and held to their bytes by
+`tests/test_graph_report.py`, which parses the drawing rather than eyeballing it, reads
+each page for the outward reach a self-contained file cannot have, and watches the files
+a run opens to hold the command to the one input it is allowed. The reasoning is in
+ADR-0030.
+
 ## The Content Embeddings
 
 **This is the substrate ticket.** One sentence embedding per post, in a `vector` column in
@@ -1370,9 +1438,13 @@ network for nothing at all.
   rather than the index the project would have liked it to choose), and 0027 (the Confidence is a
   classifier over seven per-post counts, fitted on Planted Campaign membership, measured out of
   fold against a constant and the Policy Score, stored in a file of its own, and displayed
-  nowhere), and 0028 (the cohesion system retains a Campaign Candidate on two of its
-  three corroborations and removes the rest, the direct-adjacency baseline ships beside
-  it unchanged, and neither tier is published as the result on its own), and 0029
+  nowhere), and 0028 (the cohesion system retains a Campaign Candidate on two of its three
+  corroborations and removes the rest, the direct-adjacency baseline ships beside it
+  unchanged, and neither tier is published as the result on its own), and 0029
   (calibration is measured over a stated binning beside the discrimination figures rather
   than folded into them, the worst bin is published beside the average gap, neither number
-  is corrected toward the other, and the Confidence stays displayed nowhere).
+  is corrected toward the other, and the Confidence stays displayed nowhere), and 0030 (a
+  Campaign Candidate is drawn as one self-contained page per candidate, from the published
+  candidates file and from nothing else, with ADR-0005's four relationships drawn as four
+  distinguishable lines and the cohesion verdict carried beside the picture rather than left
+  off it).

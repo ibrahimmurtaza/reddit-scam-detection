@@ -24,6 +24,12 @@ docs/corpus-composition.md text eol=lf
 docs/campaign-recovery.md text eol=lf
 docs/confidence.md text eol=lf
 
+# The same argument for the graph pages, which `tests/test_graph_report.py` holds to
+# what a run over the committed candidates file writes. Scoped to the directory for the
+# same reason as the reports above: a candidate that appears or disappears moves one
+# file, and the rule has to cover whatever is there rather than a list of names.
+docs/campaign-graph/*.html text eol=lf
+
 # The Public Suffix List is published text, and it is committed rather than
 # generated, so that `rg '^co\.uk$' data/public-suffix/` answers what a reviewer
 # wants to know. It is held to LF for the same reason as the reports above, and

@@ -7,9 +7,10 @@ registrable-domain report, the generated Contact Points and their report, the
 generated Scam Category projection, the generated Corpus composition and its
 report, the generated
 Campaign Candidates, the generated Policy Scores, the generated Content
-Embedding records, the generated Confidences, and the generated recovery
-report and its join — the project's own prose
-wherever it lands. Not scanned: this
+Embedding records, the generated Confidences, the generated recovery
+report and its join, and the generated graph pages — the project's own prose
+wherever it lands, and the graph pages are the place a reader is most likely to
+read it. Not scanned: this
 directory, which is where the phrases live; `data/cafc/base_rates.jsonl`, which holds
 CAFC's category names and not ours; `data/public-suffix/public_suffix_list.dat`,
 which is publicsuffix.org's text and not the project's.
@@ -89,6 +90,7 @@ def scanned() -> list[Path]:
         REPO_ROOT / "docs" / "corpus-composition.md",
         REPO_ROOT / "docs" / "post-domains.md",
         REPO_ROOT / "docs" / "scam-categories.md",
+        *sorted((REPO_ROOT / "docs" / "campaign-graph").glob("*.html")),
     ]
 
 

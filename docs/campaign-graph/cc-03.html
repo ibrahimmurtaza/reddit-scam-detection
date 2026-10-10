@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaign Candidate cc-03: A proposed grouping of 2 accounts, not a finding about who is behind them</title>
+<style>* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 2.5rem 1.5rem 4rem;
+  background: #f8fafc;
+  color: #111827;
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+}
+main { max-width: 64rem; margin: 0 auto; }
+h1 { font-size: 1.7rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+h2 { font-size: 1.05rem; margin: 0 0 .6rem; }
+section { margin: 0 0 1.75rem; }
+.claim {
+  margin: 0 0 1.5rem;
+  padding: .65rem .9rem;
+  background: #fef3c7;
+  border-left: 4px solid #b45309;
+  font-weight: 600;
+}
+code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-size: .9em;
+  background: #eef2f7;
+  padding: 0 .25em;
+  border-radius: .2em;
+  word-break: break-all;
+}
+dl.facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: .3rem 1.25rem;
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.25rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: .5rem;
+}
+dl.facts dt { font-weight: 600; color: #334155; }
+dl.facts dd {
+  margin: 0;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .9rem;
+  word-break: break-word;
+}
+figure {
+  margin: 0 0 1.75rem;
+  padding: 1.25rem;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: .5rem;
+  overflow-x: auto;
+}
+.graph { display: block; max-width: 100%; height: auto; }
+.node-label {
+  font: 13px ui-monospace, "Cascadia Mono", Consolas, monospace;
+  fill: #0f172a;
+  text-anchor: middle;
+}
+.edge { fill: none; }
+.edge-wrote { stroke: #64748b; stroke-width: 1.5; stroke-dasharray: 1 3; stroke-linecap: round; }
+.edge-links { stroke: #b45309; stroke-width: 2; stroke-dasharray: 7 4; }
+.edge-publishes { stroke: #6d28d9; stroke-width: 2; stroke-dasharray: 2 4; }
+.edge-shares { stroke: #be123c; stroke-width: 3.5; }
+.shape-account { fill: #0f766e; }
+.shape-post { fill: #1d4ed8; }
+.shape-registration { fill: #b45309; }
+.shape-contact-point { fill: #6d28d9; }
+figcaption { margin-top: 1rem; }
+.key-list { display: flex; flex-wrap: wrap; gap: .5rem 1.75rem; margin: 0; padding: 0; list-style: none; font-size: .92rem; }
+.key-list li { display: flex; align-items: center; gap: .5rem; }
+.key-shape, .key-edge { flex: none; }
+table { width: 100%; border-collapse: collapse; background: #fff; font-size: .93rem; }
+th, td { text-align: left; padding: .45rem .6rem; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+th {
+  background: #f1f5f9;
+  color: #334155;
+  font-size: .78rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+td:first-child { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; word-break: break-word; }
+p.verdict { margin: 0 0 .75rem; font-weight: 600; }
+.verdict-holds { color: #166534; font-weight: 600; }
+.verdict-against { color: #9a3412; font-weight: 600; }
+footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid #cbd5e1; font-size: .93rem; color: #334155; }
+footer p { margin: .6rem 0; }
+</style>
+</head>
+<body>
+<main>
+<h1>Campaign Candidate cc-03</h1>
+<p class="claim">A proposed grouping of 2 accounts, not a finding about who is behind them</p>
+<dl class="facts">
+<dt>accounts</dt><dd>syn_clearpathwork_3184, syn_northwindhire_7736</dd>
+<dt>posts</dt><dd>syn_p_0005, syn_p_0006, syn_p_0007</dd>
+<dt>first seen</dt><dd>2026-05-30T09:02:00Z</dd>
+<dt>joined on</dt><dd>registrations and Contact Points: signal-harbor.example, syn_northwindhire</dd>
+<dt>corroborating</dt><dd>temporal proximity, category agreement; against it: content similarity</dd>
+<dt>cohesion</dt><dd>retained on 2 of 3: temporal proximity, category agreement; against: content similarity</dd>
+<dt>candidates file</dt><dd>data/campaigns/campaign-candidates.jsonl</dd>
+<dt>candidates sha256</dt><dd>fe1aaced9bf353127e637e1ca1a7075db8546585e4270cf2e1440ee9780abee8</dd>
+<dt>this candidate</dt><dd>cc-03 of 4 in that file</dd>
+</dl>
+<figure>
+<svg class="graph" viewBox="0 0 721 340" width="721" height="340" role="img" aria-labelledby="graph-title graph-desc">
+<title id="graph-title">cc-03: 2 accounts, 3 posts, 1 shared registration and 1 shared Contact Point</title>
+<desc id="graph-desc">Accounts in the left column, the posts they wrote in the middle, and the registrations and Contact Points they share in the right. Every account is drawn joined to each thing it reaches, which is the whole reason those accounts are in one candidate.</desc>
+<g class="edges">
+<path class="edge edge-wrote" data-edge="wrote" data-from="syn_northwindhire_7736" data-to="syn_p_0005" d="M 133.8 216 L 364.6 84"/>
+<path class="edge edge-wrote" data-edge="wrote" data-from="syn_clearpathwork_3184" data-to="syn_p_0006" d="M 133.8 128 L 364.6 172"/>
+<path class="edge edge-wrote" data-edge="wrote" data-from="syn_northwindhire_7736" data-to="syn_p_0007" d="M 133.8 216 L 364.6 260"/>
+<path class="edge edge-links" data-edge="links" data-from="syn_p_0005" data-to="signal-harbor.example" d="M 364.6 84 L 591.5 128"/>
+<path class="edge edge-links" data-edge="links" data-from="syn_p_0006" data-to="signal-harbor.example" d="M 364.6 172 L 591.5 128"/>
+<path class="edge edge-links" data-edge="links" data-from="syn_p_0007" data-to="signal-harbor.example" d="M 364.6 260 L 591.5 128"/>
+<path class="edge edge-publishes" data-edge="publishes" data-from="syn_p_0005" data-to="syn_northwindhire" d="M 364.6 84 L 591.5 216"/>
+<path class="edge edge-publishes" data-edge="publishes" data-from="syn_p_0006" data-to="syn_northwindhire" d="M 364.6 172 L 591.5 216"/>
+<path class="edge edge-shares" data-edge="shares" data-from="syn_clearpathwork_3184" data-to="signal-harbor.example" d="M 133.8 128 Q 362.6 180 591.5 128"/>
+<path class="edge edge-shares" data-edge="shares" data-from="syn_northwindhire_7736" data-to="signal-harbor.example" d="M 133.8 216 Q 362.6 288 591.5 128"/>
+<path class="edge edge-shares" data-edge="shares" data-from="syn_clearpathwork_3184" data-to="syn_northwindhire" d="M 133.8 128 Q 362.6 268 591.5 216"/>
+<path class="edge edge-shares" data-edge="shares" data-from="syn_northwindhire_7736" data-to="syn_northwindhire" d="M 133.8 216 Q 362.6 288 591.5 216"/>
+</g>
+<g class="nodes">
+<g class="node" data-kind="account" data-name="syn_clearpathwork_3184">
+<title>syn_clearpathwork_3184: wrote 1 of this candidate's 3 posts</title>
+<circle class="shape shape-account" cx="133.8" cy="128" r="22"/>
+<text class="node-label" x="133.8" y="168">syn_clearpathwork_3184</text>
+</g>
+<g class="node" data-kind="account" data-name="syn_northwindhire_7736">
+<title>syn_northwindhire_7736: wrote 2 of this candidate's 3 posts</title>
+<circle class="shape shape-account" cx="133.8" cy="216" r="22"/>
+<text class="node-label" x="133.8" y="256">syn_northwindhire_7736</text>
+</g>
+<g class="node" data-kind="post" data-name="syn_p_0005">
+<title>syn_p_0005: written by syn_northwindhire_7736; nearest post by another account: syn_p_0006 by syn_clearpathwork_3184, 0.54 apart</title>
+<rect class="shape shape-post" x="344.6" y="64" width="40" height="40"/>
+<text class="node-label" x="364.6" y="124">syn_p_0005</text>
+</g>
+<g class="node" data-kind="post" data-name="syn_p_0006">
+<title>syn_p_0006: written by syn_clearpathwork_3184; nearest post by another account: syn_p_0005 by syn_northwindhire_7736, 0.54 apart</title>
+<rect class="shape shape-post" x="344.6" y="152" width="40" height="40"/>
+<text class="node-label" x="364.6" y="212">syn_p_0006</text>
+</g>
+<g class="node" data-kind="post" data-name="syn_p_0007">
+<title>syn_p_0007: written by syn_northwindhire_7736; nearest post by another account: syn_p_0006 by syn_clearpathwork_3184, 0.68 apart</title>
+<rect class="shape shape-post" x="344.6" y="240" width="40" height="40"/>
+<text class="node-label" x="364.6" y="300">syn_p_0007</text>
+</g>
+<g class="node" data-kind="registration" data-name="signal-harbor.example">
+<title>signal-harbor.example: a Registrable Domain reached by 2 accounts of this candidate, from 3 posts</title>
+<polygon class="shape shape-registration" points="567.5,128 579.5,108 603.5,108 615.5,128 603.5,148 579.5,148"/>
+<text class="node-label" x="591.5" y="168">signal-harbor.example</text>
+</g>
+<g class="node" data-kind="Contact Point" data-name="syn_northwindhire">
+<title>syn_northwindhire: a telegram Contact Point reached by 2 accounts of this candidate; the Corpus writes it as @syn_northwindhire</title>
+<rect class="shape shape-contact-point" x="569.5" y="200" width="44" height="32" rx="16"/>
+<text class="node-label" x="591.5" y="256">syn_northwindhire</text>
+</g>
+</g>
+</svg>
+<figcaption>
+<h2>What the shapes and the lines are</h2>
+<ul class="key-list">
+<li><svg class="key-shape" viewBox="0 0 48 48" width="26" height="26" aria-hidden="true"><circle class="shape shape-account" cx="24" cy="24" r="22"/></svg>an account in the candidate</li>
+<li><svg class="key-shape" viewBox="0 0 48 48" width="26" height="26" aria-hidden="true"><rect class="shape shape-post" x="4" y="4" width="40" height="40"/></svg>a post that account wrote</li>
+<li><svg class="key-shape" viewBox="0 0 48 48" width="26" height="26" aria-hidden="true"><polygon class="shape shape-registration" points="0,24 12,4 36,4 48,24 36,44 12,44"/></svg>a Registrable Domain two accounts reach</li>
+<li><svg class="key-shape" viewBox="0 0 48 48" width="26" height="26" aria-hidden="true"><rect class="shape shape-contact-point" x="2" y="8" width="44" height="32" rx="16"/></svg>a Contact Point two accounts publish</li>
+<li><svg class="key-edge" viewBox="0 0 48 16" width="26" height="16" aria-hidden="true"><path class="edge edge-wrote" d="M 2 8 L 46 8"/></svg>wrote — the post's own account</li>
+<li><svg class="key-edge" viewBox="0 0 48 16" width="26" height="16" aria-hidden="true"><path class="edge edge-links" d="M 2 8 L 46 8"/></svg>links — the post's own link, resolved to a registration</li>
+<li><svg class="key-edge" viewBox="0 0 48 16" width="26" height="16" aria-hidden="true"><path class="edge edge-publishes" d="M 2 8 L 46 8"/></svg>publishes — the post names the Contact Point</li>
+<li><svg class="key-edge" viewBox="0 0 48 16" width="26" height="16" aria-hidden="true"><path class="edge edge-shares" d="M 2 8 L 46 8"/></svg>shares — why the accounts are in one candidate at all (ADR-0005), drawn bowed underneath the other three</li>
+</ul>
+</figcaption>
+</figure>
+<section>
+<h2>The shared things this grouping rests on</h2>
+<table>
+<thead><tr><th>Shared thing</th><th>Accounts reaching it</th><th>Posts reaching it</th><th>Closest gap</th><th>Span</th><th>Within the 24 hours window</th></tr></thead>
+<tbody>
+<tr><td>signal-harbor.example</td><td>syn_clearpathwork_3184, syn_northwindhire_7736</td><td>syn_p_0005, syn_p_0006, syn_p_0007</td><td>29m</td><td>2h</td><td><span class="verdict-holds">yes</span></td></tr>
+<tr><td>syn_northwindhire (Contact Point)</td><td>syn_clearpathwork_3184, syn_northwindhire_7736</td><td>syn_p_0005, syn_p_0006</td><td>29m</td><td>2h</td><td><span class="verdict-holds">yes</span></td></tr>
+</tbody>
+</table>
+</section>
+<section>
+<h2>The corroborations</h2>
+<p class="verdict">Cohesion: retained on 2 of 3: temporal proximity, category agreement; against: content similarity</p>
+<table>
+<thead><tr><th>Corroboration</th><th>Verdict</th><th>What it read</th></tr></thead>
+<tbody>
+<tr><td>temporal proximity</td><td><span class="verdict-holds">holds</span></td><td>2 of 2 pieces of evidence hold their accounts inside a 24 hours window; the closest pair of accounts is 29m apart</td></tr>
+<tr><td>content similarity</td><td><span class="verdict-against">against</span></td><td>0 of 3 posts have a near-twin by another account within 0.5; the closest pair is 0.54 apart</td></tr>
+<tr><td>category agreement</td><td><span class="verdict-holds">holds</span></td><td>Work and Payroll (Work and Payroll 3)</td></tr>
+</tbody>
+</table>
+</section>
+<footer>
+<p>A Campaign Candidate is a hypothesis produced by cohesion analysis, never a statement about what the accounts behind it are doing (ADR-0005). Nothing on this page says the content is anything in particular, and no person has reviewed any of it.</p>
+<p>A shared Contact Point is the weaker of the two readings ADR-0005 permits: a registration is somebody's property and this project checks it against a published Public Suffix List, while a Contact Point is read out of a post by a rule whose measured recall against a Labelled Set is published by <code>rfi contact-points</code>. A candidate resting on a Contact Point alone rests on that reading alone, and the table above says so.</p>
+<p>Every node and every edge on the picture is a row of <code>data/campaigns/campaign-candidates.jsonl</code>, whose SHA-256 is above. The Corpus is not re-read, the grouping is not re-run, the Planted Campaign membership is not opened (ADR-0008), and the Confidence is displayed nowhere (ADR-0003, ADR-0027). The only thing this command decided for itself was where to draw each thing, and it decides it the same way for the same row every time.</p>
+<p>The other 3 candidates in that file are pages of their own beside this one.</p>
+</footer>
+</main>
+</body>
+</html>

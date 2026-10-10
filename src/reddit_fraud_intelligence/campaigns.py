@@ -2413,7 +2413,8 @@ def _figures(
         ),
         ("unreachable", f"{_count(facts.accounts_unreachable, 'account')} reaching nothing this grouping can use"),
         ("filtered", _withheld_counts(shared)),
-        ("window", f"{_window(temporal.window_seconds)} between two accounts on one piece of evidence"),
+        ("window", f"{window_of(temporal.window_seconds)} between two accounts on one "
+                   "piece of evidence"),
         ("timing", _timing_counts(temporal)),
         ("threshold", f"cosine distance at most {_distance(similarity.threshold)} between two posts in one candidate"),
         ("similarity", _similarity_counts(similarity)),
@@ -2603,7 +2604,7 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
         f"  justified by  {_justified(candidate)}",
         f"  timing        {_candidate_timing(candidate)}",
         f"  similarity    {_candidate_similarity(candidate)}",
-        f"  cohesion      {_cohesion_of(candidate)}",
+        f"  cohesion      {cohesion_verdict(candidate)}",
         f"  categories    {_candidate_categories(candidate)}",
     ]
     if candidate.shared_domains:
@@ -2658,7 +2659,7 @@ def _candidate_timing(candidate: CampaignCandidate) -> str:
     return (
         f"{timing.corroborated} of {timing.pieces} {pieces} of evidence within the "
         f"{_window_of(timing.window_seconds)} window; nearest pair "
-        f"{_gap(timing.closest_seconds)} apart"
+        f"{gap_of(timing.closest_seconds)} apart"
     )
 
 
@@ -2680,7 +2681,7 @@ def _candidate_similarity(candidate: CampaignCandidate) -> str:
     )
 
 
-def _cohesion_of(candidate: CampaignCandidate) -> str:
+def cohesion_verdict(candidate: CampaignCandidate) -> str:
     """One candidate's cohesion score, the names behind it, and the verdict it carries.
 
     Both halves, in this order, and never one without the other: the count says how much
@@ -2690,8 +2691,9 @@ def _cohesion_of(candidate: CampaignCandidate) -> str:
     ones, because this is the one verdict in the module that removes a candidate from
     what the system proposes and a reader has to be able to see that it happened.
 
-    The same line is printed under the candidate above and in the section below the table,
-    so the two cannot be read as two accounts of one decision.
+    The same line is printed under the candidate above, in the section below the table,
+    and on the graph page `rfi campaign-graph` draws, so no reader meets two accounts of
+    one decision in two vocabularies.
     """
     cohesion = candidate.cohesion
     verdict = "retained" if cohesion.retained else "filtered"
@@ -2733,11 +2735,15 @@ def names_of(named: Sequence[str]) -> str:
     return ", ".join(named) if named else "none"
 
 
-def _window(window_seconds: int) -> str:
+def window_of(window_seconds: int) -> str:
     """The window, in hours, because that is the unit `--window-hours` sets it in.
 
     Rounded down rather than to the nearest hour, so a figure that says "24 hours" is
     the window the run was given and not an hour either side of it.
+
+    Public rather than private because `rfi campaign-graph` prints the same window on
+    each page it draws, and two spellings of one published figure is how a reader ends up
+    with two of them.
     """
     return f"{window_seconds // 3_600} hour" + ("" if window_seconds == 3_600 else "s")
 
@@ -2752,7 +2758,7 @@ def _window_of(window_seconds: int) -> str:
     return f"{window_seconds // 3_600}-hour"
 
 
-def _gap(seconds: int) -> str:
+def gap_of(seconds: int) -> str:
     """One gap, in the largest unit that still says something about it.
 
     `30m`, `4h30m`, `14d9h16m`, and a seconds part only where the gap is not a whole
@@ -2761,6 +2767,10 @@ def _gap(seconds: int) -> str:
     no figure that is quietly rounded. A gap of nothing reads as the minute it was rather
     than as a zero, because two accounts posted in the same minute is the case the ticket
     is about and `0m apart` reads like a missing figure.
+
+    Public rather than private for the reason `window_of` is: the graph pages print these
+    gaps beside their evidence, and a page that rounded them where the table did not would
+    be showing the same figure in two spellings.
     """
     if seconds == 0:
         return "the same minute"
@@ -2801,7 +2811,7 @@ def _uncorroborated(temporal: Corroboration) -> str:
     table above with its span beside its evidence and named again here with the nearest
     pair of accounts, which is the one figure a reader needs to disagree with the window.
     """
-    window = _window(temporal.window_seconds)
+    window = window_of(temporal.window_seconds)
     if not temporal.deprioritised:
         return (
             "uncorroborated  none: every candidate above holds its evidence's accounts "
@@ -2816,7 +2826,7 @@ def _uncorroborated(temporal: Corroboration) -> str:
         lines.append(
             f"  {candidate.candidate_id}  {len(candidate.accounts)} accounts, "
             f"{len(candidate.posts)} posts, nearest pair of accounts "
-            f"{_gap(candidate.timing.closest_seconds)} apart"
+            f"{gap_of(candidate.timing.closest_seconds)} apart"
         )
     return "\n".join(lines)
 
@@ -2865,7 +2875,7 @@ def _within(piece: EvidenceTiming, window_seconds: int) -> str:
     on it does not say which window.
     """
     return (
-        f"{_gap(piece.span_seconds)} across, "
+        f"{gap_of(piece.span_seconds)} across, "
         + ("inside" if piece.within(window_seconds) else "outside")
         + f" the {_window_of(window_seconds)} window"
     )
@@ -2899,7 +2909,7 @@ def _filtered_by_cohesion(cohesion: CohesionSystem) -> str:
     for candidate in cohesion.filtered:
         lines.append(
             f"  {candidate.candidate_id}  {_count(len(candidate.accounts), 'account')}, "
-            f"{_count(len(candidate.posts), 'post')}  {_cohesion_of(candidate)}"
+            f"{_count(len(candidate.posts), 'post')}  {cohesion_verdict(candidate)}"
         )
     return "\n".join(lines)
 

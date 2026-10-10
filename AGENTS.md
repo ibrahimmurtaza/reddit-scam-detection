@@ -50,5 +50,12 @@ Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/ag
   writes `data/model/confidences.jsonl` and `docs/confidence.md`. Nothing reads that file
   back, because the Confidence is displayed nowhere (ADR-0027, ADR-0003).
   `tests/test_confidence.py` and `tests/test_confidence_store.py` are both offline.
+- `rfi campaign-graph` needs neither a database nor the network: it reads
+  `data/campaigns/campaign-candidates.jsonl` and writes one self-contained HTML page per
+  candidate into `docs/campaign-graph/`, named for the candidate. Those four pages are
+  committed and held to their bytes by `tests/test_graph_report.py`, which regenerates them
+  from the repository root (the pages name their source path, so the comparison has to be
+  made over the default relative path). A page the run did not write is removed.
+  `tests/test_vocabulary.py` scans the pages as well as the source.
 - `psycopg` is the one runtime dependency. The embedding model and the Confidence model are
   this project's own and need no wheel, which is deliberate (ADR-0024, ADR-0027).
