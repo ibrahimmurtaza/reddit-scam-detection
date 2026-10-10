@@ -922,7 +922,10 @@ def _parser() -> argparse.ArgumentParser:
 
     confidence = commands.add_parser(
         "confidence",
-        help="produce a Confidence per post, and measure it out of fold against two baselines",
+        help=(
+            "produce a Confidence per post, measure it out of fold against two baselines, and "
+            "measure whether it is calibrated"
+        ),
         description=(
             "The project's one model, and the one number it publishes that no reviewer ever "
             "sees. Every Content Item gets a probability: that it exhibits the pattern the "
@@ -937,8 +940,13 @@ def _parser() -> argparse.ArgumentParser:
             "own ordering - are measured over the same rows. The training labels are the "
             "Planted Campaign membership the generator wrote, so what this measures is "
             "recovery of planted structure and not a rate of fraud found in the world; the "
-            "report says so in a section of its own. Calibration is ticket #27 and is not "
-            "measured here. Reads no network and needs no database."
+            "report says so in a section of its own. Calibration is measured too, over a "
+            "binning the output names: how far a published probability is from the frequency "
+            "it claims, which is a different question from whether the Confidence orders the "
+            "posts at all, and neither question is evidence for the other. Nothing is corrected "
+            "toward anything - the Policy Scores stay the published weights' own arithmetic, no "
+            "recalibration is fitted over the model's output, and the Confidence stays displayed "
+            "nowhere whatever the figure says. Reads no network and needs no database."
         ),
     )
     confidence.add_argument(

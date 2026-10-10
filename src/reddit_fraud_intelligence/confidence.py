@@ -51,10 +51,24 @@ input: this module does not import `signals` at all, so it cannot become a featu
 accident. A model given the Policy Score as an input would return the Policy Score with a
 decimal point on it, which is the fused score ADR-0003 rules out arrived at by another door.
 
-**Calibration is not measured here.** ADR-0003 already says it is a separate concern with its
-own evaluation, and that is ticket #27. What this command publishes is discrimination — how
-well the Confidence orders posts, by AUC, and two proper scoring rules — and the report says
-which of the two it is reporting, so that neither number is read as the other.
+**Calibration is measured here, over a binning the output names, and reported as a finding.**
+The AUC above asks whether the Confidence *orders* the planted posts above the rest; the
+reliability table asks whether the probability attached to a post is the frequency it claims,
+and those are different questions — a model can order every post correctly and be badly
+calibrated, because ordering says nothing about the number attached to each order. So the
+calibration is a section of its own with its own verdict, computed rather than written into the
+page, and it reports the expected calibration error *and* the worst single bin: an average is
+the form in which one bad bin hides behind several good ones. On this Corpus it is a
+miscalibrated model, and the report says so in the first line of the section rather than
+printing a number that hides it.
+
+**Calibration is the Confidence's own question and the Policy Score has none.** A 0-100 sum of
+published weights is not a probability, so there is nothing to calibrate it against, and whether
+that score is *sensible* is an editorial judgement about the weights that this figure says
+nothing about. Neither number is corrected toward the other: this module writes no Policy Score,
+and it applies no recalibration to the model's own output, because seven positives cannot support
+a fitted mapping and a mapped probability would no longer be the model's. What the calibration
+figure changes is nothing at all about where the number is displayed (ADR-0003).
 """
 
 from __future__ import annotations
@@ -126,6 +140,36 @@ _PENALTY = 0.01
 # sixth — and far above the disagreement between two interpreters. `tests/test_confidence.py`
 # checks that margin rather than taking it on trust.
 _PRECISION = 12
+
+# The binning the calibration is measured over, and the sentence the output publishes it
+# with. Both are named in the output rather than left in the code, because the same
+# probabilities binned five ways give five different figures and a reader cannot redo one
+# they were not told how to build.
+#
+# Equal width rather than equal count, for two reasons. Ten equal-width bins over the open
+# unit interval are whole numbers a reader can lay a ruler against, and the bin a post falls
+# in is decided by its own probability rather than by its rank among the other 33 — so
+# dropping one post cannot move every other post into a different bin, which is the same
+# reason the features are per-post (ADR-0007). The cost is real and is paid in the table
+# rather than hidden: 34 posts over ten bins leaves bins holding one post and bins holding
+# none, and every bin's count is printed beside its figures because the count is what says
+# how much of the table is evidence.
+CALIBRATION_BINS = 10
+
+CALIBRATION_METHOD = (
+    f"{CALIBRATION_BINS} equal-width bins over the open unit interval, a post falling in the "
+    "bin its own probability puts it in; a bin's gap is its mean Confidence away from the "
+    "share of its posts that are planted, and the expected calibration error is each bin's "
+    "gap weighted by the share of all the posts sitting in that bin"
+)
+
+# How far the expected calibration error may be before this project calls a Confidence
+# miscalibrated, in probability points. Five points is a figure rather than a feeling: a
+# model that says 0.20 on average over posts it is wrong about 20% of the time is making a
+# claim a reviewer could act on, and one that says 0.20 and is right 30% of the time has
+# lost that. It is published on the figure rather than held in a test, because the bar is
+# the part of the finding a reader disputes first.
+CALIBRATION_TOLERANCE = 0.05
 
 # A run of letters and digits, which is the corpus's own definition of a word rather than
 # whitespace's: `body_words` is a feature a reader will recount, and the two definitions
@@ -356,6 +400,153 @@ class Figure:
     detail: str
 
 
+def _within_bar(error: float, tolerance: float) -> bool:
+    """Whether an expected calibration error is within the bar, in one place.
+
+    The figure's own property and the verdict's own sentence both ask it, and a verdict that
+    judged the figures by a different comparison than the property beside it would let a run
+    report a calibrated model as miscalibrated, or the other way round.
+    """
+    return error <= tolerance
+
+
+def _worst(bins: Sequence[Bin]) -> Bin:
+    """The occupied bin furthest from its own prediction, and the first of a tie.
+
+    Ties broken by position rather than left to the sort, so two runs over the same rows
+    produce the same sentence and the report stays byte-stable.
+
+    `one.gap or 0.0` rather than `one.gap`: an occupied bin always has a gap, and a bin whose
+    gap is nothing is a gap of nothing, so the two readings agree — and the filter above has
+    already dropped the bins whose gap is `None`.
+    """
+    return max((one for one in bins if one.posts), key=lambda one: one.gap or 0.0)
+
+
+@dataclass(frozen=True, slots=True)
+class Bin:
+    """One bin of the reliability table: what it holds, and what it was worth.
+
+    `mean_confidence` and `observed` are `None` for a bin holding no post rather than zero,
+    and the distinction is the same one the Policy Score's row in the baseline table draws:
+    an empty bin has no average in it, and `0.0000` printed beside it is a number a reader
+    would add into the column above. `posts` and `planted` are counts and are always there,
+    because where the posts are *not* is half of what a reliability table is for.
+
+    `lower` is inclusive and `upper` is not, so a probability belongs to exactly one bin.
+    A Confidence is strictly inside the open unit interval — `Confidence.__post_init__`
+    refuses either bound — so no published probability can land on an edge and the last bin
+    needs no special case.
+    """
+
+    lower: float
+    upper: float
+    posts: int
+    planted: int
+    mean_confidence: float | None
+    observed: float | None
+
+    @property
+    def gap(self) -> float | None:
+        """How far this bin's average prediction is from the share of its posts that were planted.
+
+        `None` for a bin holding nothing, rather than zero: an empty bin has no gap because
+        it has no average and no observed share, and a `0.0000` printed in its row is a
+        number a reader would add into the column above it. The calibration error skips
+        those bins rather than counting them as perfect, which is what the same `None` buys.
+        """
+        if self.mean_confidence is None or self.observed is None:
+            return None
+        return abs(self.mean_confidence - self.observed)
+
+    @property
+    def span(self) -> str:
+        """The bin's edges as they are printed, in both views.
+
+        A property rather than a format string at each call site, because the bin the
+        verdict names and the bin the table prints have to be the same bin: two spellings of
+        one range is how a report ends up describing a bin it did not measure.
+        """
+        return f"[{self.lower:.1f}, {self.upper:.1f})"
+
+
+@dataclass(frozen=True, slots=True)
+class Calibration:
+    """How far the published probabilities are from the frequencies they claim.
+
+    A second measurement over the same held-out rows as the discrimination figures, and a
+    different question of them: `Evaluation` asks whether the Confidence *orders* the planted
+    posts above the rest, this asks whether a post it calls 0.20 really is planted 20% of
+    the time. The two can disagree — a model can order every post correctly and still be
+    badly calibrated, because ordering says nothing about the number attached to each order
+    — which is why neither is printed as a reading of the other.
+
+    `error` is the expected calibration error and `worst` is the single bin furthest from its
+    own prediction. Both are published because `error` is an average: an average is the form
+    in which one bad bin hides behind several good ones, and a miscalibrated model reported
+    only as its average is a miscalibrated model reported flatteringly.
+
+    `tolerance` travels on the figure rather than being read from the module at each render,
+    so the bar `calibrated` is judged against is the bar the output prints. `verdict` is a
+    property rather than a field, computed from every other one of them rather than written
+    into the page: a verdict that is prose in a template stops being true the moment the
+    numbers move and nothing notices, and a verdict built from the figure's own figures
+    cannot be compared against a bar the figure does not carry.
+    """
+
+    bins: tuple[Bin, ...]
+    posts: int
+    positives: int
+    mean_confidence: float
+    base_rate: float
+    error: float
+    tolerance: float
+
+    @property
+    def worst(self) -> Bin:
+        """The occupied bin furthest from its own prediction."""
+        return _worst(self.bins)
+
+    @property
+    def calibrated(self) -> bool:
+        """Whether the expected calibration error is within the bar this project publishes."""
+        return _within_bar(self.error, self.tolerance)
+
+    @property
+    def offset(self) -> float:
+        """How far the mean Confidence sits above the base rate, positive or negative.
+
+        The reading of the sign is in the verdict rather than here: a caller printing this
+        number has to know which way "up" is wrong, and `_drift` is the word for it.
+        """
+        return self.mean_confidence - self.base_rate
+
+    @property
+    def understates(self) -> bool:
+        """Whether the model says less than what happened, on average."""
+        return self.offset < 0.0
+
+    @property
+    def verdict(self) -> str:
+        """What the bins say when they are compared, in one sentence a reader has not to work out.
+
+        The same sentence both views print: the console under its figures, the report as the
+        heading of its section.
+        """
+        worst = self.worst
+        subject = "post in it is" if worst.posts == 1 else "posts in it are"
+        return (
+            f"The Confidence is {'calibrated' if self.calibrated else 'not calibrated'} on this "
+            f"Corpus: its expected calibration error over {CALIBRATION_BINS} equal-width bins is "
+            f"{self.error:.4f}, {'at or under' if self.calibrated else 'against'} a bar of "
+            f"{self.tolerance:.4f} this project publishes; its mean Confidence is "
+            f"{self.mean_confidence:.4f} against a base rate of {self.base_rate:.4f}, so "
+            f"{_drift(self.offset)}; and its worst single bin is off by {worst.gap:.4f}, at "
+            f"{worst.span}, where it says {worst.mean_confidence:.4f} and {worst.planted} of the "
+            f"{worst.posts} {subject} planted."
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Evaluation:
     """The model and the two baselines it is read against, over the same held-out rows.
@@ -369,6 +560,12 @@ class Evaluation:
     numbers in a table and hoping somebody subtracts them is how a table becomes an argument
     nobody made: this project's position throughout is that a figure beside no other figure is a
     claim, and the comparison is the figure.
+
+    `calibration` is a second measurement of the same rows rather than a fourth row of this
+    table, and it is carried separately for the reason ADR-0003 gives for keeping the two
+    numbers apart: a probability's ordering and a probability's calibration are different
+    questions, and putting them in one row beside one another is how a reader comes to read
+    one as the other's evidence.
     """
 
     model: Figure
@@ -378,6 +575,7 @@ class Evaluation:
     folds: int
     held_out: bool
     verdict: str
+    calibration: Calibration
 
 
 @dataclass(frozen=True, slots=True)
@@ -800,6 +998,91 @@ def _brier(scored: Sequence[tuple[float, bool]]) -> float:
     ) / len(scored)
 
 
+def calibration(scored: Sequence[tuple[float, bool]]) -> Calibration:
+    """How far the published probabilities are from the frequencies they claim.
+
+    The same held-out rows the discrimination figures are computed over, and a different
+    question of them: whether a post the model calls 0.20 really is planted 20% of the time.
+    Nothing here reads a Signal, a weight or a Policy Score, so the figure cannot become the
+    Policy Score's shape reported back as a probability — the Policy Score's ordering is a
+    baseline two columns away and nothing in this function can reach it (ADR-0003).
+
+    Three figures rather than one, because the one everybody publishes is the one that
+    hides. The **expected calibration error** is the average gap between what the model said
+    and what happened, weighted by how many posts each bin holds; the **worst single bin** is
+    the one furthest from its own prediction, and a model whose bins are mostly right and
+    whose top bin is badly wrong has a small average and a large worst. And the **mean
+    Confidence against the base rate** is calibration in the large, which needs no binning at
+    all: a model that says 0.14 on average over posts that are 0.21 planted is understating
+    the rate whatever the bins say, and this is the one figure a reader can add up the
+    published column and check.
+
+    Empty rows are refused rather than reported as zero, for the reason `train` refuses an
+    empty fit: a calibration figure over nothing is a figure of nothing, and 0.0000 is the
+    number a reader would compare against a model's.
+    """
+    if not scored:
+        raise ValueError(
+            "no rows to calibrate: a calibration figure over an empty Corpus would be a figure "
+            "of nothing"
+        )
+
+    bins: list[Bin] = []
+    for index in range(CALIBRATION_BINS):
+        # Division rather than a running sum or a multiple of the width: `3 * 0.1` is not
+        # `3 / 10`, and a table whose edges do not come out in order — or come out with the
+        # same edge printed two ways — is a table no reader can lay a bin against.
+        low, high = index / CALIBRATION_BINS, (index + 1) / CALIBRATION_BINS
+        inside = [item for item in scored if low <= item[0] < high]
+        posts = len(inside)
+        planted = sum(1 for _, label in inside if label)
+        bins.append(
+            Bin(
+                lower=low,
+                upper=high,
+                posts=posts,
+                planted=planted,
+                mean_confidence=(sum(value for value, _ in inside) / posts if posts else None),
+                observed=(planted / posts if posts else None),
+            )
+        )
+
+    total = len(scored)
+    positives = sum(1 for _, label in scored if label)
+    mean = sum(value for value, _ in scored) / total
+    base_rate = positives / total
+    # `one.gap or 0.0` rather than `one.gap`: an occupied bin always has a gap, and the filter
+    # has already dropped the ones that do not, so the two readings agree.
+    error = sum(one.posts / total * (one.gap or 0.0) for one in bins if one.posts)
+    return Calibration(
+        bins=tuple(bins),
+        posts=total,
+        positives=positives,
+        mean_confidence=mean,
+        base_rate=base_rate,
+        error=error,
+        tolerance=CALIBRATION_TOLERANCE,
+    )
+
+
+def _drift(offset: float) -> str:
+    """Which way the average is wrong, as both views say it.
+
+    Three cases rather than two, because a model whose mean is exactly the base rate has
+    drifted nowhere and a sentence saying it over- or under-states by 0.0000 would be the one
+    reading of the figure a reader could not trust.
+
+    One rule for the figure's own verdict and for the report's line beside the table, because
+    a page that says the model understates in one sentence and overstates in the next is a
+    page whose figure has been read two ways.
+    """
+    if offset < 0.0:
+        return f"the model understates the probability by {abs(offset):.4f} on average"
+    if offset > 0.0:
+        return f"the model overstates the probability by {offset:.4f} on average"
+    return "the model's average is the base rate"
+
+
 def _policy_scores(scores_path: Path, items: Sequence[CorpusItem]) -> dict[str, float]:
     """The published Policy Scores, as a lookup by post.
 
@@ -926,6 +1209,12 @@ def _evaluation(
     All three rows are over the same posts, so the three AUCs are comparable. That is the point
     of the table: a model figure printed alone is a claim, and printed beside two baselines over
     the same rows it is a difference.
+
+    The calibration is measured over those same rows and carried beside the table rather than
+    inside it, because it is a different question: AUC asks whether the Confidence *orders* the
+    planted posts above the rest, and this asks whether the number attached to each post is the
+    frequency it claims. A model can answer the first and fail the second, and a table with the
+    two in one row invites a reader to read one as the other's evidence.
     """
     posts = len(items)
     positives = sum(1 for _, label in scored if label)
@@ -965,6 +1254,7 @@ def _evaluation(
         folds=fold_count,
         held_out=True,
         verdict=_verdict(model, constant, policy),
+        calibration=calibration(scored),
     )
 
 
@@ -1172,6 +1462,7 @@ def render_table(confidences: Confidences) -> str:
         f"{_HEADING}\n\n{_opening(confidences)}",
         _figures(confidences),
         _measurement(evaluation),
+        _calibration(evaluation.calibration),
         _coefficients(confidences),
         _footer(confidences),
     )
@@ -1282,7 +1573,160 @@ def scored(value: float | None) -> str:
     the fusion ADR-0003 rules out. Public because it is the table's own rule — how this module
     prints a metric a predictor may not have — rather than a detail of one renderer.
     """
+    return _figure(value)
+
+
+def _figure(value: float | None) -> str:
+    """One number this module prints to four places, or the dash that means there is none.
+
+    The one rule behind both `scored` and the reliability table, and one function rather than
+    two: a dash in the baseline table and a dash in a bin mean the same thing, and two copies
+    of that rule are two chances for one table to print a zero a reader would add up.
+    """
     return "-" if value is None else f"{value:.4f}"
+
+
+def _calibration(figure: Calibration) -> str:
+    """The reliability table, the figures over it, the verdict, and what none of it touches.
+
+    A section of its own rather than two more columns on the baseline table, because the
+    question is a different one: that table asks whether the Confidence orders the planted
+    posts above the rest, this asks whether the number attached to each post is the frequency
+    it claims. Both answers are published and neither is evidence for the other, and the
+    prose under the table says so in the same words the report does.
+
+    The counts are printed beside every bin even where the bin is empty — an empty bin holds no
+    post and no planted post, and those are counts, so they read `0` where the two figures that
+    are not counts read a dash. Over 34 posts and ten bins the counts are what say how much of
+    the table is evidence at all, and a reliability diagram that quietly drops the thin bins is
+    one that reports its own figure flatteringly.
+    """
+    headings = ("bin", "posts", "planted", "predicted", "observed", "gap")
+    rows = [
+        (
+            one.span,
+            str(one.posts),
+            str(one.planted),
+            _figure(one.mean_confidence),
+            _figure(one.observed),
+            _figure(one.gap),
+        )
+        for one in figure.bins
+    ]
+    widths = [
+        max(len(cell) for cell in column) for column in zip(headings, *rows, strict=True)
+    ]
+    table = "\n".join(
+        f"  {'  '.join(cell.ljust(width) for cell, width in zip(row, widths, strict=True))}"
+        for row in (headings, *rows)
+    )
+
+    pairs = (
+        (
+            "expected calibration error",
+            f"{figure.error:.4f}, against a bar of {figure.tolerance:.4f} this project publishes",
+        ),
+        ("worst single bin", f"{figure.worst.gap:.4f}, at {figure.worst.span}"),
+        (
+            "mean Confidence",
+            f"{figure.mean_confidence:.4f}, against a base rate of {figure.base_rate:.4f}",
+        ),
+    )
+    figures = _labelled(pairs)
+    return "\n".join(
+        [
+            "calibration",
+            *_indented(CALIBRATION_METHOD),
+            "",
+            table,
+            "",
+            *figures,
+            "",
+            *_indented(figure.verdict),
+            "",
+            *_indented(_SEPARATION),
+            "",
+            *_indented(_no_correction(figure.positives)),
+            "",
+            *_indented(_STILL_UNDISPLAYED),
+        ]
+    )
+
+
+def _labelled(pairs: Sequence[tuple[str, str]]) -> list[str]:
+    """One figure per line under a label of a shared width, a long value wrapped beneath.
+
+    The continuation lines up under the value rather than under the label, so a figure that
+    runs past the console width is still read as one figure rather than as a second one with
+    no label on it.
+    """
+    width = max(len(label) for label, _ in pairs)
+    lines: list[str] = []
+    for label, value in pairs:
+        lead = f"  {label.ljust(width)}  "
+        wrapped = wrap(value, indent=len(lead), width=_WIDTH)
+        lines.append(lead + wrapped[0].lstrip())
+        lines.extend(wrapped[1:])
+    return lines
+
+
+def _indented(text: str, indent: int = 2) -> list[str]:
+    """The text wrapped to the console's width and indented under it.
+
+    The width is spent on the indent *before* the wrap rather than added after it, because
+    `wrap` charges its own `indent` to every line it returns: budgeting the width once and
+    indenting the result a second time is how a block of prose ends up past the width this
+    command claims, and `tests/test_confidence.py` checks that claim on every line.
+    """
+    lead = " " * indent
+    return [lead + line for line in wrap(text, indent=0, width=_WIDTH - indent)]
+
+
+def _prose(text: str) -> str:
+    """One paragraph as the report prints it: wrapped to its own width, flush to the margin.
+
+    The same text the console output wraps at its own indent, so a sentence is one sentence
+    in both views and the report's paragraph is the console's paragraph rather than a second
+    account of the same claim.
+    """
+    return "\n".join(wrap(text, indent=0, width=_WIDTH))
+
+
+def _no_correction(positives: int) -> str:
+    """What this measurement refuses to do, with the positive class that refuses it named.
+
+    A function rather than a constant because the one figure in it belongs to the run: a
+    sentence about what seven positives cannot support would still be true of a Corpus with
+    seven hundred, and a report that printed it there would be claiming the limitation of a
+    different run.
+    """
+    return (
+        "Nothing here is corrected toward anything. The Policy Scores are the published "
+        f"weights' own arithmetic and this command writes none of them, and the "
+        f"probabilities are the model's own output with no mapping fitted over them - "
+        f"{positives} positives cannot support a recalibration, and a mapped probability would "
+        "no longer be a number this project could recompute from the coefficients this output "
+        "prints. A miscalibrated Confidence is a reason to say so on this page, not a "
+        "reason to adjust either number."
+    )
+
+
+# What the calibration figure is about, and what it is not about. Written here once and
+# printed by both views rather than twice in two templates, because the two sentences this
+# page most needs are the two a reader is most likely to reach a different conclusion from.
+_SEPARATION = (
+    "This is the Confidence's own question, and the Policy Score has none: a 0-100 sum of "
+    "published weights is not a probability, so there is no calibration to measure and no "
+    "frequency to measure it against. Whether that score is sensible is an editorial judgement "
+    "about the weights, and this figure says nothing about it. A miscalibrated Confidence is no "
+    "argument against the Policy Score, and the Policy Score's own ordering is no argument that "
+    "the Confidence is calibrated: neither is evidence for the other (ADR-0003)."
+)
+
+_STILL_UNDISPLAYED = (
+    "And none of it changes where the number is displayed: the Confidence stays in its own file "
+    "and is displayed nowhere, whatever the figure above says (ADR-0003)."
+)
 
 
 def _coefficients(confidences: Confidences) -> str:
@@ -1335,8 +1779,9 @@ The training labels come from Planted Campaign membership, and so the figures ab
 recovery of planted structure over a Corpus the generator also wrote. They are not a rate of
 fraud found in the world and they are not real-world performance. Nobody reviewed any of this:
 the labels were assigned by the code that wrote the posts, so what has been measured is whether
-a classifier can recover that code's own bookkeeping. Calibration is a separate question with
-its own evaluation (ADR-0003) and is not measured here.
+a classifier can recover that code's own bookkeeping. Calibration is measured above, and it is a
+separate question from the figures beside it (ADR-0003): ordering the planted posts above the
+rest says nothing about whether a probability is the frequency it claims.
 
 {evaluation.positives} positives is a very small positive class, and {evaluation.folds} folds is a
 very small number of them. A figure over that many positives cannot separate a model that
@@ -1346,8 +1791,10 @@ that reason rather than on its own.
 Nothing on any screen in this project reads this number. The Policy Score is computed from
 published Signal weights and printed as a 0-100 severity; the Confidence is stored in its own
 file and displayed nowhere, and no arithmetic anywhere in this repository combines the two
-(ADR-0003). `rfi review-queue` and `rfi campaign-candidates` cannot reach this module, which
-`tests/test_confidence.py` checks against the import graph and against their printed output."""
+(ADR-0003). A miscalibrated Confidence is an argument for keeping the number off every screen
+and never an argument for putting it on one. `rfi review-queue` and `rfi campaign-candidates`
+cannot reach this module, which `tests/test_confidence.py` checks against the import graph and
+against their printed output."""
 
 
 def render_report(confidences: Confidences) -> str:
@@ -1368,9 +1815,46 @@ def render_report(confidences: Confidences) -> str:
     facts = confidences.facts
     evaluation = confidences.evaluation
     model, constant, policy = evaluation.model, *evaluation.baselines
+    calibration = evaluation.calibration
 
     table = "\n".join(f"| {_figure_row(figure)} |" for figure in (model, constant, policy))
     feature_tables = "\n\n".join(_feature_table(folded) for folded in confidences.fits)
+    bin_table = "\n".join(f"| {_bin_row(one)} |" for one in calibration.bins)
+    verdict = _prose(calibration.verdict)
+    method_line = _prose(f"The binning is {CALIBRATION_METHOD}.")
+    error_line = _prose(
+        f"**Expected calibration error {calibration.error:.4f}**, against a bar of "
+        f"{calibration.tolerance:.4f} this project publishes: each bin's gap weighted by the "
+        "share of the posts sitting in it. It is an average, and an average is how a bad bin "
+        "hides - which is why the worst bin is published beside it rather than folded into it."
+    )
+    worst_line = _prose(
+        f"**Worst single bin {calibration.worst.gap:.4f}**, at `{calibration.worst.span}`, "
+        f"where the model says {_figure(calibration.worst.mean_confidence)} and "
+        f"{calibration.worst.planted} of the {_count(calibration.worst.posts, 'post')} in it "
+        f"{_are(calibration.worst.posts)} planted. {_thickness(calibration.worst)}: it is "
+        "published because it is the number a reader would otherwise have to find in the table, "
+        "not because a bin that thin settles anything."
+    )
+    mean_line = _prose(
+        f"**Mean Confidence {calibration.mean_confidence:.4f} against a base rate of "
+        f"{calibration.base_rate:.4f}**: {_drift(calibration.offset)}, which is the whole of "
+        f"the finding in one subtraction. That one needs no binning at all - it is the "
+        f"published column added up and divided by {evaluation.posts} - and a model can be "
+        "right about it while its bins are wrong."
+    )
+    thin_line = _prose(
+        f"**The bins are thin, and the counts say so rather than leaving it to be inferred.** "
+        f"{calibration.posts} posts over {len(calibration.bins)} bins leaves "
+        f"{_count(_empty(calibration), 'bin')} holding nothing and "
+        f"{_count(_single(calibration), 'bin')} holding a single post, and a bin holding one "
+        "post has an observed share of 0 or 1 whatever the model said about it. The weighting "
+        "is what stops that from carrying the figure: a bin of one contributes at most "
+        f"{1 / evaluation.posts:.4f} of the error, since no gap exceeds 1."
+    )
+    separation = _prose(_SEPARATION)
+    uncorrected = _prose(_no_correction(evaluation.positives))
+    undisplayed = _prose(_STILL_UNDISPLAYED)
 
     return f"""# The Confidence
 
@@ -1489,6 +1973,37 @@ Policy Score — and this is what it cost: seven counts over a post's own text a
 substitute for six published weights over a registration's reach, and a reader who believed
 otherwise would have been told something the numbers do not support.
 
+## Calibration
+
+A second measurement of the same held-out rows, and on this Corpus a finding in its own right
+rather than a footnote on the AUC above.
+
+**{verdict}**
+
+{method_line}
+
+Every figure below is arithmetic over the published probabilities in `{CONFIDENCES_PATH}` and the
+membership in `{facts.truth_path}`, so a reader can redo each one with those two files and a
+pencil.
+
+| Bin | Posts | Planted | Predicted | Observed | Gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+{bin_table}
+
+{error_line}
+
+{worst_line}
+
+{mean_line}
+
+{thin_line}
+
+{separation}
+
+{uncorrected}
+
+{undisplayed}
+
 ## What these figures are not
 
 **These figures measure recovery of planted structure, and they are not a rate of fraud found in
@@ -1507,9 +2022,11 @@ useless to this project — and it is a much narrower one than the question a re
 **{evaluation.positives} positives is a very small positive class.** A figure over that many can
 separate a model that generalises from one that has been lucky far less often than a reader would
 assume, and no confidence interval is printed because over seven positives there is nothing to put
-one round. **Calibration is not measured here at all** (ADR-0003): the numbers on this page are
-discrimination and two proper scoring rules, and a proper scoring rule rewards a calibrated
-probability without telling the reader whether it is one. That is ticket #27.
+one round. **Calibration is measured above, and it is a separate question from any of the ones
+above it** (ADR-0003): discrimination asks whether the Confidence orders the planted posts above the
+rest, and a proper scoring rule rewards a calibrated probability without ever telling the reader
+whether it is one. Over this many positives a reliability table is thin, and the section above says
+which of its bins are.
 
 ## Why it is displayed nowhere
 
@@ -1517,6 +2034,11 @@ The Policy Score is what a reviewer sees: published weights, an additive sum, ar
 beside every figure. The Confidence is a different quantity answering a different question, and
 ADR-0003's decision is that the two are stored in separate files, never summed, and never shown as
 one number.
+
+The calibration figure above does not change that, and is no reason to change it: a miscalibrated
+model is an argument for keeping a number off every screen, never for putting one on it. Both
+views say so where the figure is printed, and the enforcement below does not depend on the figure
+at all.
 
 Enforcement is structural rather than promised. `cli.py` is the only module in this repository
 that imports the Confidence, so `rfi review-queue` and `rfi campaign-candidates` cannot reach it
@@ -1567,9 +2089,48 @@ deviation of its feature.
 
 def _figure_row(figure: Figure) -> str:
     """One report table row: the name, both metrics or a dash, and what it was measured over."""
-    log_loss = "-" if figure.log_loss is None else f"{figure.log_loss:.4f}"
-    brier = "-" if figure.brier is None else f"{figure.brier:.4f}"
-    return f"{figure.name} | {figure.auc:.4f} | {log_loss} | {brier} | {figure.detail}"
+    return (
+        f"{figure.name} | {figure.auc:.4f} | {_figure(figure.log_loss)} | "
+        f"{_figure(figure.brier)} | {figure.detail}"
+    )
+
+
+def _bin_row(one: Bin) -> str:
+    """One reliability table row: the bin's edges, what it holds, and what it was worth.
+
+    A Markdown table rather than the console's plain one, so the same figures are read two
+    ways off one run. An empty bin's two means are dashes rather than zeros, for the reason
+    `Bin` says: it holds no posts, so there is no average in it to print.
+    """
+    return (
+        f"`{one.span}` | {one.posts} | {one.planted} | {_figure(one.mean_confidence)} | "
+        f"{_figure(one.observed)} | {_figure(one.gap)}"
+    )
+
+
+def _empty(figure: Calibration) -> int:
+    """How many of the bins hold no post at all."""
+    return sum(1 for one in figure.bins if one.posts == 0)
+
+
+def _single(figure: Calibration) -> int:
+    """How many of the bins hold exactly one post, and so an observed share of 0 or 1."""
+    return sum(1 for one in figure.bins if one.posts == 1)
+
+
+def _are(posts: int) -> str:
+    """The verb agreeing with a count of posts, for the sentence a bin's row is read in."""
+    return "is" if posts == 1 else "are"
+
+
+def _thickness(one: Bin) -> str:
+    """How thin the worst bin is, in a sentence whose length the reader can check.
+
+    Computed rather than written, because "one post is all that bin is" is a claim about this
+    run's numbers written into a page that recomputes every other number it prints: on a
+    Corpus where the worst bin held three, that sentence would still say one.
+    """
+    return f"That bin holds {_count(one.posts, 'post')}"
 
 
 def _count(number: int, noun: str) -> str:

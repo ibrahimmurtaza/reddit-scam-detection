@@ -33,10 +33,10 @@ proposed named with the corroborations that removed them. The Review Queue those
 stated depth. The false-grouping rate beside that recovery figure, and the Review
 Queue's precision at several depths, are measured by the same evaluator.
 And the Confidence: one probability per Content Item, fitted here over seven counts read
-off the post, measured out of fold against the base rate and the Policy Score, and
-displayed nowhere.
-The graph report is not built yet; its ticket is #28 in the tracker; confidence
-calibration is #27; this README is updated as they land.
+off the post, measured out of fold against the base rate and the Policy Score, measured
+again for whether it is calibrated, and displayed nowhere.
+The graph report is not built yet; its ticket is #28 in the tracker; this README is
+updated as it lands.
 
 ## Running it
 
@@ -75,7 +75,7 @@ steps, which are named against each row. Every file has one reader:
 | `data/signals/weights.jsonl` | The published weight of every Signal, with the one-line reason it is that number. | `rfi policy-score` |
 | `data/signals/policy-scores.jsonl` | Every post's Policy Score, with the Signal-by-Signal arithmetic behind it. | `rfi review-queue` |
 | `data/embeddings/content-embeddings.jsonl` | Which post, which model, how wide, under which recipe, and the digest of the text each stored vector was computed from. No vector, and no account. | the reuse rule, and a reader recomputing the digests |
-| `data/model/confidences.jsonl` | Every post's Confidence: the probability, the model, and the digest of the recipe. No Policy Score, no label, and no fold. | nobody yet — the Confidence is displayed nowhere, and the calibration ticket #27 is what will read it |
+| `data/model/confidences.jsonl` | Every post's Confidence: the probability, the model, and the digest of the recipe. No Policy Score, no label, and no fold. | nobody — the Confidence is displayed nowhere, and `rfi confidence` measures it rather than a screen reading it |
 
 The pipeline receives the Corpus file and nothing else; the truth file is joined
 only by the evaluator, after inference has finished (ADR-0008). A reader does
@@ -1053,7 +1053,7 @@ uv run rfi confidence   # reads the Corpus, the list, the membership and the sco
 | File | Holds |
 | --- | --- |
 | `data/model/confidences.jsonl` | One line per post: the probability, the model that produced it, and the digest of the recipe. |
-| `docs/confidence.md` | The report: the figure out of fold, both baselines, every coefficient, and what the figure is not. |
+| `docs/confidence.md` | The report: the figure out of fold, both baselines, the calibration, every coefficient, and what the figures are not. |
 
 **The model is published, and its performance is measured rather than assumed.**
 `logistic-content-link-features-v1`, fitted by gradient descent at a stated step count, learning
@@ -1090,19 +1090,49 @@ log loss and no Brier score, and the dash is the point: a 0-100 editorial figure
 probability reading, and publishing a likelihood from one would be the fused score ADR-0003 rules
 out.
 
+**Calibration is measured too, over a binning the output names, and the finding is that this model
+is not calibrated.** Discrimination and calibration are different questions: the AUC above asks
+whether the Confidence *orders* the planted posts above the rest, and the reliability table asks
+whether a post the model calls 0.20 really is planted 20% of the time. Ten equal-width bins over
+the open unit interval, every bin's count printed beside it, and the expected calibration error
+is each bin's gap weighted by the posts in it:
+
+```
+  expected calibration error  0.1957, against a bar of 0.0500 this project publishes
+  worst single bin            0.8098, at [0.8, 0.9)
+  mean Confidence             0.1425, against a base rate of 0.2059
+```
+
+So the model's mean probability is six points below the rate at which posts here are planted, and
+the bin it is most confident about is a post it is 81% sure of and that is not planted. The worst
+bin is published beside the average for the reason an average is the form in which a bad bin hides.
+`docs/confidence.md` states the finding in a sentence computed from the figures rather than written
+into the page, so it changes when the numbers do.
+
+**The two measurements are separate questions, and neither is evidence for the other.** A Policy
+Score is a 0-100 sum of published weights, not a probability, so there is nothing to calibrate it
+against; whether it is *sensible* is an editorial judgement about the weights, and a miscalibrated
+Confidence says nothing about it. Nothing is corrected toward anything either way: the Policy
+Scores stay the published weights' own arithmetic — `tests/test_policy_score.py` asserts that no
+module the score is computed through reaches the Confidence or the embeddings, and that a file of
+probabilities beside the Corpus changes no score — and no recalibration is fitted over the model's
+own output, because seven positives cannot support one and a mapped probability would no longer be
+a number this repository could recompute from the coefficients it prints.
+
 **The training labels are the Planted Campaign membership, so this measures recovery of planted
 structure and not a rate of fraud found in anything.** The generator wrote the posts and wrote
 the labels; nobody reviewed any of it, and nothing here has seen real Reddit content. The report
 gives that a section of its own — "What these figures are not" — rather than a footnote, because
 it is the part a reader would otherwise skip and skipping it is what makes a number from that page
-mean something it does not. **Calibration is not measured here at all** (ADR-0003): what is
-published is discrimination and two proper scoring rules, and deciding whether the probability is
-calibrated is ticket #27.
+mean something it does not. The calibration figure is recovery of planted structure too (ADR-0029):
+over a positive class this thin its bins are thin, and the report prints which of them are.
 
-**It is displayed nowhere, and that is structural rather than promised.** `cli.py` is the only
-module in this repository that imports the Confidence, so `rfi review-queue` and
-`rfi campaign-candidates` cannot reach it even by accident.
-`tests/test_confidence.py` checks that by walking the import graph, checks it again by rendering
+**It is displayed nowhere, and the calibration figure is not a reason to change that.** `cli.py` is
+the only module in this repository that imports the Confidence, so `rfi review-queue` and
+`rfi campaign-candidates` cannot reach it even by accident. A miscalibrated model is an argument for
+keeping a number off every screen and never an argument for putting one on it, and both views say
+so where the calibration figure is printed. `tests/test_confidence.py` checks the separation by
+walking the import graph, checks it again by rendering
 the Review Queue and searching its output for the word, for the file, and for every published
 probability in both the form a probability takes and the form a severity takes, and checks that
 every figure the queue prints out of a hundred is a published Policy Score and nothing else. A
@@ -1299,8 +1329,8 @@ network for nothing at all.
 - `GLOSSARY.md` — the vocabulary, enforced by `tests/test_vocabulary.py` against
   the phrases the project must never utter.
 - `docs/confidence.md` — the report ADR-0027 asked for: the Confidence, its model, its
-  features, its out-of-fold figure beside two baselines, and a section saying what the figure
-  is not.
+  features, its out-of-fold figure beside two baselines, the calibration ADR-0029 added, and a
+  section saying what the figures are not.
 - `docs/adr/` — the decisions. The ones this code implements are 0001 (Corpus
   Provider), 0004 (evaluate by recovering Planted Campaigns), 0005 (Campaign
   Candidates require registrable infrastructure), 0007 (Signals come only from
@@ -1342,4 +1372,7 @@ network for nothing at all.
   fold against a constant and the Policy Score, stored in a file of its own, and displayed
   nowhere), and 0028 (the cohesion system retains a Campaign Candidate on two of its
   three corroborations and removes the rest, the direct-adjacency baseline ships beside
-  it unchanged, and neither tier is published as the result on its own).
+  it unchanged, and neither tier is published as the result on its own), and 0029
+  (calibration is measured over a stated binning beside the discrimination figures rather
+  than folded into them, the worst bin is published beside the average gap, neither number
+  is corrected toward the other, and the Confidence stays displayed nowhere).
