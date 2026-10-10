@@ -11,7 +11,12 @@ command rewrites it byte for byte.
 **1 of 2 Planted Campaigns recovered**, with 1 partial and 0 missed.
 
 The three outcomes partition the membership in `data/corpus/truth.jsonl`, so a reader can add
-them up and get N rather than take the numerator on trust.
+them up and get N rather than take the numerator on trust. **The figure belongs to the
+direct-adjacency baseline**, and it is published as a pair rather than on its own: the
+cohesion system retains 3 candidates of the
+4 and recovers 1 of the 2
+on the same rule, and both numbers are in the section *The cohesion system and the baseline
+it filters* below (ADR-0009, ADR-0028).
 
 | Planted Campaign | Outcome | Accounts | Posts | Candidates |
 | --- | --- | ---: | ---: | --- |
@@ -62,6 +67,46 @@ candidates were measured against.
 | `syn-campaign-beta` | registrations: `signal-harbor.example`; Contact Points: `syn_northwindhire` |
 
 Every membership in this Corpus shares something that reaches a candidate, so nothing here is out of the method's reach by construction and the ceiling above is all of them. That is a fact about this Corpus and not a general one: a campaign that rotates both its registrations and its Contact Points is invisible to a method resting on those two edges, and one that leans on a known-shared host is lost with the host.
+
+## The cohesion system and the baseline it filters
+
+Two tiers, and both of them published, because publishing either alone makes it a claim
+rather than a measurement (ADR-0009). The baseline is what direct adjacency found — the
+union-find over shared registrations and shared Contact Points, with the known-shared
+registrations withheld — and it is the number the figure above belongs to. The cohesion
+system is what that baseline retains once temporal proximity, content similarity and
+agreement on Scam Category have each had their say: a candidate is kept when at least 2
+of the 3 corroborations hold, and removed when they do not (ADR-0028).
+
+| Tier | Candidates | Accounts |
+| --- | ---: | ---: |
+| Direct adjacency (baseline) | 4 | 12 |
+| Cohesion system | 3 | 9 |
+
+The cohesion system removes **1 of the 4** baseline candidates and carries **none of the
+2** Planted Campaigns with it.
+
+It recovers **1 of the 2** Planted Campaigns on whole membership, against the 1 the
+baseline above recovers.
+
+| Removed candidate | Accounts | Joined on | Corroborated by | Against it | Planted Campaigns carried |
+| --- | ---: | --- | --- | --- | --- |
+| `cc-04` | 3 | Contact Points: syn_copperlantern | category agreement | temporal proximity, content similarity | — |
+
+The `Corroborated by` and `Against it` columns are the two halves of the candidate's
+Cohesion Score as `rfi campaign-candidates` published it, read out of
+`data/campaigns/campaign-candidates.jsonl`, which this command does no grouping to produce.
+
+No Planted Campaign is named only by a removed candidate.
+
+What it removed is a proposal, not a finding: every candidate named above is still in
+`data/campaigns/campaign-candidates.jsonl` with its evidence under it, and the baseline
+figures beside them are the pre-corroboration record rather than something a reader has
+to reconstruct. The rule is a rule a reader can undo: the two thresholds it weighs are
+published — `rfi campaign-candidates` takes `--window-hours` and
+`--similarity-threshold` — and the Scam Category lists are printed by `rfi
+corpus-composition`, so a run at a different window or a different threshold moves both
+figures rather than only the lower one.
 
 ## False groupings
 
@@ -191,7 +236,7 @@ this page was written:
 | File | SHA-256 |
 | --- | --- |
 | `data/corpus/corpus.jsonl` | `3dbda898eb9a262ffdc9fa817c8bbadfd394315e45ca8211218da6615c20703f` |
-| `data/campaigns/campaign-candidates.jsonl` | `c7a91d8e747b13156432260c71ac2c3e32218928395514f80ce957c15ab895ef` |
+| `data/campaigns/campaign-candidates.jsonl` | `fe1aaced9bf353127e637e1ca1a7075db8546585e4270cf2e1440ee9780abee8` |
 | `data/corpus/truth.jsonl` | `fcb21f160c9eb213400716e559cc8d1239c074340997454b1ef3e8be913f8f7c` |
 | `data/corpus/nuisance.jsonl` | `702b4824be49aed370d41ceceeb11addf8f9089275d33be73805b9900a9be2ec` |
 | `data/signals/policy-scores.jsonl` | `2157650e7914f181faf093e833550b86e38c575bf438a2df296dc8c7dd7f1fa3` |

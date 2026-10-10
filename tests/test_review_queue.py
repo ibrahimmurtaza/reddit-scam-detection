@@ -304,7 +304,9 @@ def candidate_row(
     does not know, and refuses nothing about a field it does: a candidate resting on one
     edge carries an empty list for the other. The timing is written for the same reason,
     and the reader checks it against the evidence the row names, so the gaps here and the
-    pieces they belong to cannot disagree.
+    pieces they belong to cannot disagree. The cohesion row is written for the same reason
+    a third time: the reader counts the three verdicts on the row and refuses a count that
+    disagrees with them, and this command checks that file without acting on any of it.
     """
     gaps = [{"kind": "registration", "value": domain,
              "closest_seconds": 0, "span_seconds": 0}
@@ -353,6 +355,16 @@ def candidate_row(
             "pieces": len(posts),
             "corroborated": len(posts),
             "closest_distance": 0.0,
+        },
+        "cohesion": {
+            "against": [] if gaps else ["temporal proximity"],
+            "category": {"tally": [["Work and Payroll", len(posts)]]},
+            "corroborating": (
+                ["temporal proximity", "content similarity", "category agreement"]
+                if gaps
+                else ["content similarity", "category agreement"]
+            ),
+            "retained": True,
         },
         "first_seen": first_seen,
     }

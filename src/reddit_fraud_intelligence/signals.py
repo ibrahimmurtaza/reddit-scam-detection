@@ -65,7 +65,15 @@ from reddit_fraud_intelligence.jsonl import (
     refuse_repeated,
     write_lines,
 )
-from reddit_fraud_intelligence.placement import Placed, check_placements, place, render_phrases
+from reddit_fraud_intelligence.placement import (
+    MIN_PLACED,
+    Placed,
+    agreed_category,
+    check_placements,
+    in_print_order,
+    place,
+    render_phrases,
+)
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 from reddit_fraud_intelligence.text import matcher, sentences, spans, wrap
 
@@ -90,7 +98,10 @@ _MIN_ACCOUNTS = 2
 # need two postings to be visible at all. Below it the registration is reported
 # as unassociated, which is a statement about the evidence rather than a quiet
 # zero: a link in a post usually reaches a site nobody else in the Corpus reaches.
-_MIN_PLACED = 2
+# The figure itself is `placement.MIN_PLACED`, because the cohesion system reads
+# the same majority over the same floor at the scope of a Campaign Candidate
+# (ADR-0028), and a floor written twice is a floor that will be changed once.
+_MIN_PLACED = MIN_PLACED
 
 # Why this command prints the Scam Category lists rather than leaving a reader to take a
 # placement on trust: `category_conflict` rests on one, and the lists are the whole of what
@@ -455,7 +466,10 @@ class Association:
     `scam_category` is `None` where the tally decides nothing - fewer than `_MIN_PLACED`
     postings were placed at all, or none of the classes holds more than half of the ones
     that were - and both of those are reported as unassociated rather than settled by a
-    tie-break over the order the projection happens to declare the ten in.
+    tie-break over the order the projection happens to declare the ten in. The rule
+    itself is `placement.agreed_category`, which the cohesion system reads at the scope
+    of a Campaign Candidate, so the majority and the floor cannot be stated two ways
+    (ADR-0028).
     """
 
     domain: str
@@ -468,11 +482,7 @@ class Association:
 
     @property
     def scam_category(self) -> str | None:
-        placed = self._placed_tally
-        if self.placed < _MIN_PLACED:
-            return None
-        top, count = placed[0]
-        return top if 2 * count > self.placed else None
+        return agreed_category(self.tally)
 
     @property
     def majority(self) -> int:
@@ -562,7 +572,7 @@ class LinkIndex:
             withheld=withheld,
             confusable=_confusable(sorted(reach)),
             associations={
-                domain: Association(domain=domain, tally=_in_print_order(tally))
+                domain: Association(domain=domain, tally=in_print_order(tuple(tally.items())))
                 for domain, tally in tallies.items()
             },
         )
@@ -593,18 +603,6 @@ class LinkIndex:
                 }
             )
         )
-
-
-def _in_print_order(tally: Mapping[str, int]) -> tuple[tuple[str, int], ...]:
-    """One registration's tally, widest first and then by name, with Other last.
-
-    The order is a printing order rather than an arithmetic one: the leading entry is
-    what a reader takes as the class the registration is associated with, and Other can
-    never be that, so it is put behind every class that can.
-    """
-    return tuple(
-        sorted(tally.items(), key=lambda entry: (entry[0] == OTHER.name, -entry[1], entry[0]))
-    )
 
 
 def _confusable(registrations: Sequence[str]) -> dict[str, tuple[str, ...]]:

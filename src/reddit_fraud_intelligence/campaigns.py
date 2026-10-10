@@ -89,6 +89,20 @@ grouping resting on either edge can propose it; the count of campaigns in that p
 is the method's recall bound, and the evaluator reports it beside the recovery figure
 (ADR-0023).
 
+The three corroborations above are then read together, and their result is the cohesion
+system ADR-0009 asks for (ADR-0028). A candidate is retained when two of the three hold
+and removed when they do not, and the removal is the first one this module makes for any
+reason but known-shared infrastructure: the clock and the vectors may order and
+deprioritise, and this filters. It is also the reason the two tiers are published as a
+pair rather than one of them replacing the other. The baseline — the union-find, with the
+known-shared registrations withheld and no corroboration applied — stays in the file and
+in the figures exactly as it was, because it is the number a reader has to see beside the
+lower one to know that the lower one was a decision and not a bug. Every candidate names
+which corroborations held and which went against it, and every candidate the system
+removed is named below the table with the evidence that removed it, so a miss is
+diagnosable rather than silent. The order of the two figures never changes: neither tier
+is published as *the* result.
+
 Nothing here reads the truth file. The Corpus, the published Public Suffix List, the
 shared-infrastructure list, and the stored vectors are the whole input, and the truth file
 is joined by the evaluator after this has finished (ADR-0008).
@@ -115,6 +129,7 @@ from reddit_fraud_intelligence.embeddings import (
     open_store,
     stored_vectors,
 )
+from reddit_fraud_intelligence.categories import OTHER, EVERY_CATEGORY
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 from reddit_fraud_intelligence.domains import PostDomains, post_domains
 from reddit_fraud_intelligence.infrastructure import SharedHost, SharedInfrastructure
@@ -127,6 +142,13 @@ from reddit_fraud_intelligence.jsonl import (
     read_vocabulary,
     refuse_repeated,
     write_lines,
+)
+from reddit_fraud_intelligence.placement import (
+    MIN_PLACED,
+    agreed_category,
+    check_placements,
+    in_print_order,
+    place,
 )
 from reddit_fraud_intelligence.suffixes import PublicSuffixes
 
@@ -158,6 +180,29 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.5
 # candidate resting on one handle rests on the weaker of the two readings and a reader
 # is entitled to know that before deciding whether to act on it.
 _WEAKER = "the weaker of the two readings; `rfi contact-points` has the measured recall"
+
+# The three corroborations ADR-0009 names, in the order they are declared and in the
+# order every verdict this run publishes counts them. One list rather than three
+# vocabularies written out where each verdict is reached: the count of them that hold
+# and the names of the ones that did not are the whole of the cohesion figure, and a
+# reader who has to learn a fourth name from the code to check it cannot check it.
+# Public rather than private because `rfi campaign-recovery` states the same rule in its
+# own output and its own page, and a rule a figure rests on may not be written twice.
+CORROBORATIONS = ("temporal proximity", "content similarity", "category agreement")
+
+# How many of them a candidate has to hold for the cohesion system to keep it. A bare
+# majority of the declared list rather than a literal, so a fourth corroboration would
+# move the bar with the list instead of being counted and then outvoted by three. Two of
+# three is the weakest bar that is not one: a candidate on the clock alone, or on the
+# categories alone, is one reading agreeing with itself, and the third is there to catch
+# the case where the other two are the same claim read twice.
+QUORUM = len(CORROBORATIONS) // 2 + 1
+
+# The fields one candidate's `cohesion` row carries, in the file's own order. A constant
+# rather than two literals, because the writer and the reader are the same vocabulary and
+# the reader's whole job is to refuse a row holding a field it does not know: a set of
+# names written out at both ends is a set that will one day be written out at only one.
+COHESION_FIELDS = ("against", "category", "corroborating", "retained")
 
 
 class EvidenceKind(StrEnum):
@@ -294,6 +339,7 @@ class _Joined:
     points: tuple[SharedContact, ...]
     timing: tuple[EvidenceTiming, ...]
     similarity: tuple[SimilarityEvidence, ...]
+    category: CategoryAgreement
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +464,119 @@ class ContentSimilarity:
 
 
 @dataclass(frozen=True, slots=True)
+class CategoryAgreement:
+    """The Scam Category the posts inside one candidate agree on, and the tally behind it.
+
+    The same reading ADR-0021 gives a Registrable Domain, at the scope of a component
+    rather than a registration, and decided by `placement.agreed_category` for that
+    reason: a strict majority of the postings a list placed, out of the two at least that
+    have to be placed before any of them counts. What it says is that the accounts inside
+    the candidate are making the same pitch, which is a claim about the group the
+    component is a claim about — the third corroboration ADR-0009 names, and the one
+    that decides the staggered-paraphrase case the vectors cannot corroborate (ADR-0028).
+
+    The tally is carried whole rather than reduced to the class, because the class is
+    what a rule produced and the tally is what a reader counts. Other is in the tally and
+    out of the agreement, as everywhere else: a post no list matched makes no claim.
+    """
+
+    tally: tuple[tuple[str, int], ...]
+
+    @property
+    def placed(self) -> int:
+        """The postings that were placed in one of the ten, which is what decides."""
+        return sum(count for name, count in self.tally if name != OTHER.name)
+
+    @property
+    def scam_category(self) -> str | None:
+        """The class the placed postings agree on, or none where the tally decides nothing."""
+        return agreed_category(self.tally)
+
+    @property
+    def corroborates(self) -> bool:
+        """Whether this candidate's posts agree on one class.
+
+        A method rather than a stored column, for the reason `EvidenceTiming.within`
+        gives: a verdict nothing recomputes is a second account of the same fact, and the
+        file and the table beside it could then disagree about whether a candidate was
+        corroborated.
+        """
+        return self.scam_category is not None
+
+    def why_not(self) -> str:
+        """Why the tally decides nothing, in the words the registrations table uses.
+
+        Two figures rather than an adjective: the count of placements is what decides,
+        and a reader who is told only that there was no majority cannot tell a component
+        whose posts split evenly from one where two were placed and two matched nothing.
+        """
+        return "too few placed" if self.placed < MIN_PLACED else "no majority"
+
+
+@dataclass(frozen=True, slots=True)
+class Cohesion:
+    """One candidate's three corroborations and the count they add up to.
+
+    The count and the names are worked out rather than carried, and the names are the
+    reason: a cohesion score a reader cannot take apart is a number to be trusted, and
+    this project has spent three tickets refusing to publish numbers of that kind. So the
+    score is how many of `CORROBORATIONS` hold, and `corroborating` and `against` say
+    which — the same count the file publishes beside the tally it was counted from, and
+    the reader checks one against the other rather than taking either on trust.
+
+    `QUORUM` is the whole of the filtering rule, and it is deliberately not one: a
+    candidate on the clock alone is one reading agreeing with itself, and the same is
+    true of the categories alone. What the third buys is the case where the other two
+    would both have said yes for the same reason — two registrations worked months apart
+    by the same three people are not two corroborations, and the categories are what
+    catch it.
+    """
+
+    timing: Timing
+    similarity: ContentSimilarity
+    category: CategoryAgreement
+
+    @property
+    def corroborating(self) -> tuple[str, ...]:
+        """The corroborations that hold, in the order they are declared."""
+        return tuple(
+            name for name, holds in zip(CORROBORATIONS, self._holds, strict=True) if holds
+        )
+
+    @property
+    def against(self) -> tuple[str, ...]:
+        """The corroborations that do not, in the order they are declared."""
+        return tuple(
+            name for name, holds in zip(CORROBORATIONS, self._holds, strict=True) if not holds
+        )
+
+    @property
+    def retained(self) -> bool:
+        """Whether the cohesion system keeps this candidate.
+
+        Two of the three, and the count is a majority of the declared list rather than a
+        literal three, so a fourth corroboration added later would move the bar with the
+        list instead of being counted and then outvoted.
+        """
+        return len(self.corroborating) >= QUORUM
+
+    @property
+    def _holds(self) -> tuple[bool, ...]:
+        """The three verdicts, in the order `CORROBORATIONS` declares them.
+
+        Asked of the three values rather than stored beside them, so the count and the
+        names cannot come to disagree with each other: both are the same tuple read two
+        ways, and the verdicts they come from are the ones the candidate publishes on its
+        own rows.
+        """
+        return (
+            self.timing.corroborates,
+            self.similarity.corroborates,
+            self.category.corroborates,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CampaignCandidate:
     """A proposed grouping of accounts, and everything a reader needs to check it.
 
@@ -427,7 +586,9 @@ class CampaignCandidate:
     Corpus that says anything about when the group was active. `corroboration` and
     `timing` are what the clock adds, and `similarity` and `content_similarity` what
     the stored vectors add: both are corroboration and never the reason the candidate
-    exists (ADR-0025, ADR-0026).
+    exists (ADR-0025, ADR-0026). `cohesion` is what those two and the categories add
+    together, and it is a filter rather than a verdict on the candidate: the candidate
+    is in this file and in the table whatever it says (ADR-0028).
     """
 
     candidate_id: str
@@ -439,6 +600,7 @@ class CampaignCandidate:
     timing: Timing
     similarity: tuple[SimilarityEvidence, ...]
     content_similarity: ContentSimilarity
+    cohesion: Cohesion
     first_seen: str
 
     @property
@@ -572,20 +734,84 @@ class SimilarityCorroboration:
 
 
 @dataclass(frozen=True, slots=True)
+class CohesionSystem:
+    """What the cohesion system retained of the baseline, and what it removed.
+
+    The two tiers, as figures over one another rather than as two runs. `candidates` is
+    the baseline whole — every component the union-find produced, which is exactly what
+    the file holds and exactly what it held before this system existed — and every other
+    figure here is counted off it, so the two numbers cannot drift and neither can be
+    published without the other being computable from the same tuple.
+
+    Accounts are counted across candidates rather than per candidate: two candidates
+    sharing an account would otherwise report one account twice, and the difference
+    between the two tiers is the whole of what corroboration bought, so a figure that
+    over-counted would over-state it.
+    """
+
+    candidates: tuple[CampaignCandidate, ...]
+
+    @property
+    def baseline(self) -> int:
+        """What direct adjacency found, which is the number this run must not lose."""
+        return len(self.candidates)
+
+    @property
+    def accounts(self) -> int:
+        """The accounts in the baseline, over both edges and counted once each."""
+        return len({account for candidate in self.candidates for account in candidate.accounts})
+
+    @property
+    def retained(self) -> int:
+        """What the cohesion system kept of the baseline."""
+        return sum(1 for candidate in self.candidates if candidate.cohesion.retained)
+
+    @property
+    def retained_accounts(self) -> int:
+        """The accounts in what the cohesion system kept."""
+        return len(
+            {
+                account
+                for candidate in self.candidates
+                if candidate.cohesion.retained
+                for account in candidate.accounts
+            }
+        )
+
+    @property
+    def filtered(self) -> tuple[CampaignCandidate, ...]:
+        """Every candidate the cohesion system removed, in the order the table prints them.
+
+        Carried whole rather than counted, for the same reason `Corroboration` carries its
+        deprioritised candidates: a filtering decision a reader cannot see is the same as
+        a defect nobody noticed, and each of these has to be nameable with the evidence
+        that removed it.
+        """
+        return tuple(candidate for candidate in self.candidates if not candidate.cohesion.retained)
+
+    @property
+    def removed(self) -> int:
+        """What the system removed, which is the whole difference between the two tiers."""
+        return self.baseline - self.retained
+
+
+@dataclass(frozen=True, slots=True)
 class Grouping:
     """Everything one run establishes, so the table and the file cannot disagree.
 
-    `temporal` is what the clock added across the run and `content` what the stored
-    vectors added, one value each rather than a score over both, because #26 is where
-    the two become one number. The Corpus is carried because the printed table quotes
-    its posts: the claims are about content in that file, and the evidence is read
-    from it rather than transcribed.
+    `temporal` is what the clock added across the run, `content` what the stored vectors
+    added, and `cohesion` what those two and the Scam Categories add together (ADR-0028).
+    Each is one value over the whole run rather than a figure recomputed at each place it
+    is printed. The Corpus is carried because the printed table quotes its posts: the
+    claims are about content in that file, and the evidence is read from it rather than
+    transcribed.
     """
 
     facts: GroupingFacts
     filtered: SharedFilter
     temporal: Corroboration
     content: SimilarityCorroboration
+    cohesion: CohesionSystem
     candidates: tuple[CampaignCandidate, ...]
     corpus: tuple[CorpusItem, ...] = field(repr=False)
 
@@ -612,6 +838,11 @@ def group(
     come from the same rows and the same union-find, so the difference between the two
     is the filter and nothing else.
 
+    The baseline is what the file holds and what it has always held, and the cohesion
+    system filters it rather than replacing it: `CohesionSystem` carries the whole of
+    the baseline, so the two tiers are figures over one tuple rather than two runs that
+    could only be compared against each other by eye (ADR-0028).
+
     The resolved links and the Contact Points are arguments rather than something read
     here. They are produced by the same `post_domains` and the same `contacts.extract`
     that the earlier commands publish, so the two cannot disagree unless those
@@ -619,6 +850,13 @@ def group(
     not read: the grouping is a function of the Corpus alone, and re-reading a derived
     file would make the result depend on whether somebody had remembered to run the
     step before it.
+
+    The Scam Categories are placed here rather than read from
+    `data/corpus/composition.jsonl`, for the same reason the links are resolved rather
+    than read: the grouping is a function of the Corpus, and a fifth published file would
+    make it a function of whether somebody had run a command first. `placement.place` is
+    the function the other two commands place with, so the three cannot disagree about
+    what a post's class is.
 
     The vectors are the exception, and they are read from the table rather than
     recomputed: they are the one input this call cannot have another answer to, and
@@ -630,9 +868,12 @@ def group(
     Candidates come out largest first, then by the accounts' names, so a fixed Corpus
     produces a fixed list under fixed identifiers — under the clock's key and then the
     vectors', because that is the whole of what either is allowed to do here
-    (ADR-0005). The identifier says where a candidate sits in the output and nothing
-    else: it is not an identity that survives the Corpus changing underneath it, or the
-    threshold moving.
+    (ADR-0005). The cohesion system does not reorder them, deliberately: the baseline and
+    its identifiers are what the file has published since before the system existed, and
+    moving them would make the pre-corroboration number a reconstruction rather than a
+    record. What the system decided is said beside each candidate instead. The identifier
+    says where a candidate sits in the output and nothing else: it is not an identity that
+    survives the Corpus changing underneath it, or the threshold moving.
     """
     window_seconds = _window_seconds(window_hours)
     _require_threshold(threshold)
@@ -643,6 +884,8 @@ def group(
     points = shared_contact_points(read_contact_points(corpus))
     created_at = {item.post_id: item.created_at for item in corpus}
     items = {item.post_id: item for item in corpus}
+    check_placements()
+    categories = {item.post_id: place(item).scam_category for item in corpus}
 
     connection = open_store(connection_string())
     try:
@@ -651,8 +894,8 @@ def group(
         connection.close()
 
     withheld = shared.withheld()
-    kept = _Reach.of(rows, points, created_at, withheld, items, vectors)
-    unfiltered = _Reach.of(rows, points, created_at, frozenset(), items, vectors)
+    kept = _Reach.of(rows, points, created_at, withheld, items, vectors, categories)
+    unfiltered = _Reach.of(rows, points, created_at, frozenset(), items, vectors, categories)
     candidates = tuple(
         kept.candidate(f"cc-{number:02d}", accounts, window_seconds, threshold)
         for number, accounts in enumerate(kept.ordered(window_seconds, threshold), start=1)
@@ -671,6 +914,7 @@ def group(
         filtered=shared_filter,
         temporal=_corroboration(window_seconds, candidates),
         content=_similarity_corroboration(threshold, candidates),
+        cohesion=CohesionSystem(candidates),
         candidates=candidates,
         corpus=corpus,
     )
@@ -770,6 +1014,12 @@ class _Reach:
     post that reached no registration still counts towards when its account was active.
     That matters — the complaint a victim writes about a desk arrives weeks after the
     desk's own posts, and it is the timestamp of both that says so.
+
+    `categories` is each post's Scam Category, placed once by `group` and handed to both
+    of this class's graphs, so the two are reading one pass rather than placing the
+    Corpus twice. The category tally is counted per component like everything else here,
+    because the question it answers — do these accounts agree on a pitch — is a question
+    about the component and not about the Corpus.
     """
 
     accounts_by_domain: dict[str, set[str]]
@@ -780,6 +1030,7 @@ class _Reach:
     moments: dict[str, tuple[datetime, ...]]
     items: Mapping[str, CorpusItem]
     vectors: Mapping[str, Sequence[float]]
+    categories: Mapping[str, str]
 
     @classmethod
     def of(
@@ -790,6 +1041,7 @@ class _Reach:
         withheld: frozenset[str],
         items: Mapping[str, CorpusItem],
         vectors: Mapping[str, Sequence[float]],
+        categories: Mapping[str, str],
     ) -> _Reach:
         """What the rows reach, with `withheld` kept out of the graph entirely.
 
@@ -802,7 +1054,7 @@ class _Reach:
         The posts of both still count towards the accounts that wrote them, because a
         post is why an account is silent, not why its other posts do not exist.
         """
-        reach = cls({}, {}, {}, {}, {}, {}, items, vectors)
+        reach = cls({}, {}, {}, {}, {}, {}, items, vectors, categories)
         for row in rows:
             reach.posts_by_account.setdefault(row.account, set()).add(row.post_id)
             _earliest(reach.first_seen, row.account, created_at[row.post_id])
@@ -891,6 +1143,16 @@ class _Reach:
         """
         return _similarity_summary(self.similarity(accounts), threshold)
 
+    def category_agreement(self, accounts: frozenset[str]) -> CategoryAgreement:
+        """What the Scam Categories say about one component, against ADR-0021's rule.
+
+        Counted over every post the component holds rather than the posts carrying shared
+        evidence, because the question is whether the accounts inside it are making the
+        same pitch — and an account that published a handle once and posts about something
+        else for a year was still part of the pitch when it did.
+        """
+        return _agreement([self.categories[post_id] for post_id in self.posts_of(accounts)])
+
     def similarity(self, accounts: frozenset[str]) -> tuple[SimilarityEvidence, ...]:
         """The similarity rows of every post of one component."""
         return within_component_similarity(
@@ -942,6 +1204,7 @@ class _Reach:
             similarity=within_component_similarity(
                 [self.items[post_id] for post_id in self.posts_of(accounts)], self.vectors
             ),
+            category=self.category_agreement(accounts),
         )
 
     def _gap(self, kind: EvidenceKind, value: str, reaching: Collection[str]) -> EvidenceTiming:
@@ -1009,6 +1272,8 @@ class _Reach:
         beside a piece of evidence it does not name or name one it has no gap for.
         """
         joined = self._joined(accounts)
+        timing = _summary(joined.timing, window_seconds)
+        similarity = _similarity_summary(joined.similarity, threshold)
         return CampaignCandidate(
             candidate_id=candidate_id,
             accounts=tuple(sorted(accounts)),
@@ -1016,9 +1281,10 @@ class _Reach:
             shared_domains=joined.domains,
             shared_contact_points=joined.points,
             corroboration=joined.timing,
-            timing=_summary(joined.timing, window_seconds),
+            timing=timing,
             similarity=joined.similarity,
-            content_similarity=_similarity_summary(joined.similarity, threshold),
+            content_similarity=similarity,
+            cohesion=Cohesion(timing=timing, similarity=similarity, category=joined.category),
             first_seen=min(self.first_seen[account] for account in accounts),
         )
 
@@ -1413,6 +1679,16 @@ def write_campaign_candidates(path: Path, candidates: Sequence[CampaignCandidate
                     "corroborated": candidate.content_similarity.corroborated,
                     "closest_distance": candidate.content_similarity.closest_distance,
                 },
+                "cohesion": {
+                    "against": list(candidate.cohesion.against),
+                    "category": {
+                        "tally": [
+                            [name, count] for name, count in candidate.cohesion.category.tally
+                        ]
+                    },
+                    "corroborating": list(candidate.cohesion.corroborating),
+                    "retained": candidate.cohesion.retained,
+                },
                 "first_seen": candidate.first_seen,
             }
 
@@ -1449,6 +1725,15 @@ def read_campaign_candidates(path: Path) -> tuple[CampaignCandidate, ...]:
     one published weight set: `corroborated` means nothing without the threshold it was
     counted against, so a file written by two runs at two windows is refused rather than
     read as one figure.
+
+    The cohesion row is checked the same way and with more behind it, because it is
+    counted from three verdicts rather than from one list: the tally has to name Scam
+    Categories the projection publishes, has to account for every post the row holds, and
+    the count beside it has to be the number of the three verdicts that actually hold on
+    this row. The third is the one that cannot be recomputed from anything else here — the
+    evaluator cannot place posts without opening the phrase lists, and opening them would
+    put a fifth file into a command that does no inference — so it is checked for what it
+    must be consistent with and taken as published for the rest.
     """
     candidates = tuple(_candidate(path, number, text) for number, text in read_rows(path))
     refuse_repeated(
@@ -1494,6 +1779,8 @@ def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
     pieces = _gaps(where, record, names)
     posts = read_names(where, record, "posts")
     similarity_rows = _similarity(where, record, accounts, posts)
+    timing = _timing(where, record, names, pieces)
+    content_similarity = _content_similarity(where, record, similarity_rows)
     return CampaignCandidate(
         candidate_id=read_text(where, record, "candidate_id"),
         accounts=accounts,
@@ -1505,9 +1792,10 @@ def _candidate(path: Path, number: int, text: str) -> CampaignCandidate:
             _point(where, entry, accounts) for entry in points if isinstance(entry, dict)
         ),
         corroboration=pieces,
-        timing=_timing(where, record, names, pieces),
+        timing=timing,
         similarity=similarity_rows,
-        content_similarity=_content_similarity(where, record, similarity_rows),
+        content_similarity=content_similarity,
+        cohesion=_cohesion(where, record, posts, timing, content_similarity),
         first_seen=read_text(where, record, "first_seen"),
     )
 
@@ -1813,6 +2101,153 @@ def _content_similarity(
     )
 
 
+def _agreement(scams: Sequence[str]) -> CategoryAgreement:
+    """One candidate's Scam Category tally, from the classes its posts were placed in.
+
+    A pure function of the classes rather than of the posts, so the grouping and the
+    reader check it over the same input and neither of them has to place anything again:
+    the file holds the tally and the reader decides the majority from it, the same way
+    `read_policy_scores` decides a Signal's arithmetic from the rows beside it.
+
+    The order is a printing order rather than an input — widest class first and Other
+    last, so the leading entry of the tally is never a bucket that cannot be associated
+    with anything — and it is `placement.in_print_order`, the same one a registration's
+    tally is printed in. `placement.agreed_category` finds the widest class itself, so a
+    reader counting the tally by eye and the code deciding the majority cannot reach the
+    same answer by two different routes.
+    """
+    counted: dict[str, int] = {}
+    for scam in scams:
+        counted[scam] = counted.get(scam, 0) + 1
+    return CategoryAgreement(tally=in_print_order(tuple(counted.items())))
+
+
+def _cohesion(
+    where: str,
+    record: JsonObject,
+    posts: Sequence[str],
+    timing: Timing,
+    similarity: ContentSimilarity,
+) -> Cohesion:
+    """One row's cohesion score, checked against the three verdicts the row publishes.
+
+    Five checks, all of them ways this file could lie about the one figure it exists to
+    measure. The tally has to name classes the projection publishes, or the majority
+    below it would be a majority of something this build has never heard of. It has to
+    account for every post the row holds, or the candidate would be scored on a subset of
+    its own content. It has to hold no class twice, or the counts beside it would add up
+    to more posts than there are. The two name lists have to partition the corroborations
+    between them — one name twice, one missing, one invented — because the names are what
+    a reader weighs and a reader cannot weigh a list that does not add up. And the list
+    has to be the one the clock, the vectors and the tally on this same row produce, which
+    is the check the whole ticket rests on: a figure the evaluator publishes without being
+    able to bear it out would be the claim the recovery report is built to avoid.
+    """
+    carried = record["cohesion"]
+    if not isinstance(carried, dict):
+        raise ValueError(f"{where} has cohesion={carried!r}, which is not a row")
+    if set(carried) != set(COHESION_FIELDS):
+        raise ValueError(
+            f"{where} holds cohesion with {sorted(carried)}, and the cohesion vocabulary "
+            f"is {sorted(COHESION_FIELDS)}"
+        )
+    cohesion = Cohesion(
+        timing=timing,
+        similarity=similarity,
+        category=_tally(where, carried, posts),
+    )
+    named = read_names(where, carried, "corroborating")
+    against = read_names(where, carried, "against")
+    for name, field in ((named, "corroborating"), (against, "against")):
+        unknown = sorted(set(name) - set(CORROBORATIONS))
+        if unknown:
+            raise ValueError(
+                f"{where} names {unknown} in {field}, and the corroborations are "
+                f"{', '.join(CORROBORATIONS)}"
+            )
+    if set(named) | set(against) != set(CORROBORATIONS):
+        raise ValueError(
+            f"{where} names {sorted(named)} as corroborated and {sorted(against)} as "
+            f"against, which is not the {len(CORROBORATIONS)} corroborations between them"
+        )
+    if set(named) != set(cohesion.corroborating):
+        raise ValueError(
+            f"{where} names {sorted(named)} as corroborated and publishes "
+            f"{sorted(cohesion.corroborating)} beside a tally of "
+            f"{list(cohesion.category.tally)}"
+        )
+    retained = carried["retained"]
+    if not isinstance(retained, bool):
+        raise ValueError(f"{where} has retained={retained!r}, which is not a yes or a no")
+    if retained is not cohesion.retained:
+        raise ValueError(
+            f"{where} says retained={retained} and names {len(named)} of the "
+            f"{len(CORROBORATIONS)} corroborations, which retains a candidate on "
+            f"{QUORUM}"
+        )
+    return cohesion
+
+
+def _tally(where: str, record: JsonObject, posts: Sequence[str]) -> CategoryAgreement:
+    """One row's category tally, checked as a tally of the row's own posts.
+
+    The refusals are the ways this list could make the majority beside it a claim: a
+    class the projection does not publish, a count that is not a count of postings, a
+    class counted twice, and a list that does not add up to the posts the row holds. None
+    of them is a figure a reader could check by counting, which is the whole of what this
+    row is for. An empty list is refused rather than read as a candidate making no claim
+    at all: a Campaign Candidate always holds posts, so a tally of none is a tally of
+    something other than this row.
+    """
+    carried = record["category"]
+    if not isinstance(carried, dict):
+        raise ValueError(f"{where} has cohesion.category={carried!r}, which is not a row")
+    vocabulary = tuple(field.name for field in fields(CategoryAgreement))
+    if set(carried) != set(vocabulary):
+        raise ValueError(
+            f"{where} holds category with {sorted(carried)}, which is not the category "
+            f"vocabulary {sorted(vocabulary)}"
+        )
+    entries = carried["tally"]
+    if not isinstance(entries, list):
+        raise ValueError(f"{where} has category.tally={entries!r}, which is not a list")
+    if not entries:
+        raise ValueError(
+            f"{where} publishes no posts in any Scam Category and lists {len(posts)} "
+            "posts, so its Scam Categories are about something other than this candidate"
+        )
+    known = {scam.name for scam in EVERY_CATEGORY}
+    tally: list[tuple[str, int]] = []
+    for entry in entries:
+        if not isinstance(entry, list) or len(entry) != 2:
+            raise ValueError(
+                f"{where} has a tally row {entry!r}, which is not a class and a count"
+            )
+        name, count = entry
+        if name not in known:
+            raise ValueError(
+                f"{where} tallies {name!r}, which is a category this build does not publish: "
+                f"the names are {', '.join(sorted(known))}"
+            )
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise ValueError(
+                f"{where} tallies {name!r} at {count!r}, which is not a count of postings"
+            )
+        tally.append((name, count))
+    refuse_repeated(
+        f"{where} category tally",
+        (name for name, _ in tally),
+        "the counts beside it would then add up to more posts than the candidate holds",
+    )
+    if sum(count for _, count in tally) != len(posts):
+        raise ValueError(
+            f"{where} tallies {sum(count for _, count in tally)} postings and lists "
+            f"{len(posts)} posts, so its Scam Categories are about something other than "
+            "this candidate"
+        )
+    return CategoryAgreement(tally=in_print_order(tally))
+
+
 def _seconds(where: str, record: JsonObject, field_name: str) -> int:
     """One duration in seconds, refused when it is anything else.
 
@@ -1917,13 +2352,15 @@ def render_table(grouping: Grouping) -> str:
     by_post = _posts_by_id(grouping.corpus)
     sections = (
         f"{_HEADING}\n\n{_SUBHEADING}",
-        _figures(grouping.facts, grouping.filtered, grouping.temporal, grouping.content),
+        _figures(grouping.facts, grouping.filtered, grouping.temporal, grouping.content,
+                 grouping.cohesion),
         _index(grouping.candidates),
         "\n\n".join(_block(candidate, by_post) for candidate in grouping.candidates),
         _uncorroborated(grouping.temporal),
         _deprioritised_by_similarity(grouping.content),
+        _filtered_by_cohesion(grouping.cohesion),
         _withheld(grouping.filtered),
-        _footer(grouping.filtered, grouping.temporal, grouping.content),
+        _footer(grouping.filtered, grouping.temporal, grouping.content, grouping.cohesion),
     )
     return "\n\n".join(section for section in sections if section) + "\n"
 
@@ -1933,6 +2370,7 @@ def _figures(
     shared: SharedFilter,
     temporal: Corroboration,
     similarity: SimilarityCorroboration,
+    cohesion: CohesionSystem,
 ) -> str:
     """What was read, and what came of it. One figure per line, labelled.
 
@@ -1946,6 +2384,12 @@ def _figures(
     of their own, because a corroborated count without the threshold it was counted
     against is not a figure: `3 of 4` beside a threshold nobody can see is a score
     out of an unknown number.
+
+    The last two lines are the two tiers ADR-0009 asks for, and they are adjacent on
+    purpose: the baseline says what direct adjacency found and the line under it says
+    what the cohesion system retained of it and how many it removed. Printing the second
+    alone would leave a reader with a number and no way to tell a filtering decision from
+    a bug, and printing the first alone would make the corroboration step an assertion.
     """
     fields = (
         ("corpus", facts.corpus_path),
@@ -1973,9 +2417,42 @@ def _figures(
         ("timing", _timing_counts(temporal)),
         ("threshold", f"cosine distance at most {_distance(similarity.threshold)} between two posts in one candidate"),
         ("similarity", _similarity_counts(similarity)),
+        ("baseline", _baseline_counts(cohesion)),
+        ("cohesion", _cohesion_counts(cohesion)),
     )
     width = max(len(name) for name, _ in fields)
     return "\n".join(f"  {name.ljust(width)}  {value}" for name, value in fields)
+
+
+def _baseline_counts(cohesion: CohesionSystem) -> str:
+    """What direct adjacency found, named as such rather than as the result.
+
+    The candidates and the accounts are `Grouping`'s own partition rather than this
+    system's, and the two lines below and above this one are what make them checkable: the
+    `grouped` line says how many candidates there are over the same Corpus, so a reader
+    who adds them up is adding up two accounts of the same partition and not comparing
+    two runs.
+    """
+    return (
+        f"{_count(cohesion.baseline, 'candidate')} over "
+        f"{_count(cohesion.accounts, 'account')}, by direct adjacency alone"
+    )
+
+
+def _cohesion_counts(cohesion: CohesionSystem) -> str:
+    """What the cohesion system retained, and the difference between the two tiers.
+
+    Both halves of the comparison rather than the retained count alone: a reader cannot
+    see what corroboration bought from `3 of 4` without the four, and cannot see that it
+    bought anything at all without being told how many were removed. The removed count is
+    stated even when it is nothing, because a run that removed nothing and a run that
+    never asked are two different things and the section below says which this was.
+    """
+    return (
+        f"{count_of(cohesion.retained, cohesion.baseline, 'candidate')} and "
+        f"{count_of(cohesion.retained_accounts, cohesion.accounts, 'account')} retained by the "
+        f"cohesion system, {cohesion.removed} filtered"
+    )
 
 
 def _similarity_counts(similarity: SimilarityCorroboration) -> str:
@@ -1987,8 +2464,8 @@ def _similarity_counts(similarity: SimilarityCorroboration) -> str:
     did not corroborate are below the table under their own heading.
     """
     return (
-        f"{_of(similarity.corroborated, similarity.candidates, 'candidate')} and "
-        f"{_of(similarity.corroborated_pieces, similarity.pieces, 'piece')} of evidence "
+        f"{count_of(similarity.corroborated, similarity.candidates, 'candidate')} and "
+        f"{count_of(similarity.corroborated_pieces, similarity.pieces, 'piece')} of evidence "
         "corroborated; no candidate removed"
     )
 
@@ -2007,8 +2484,8 @@ def _timing_counts(temporal: Corroboration) -> str:
     corroborate are below the table under their own heading.
     """
     return (
-        f"{_of(temporal.corroborated, temporal.candidates, 'candidate')} and "
-        f"{_of(temporal.corroborated_pieces, temporal.pieces, 'piece')} of evidence "
+        f"{count_of(temporal.corroborated, temporal.candidates, 'candidate')} and "
+        f"{count_of(temporal.corroborated_pieces, temporal.pieces, 'piece')} of evidence "
         "corroborated; no candidate removed"
     )
 
@@ -2021,9 +2498,9 @@ def _withheld_counts(shared: SharedFilter) -> str:
     of them would read as though it did not. A Corpus with no Contact Point at all says
     nothing rather than saying `0 of 0`.
     """
-    parts = [_of(len(shared.withheld), shared.registrations, "registration")]
+    parts = [count_of(len(shared.withheld), shared.registrations, "registration")]
     if shared.contact_points:
-        parts.append(_of(len(shared.withheld_points), shared.contact_points, "Contact Point"))
+        parts.append(count_of(len(shared.withheld_points), shared.contact_points, "Contact Point"))
     return (
         " and ".join(parts)
         + " withheld, removing "
@@ -2031,12 +2508,14 @@ def _withheld_counts(shared: SharedFilter) -> str:
     )
 
 
-def _of(number: int, total: int, noun: str) -> str:
+def count_of(number: int, total: int, noun: str) -> str:
     """How many of how many, with the total agreeing with its noun.
 
     The total is the one that reads as a count of things in the Corpus, so it is the
     one that has to agree: "0 of 1 Contact Points" would leave a reader wondering
-    whether the figure is wrong.
+    whether the figure is wrong. Public because `rfi campaign-recovery` prints the same
+    shape against its own nouns, and a figure a reader learns to read in one place
+    should not read differently in the next.
     """
     return f"{number} of {_count(total, noun)}"
 
@@ -2111,9 +2590,10 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
 
     The label comes first and the evidence follows it, so the block reads in the order a
     reader has to judge it in: which kind of claim this is, then what the clock made of
-    it, then the registrations, then the Contact Points, then the accounts and every post
-    they wrote. The timing sits beside each piece of evidence rather than in one list at
-    the end, because the claim it bears on is about that piece and nobody else.
+    it, then what the vectors made of it, then what the three add up to, then the
+    registrations, then the Contact Points, then the accounts and every post they wrote.
+    The timing sits beside each piece of evidence rather than in one list at the end,
+    because the claim it bears on is about that piece and nobody else.
     """
     timing = _gaps_by_value(candidate)
     window_seconds = candidate.timing.window_seconds
@@ -2123,6 +2603,8 @@ def _block(candidate: CampaignCandidate, posts: dict[str, CorpusItem]) -> str:
         f"  justified by  {_justified(candidate)}",
         f"  timing        {_candidate_timing(candidate)}",
         f"  similarity    {_candidate_similarity(candidate)}",
+        f"  cohesion      {_cohesion_of(candidate)}",
+        f"  categories    {_candidate_categories(candidate)}",
     ]
     if candidate.shared_domains:
         lines.append("  shared registrations")
@@ -2198,18 +2680,57 @@ def _candidate_similarity(candidate: CampaignCandidate) -> str:
     )
 
 
-def _within(piece: EvidenceTiming, window_seconds: int) -> str:
-    """One piece of evidence against the window, in the block under its own name.
+def _cohesion_of(candidate: CampaignCandidate) -> str:
+    """One candidate's cohesion score, the names behind it, and the verdict it carries.
 
-    The span leads because that is the figure the verdict is about, and the window is
-    named rather than referred to: `inside the window` in a block with four evidence rows
-    on it does not say which window.
+    Both halves, in this order, and never one without the other: the count says how much
+    corroboration the candidate has and the names say which corroboration, so a reader who
+    disagrees with the verdict has the evidence in front of them rather than a number to
+    take on trust. `retained` and `filtered` are the run's own words rather than softer
+    ones, because this is the one verdict in the module that removes a candidate from
+    what the system proposes and a reader has to be able to see that it happened.
+
+    The same line is printed under the candidate above and in the section below the table,
+    so the two cannot be read as two accounts of one decision.
     """
+    cohesion = candidate.cohesion
+    verdict = "retained" if cohesion.retained else "filtered"
     return (
-        f"{_gap(piece.span_seconds)} across, "
-        + ("inside" if piece.within(window_seconds) else "outside")
-        + f" the {_window_of(window_seconds)} window"
+        f"{verdict} on {len(cohesion.corroborating)} of {len(CORROBORATIONS)}: "
+        f"{names_of(cohesion.corroborating)}; against: {names_of(cohesion.against)}"
     )
+
+
+def _candidate_categories(candidate: CampaignCandidate) -> str:
+    """One candidate's Scam Category tally, and the class its posts agree on.
+
+    The tally is printed whole and beside the count of placed postings, for the reason
+    `Association` prints one registration's: a majority a reader cannot count is a
+    majority they have to accept. `no majority` and `too few placed` are the words the
+    registrations table uses for the same two outcomes, so a reader who has learned them
+    there needs not learn them again here (ADR-0021, ADR-0028).
+    """
+    agreement = candidate.cohesion.category
+    tally = ", ".join(f"{name} {count}" for name, count in agreement.tally)
+    verdict = (
+        f"agreeing on {agreement.scam_category}"
+        if agreement.corroborates
+        else agreement.why_not()
+    )
+    return (
+        f"{verdict}, from {agreement.placed} of {_count(len(candidate.posts), 'post')} "
+        f"placed: {tally}"
+    )
+
+
+def names_of(named: Sequence[str]) -> str:
+    """A list of corroboration names, or what to print when there are none.
+
+    `none` rather than an empty cell, because a blank after a colon reads as a figure the
+    run forgot to print rather than as the claim that nothing corroborated it — which is
+    exactly the candidate a reader most needs to be told about.
+    """
+    return ", ".join(named) if named else "none"
 
 
 def _window(window_seconds: int) -> str:
@@ -2287,7 +2808,7 @@ def _uncorroborated(temporal: Corroboration) -> str:
             f"inside {window}"
         )
     lines = [
-        f"uncorroborated  {_of(len(temporal.deprioritised), temporal.candidates, 'candidate')} "
+        f"uncorroborated  {count_of(len(temporal.deprioritised), temporal.candidates, 'candidate')} "
         f"deprioritised: no evidence under them spans less than {window}, and none of "
         "them is removed for it"
     ]
@@ -2323,7 +2844,7 @@ def _deprioritised_by_similarity(similarity: SimilarityCorroboration) -> str:
             f"every post within {threshold}"
         )
     lines = [
-        f"filtered by similarity  {_of(len(similarity.deprioritised), similarity.candidates, 'candidate')} "
+        f"filtered by similarity  {count_of(len(similarity.deprioritised), similarity.candidates, 'candidate')} "
         f"deprioritised: in none of them does every post have a near-twin by another "
         f"account within {threshold}, and none of them is removed for it"
     ]
@@ -2334,6 +2855,58 @@ def _deprioritised_by_similarity(similarity: SimilarityCorroboration) -> str:
             f"{_distance(candidate.content_similarity.closest_distance)} apart"
         )
     return "\n".join(lines)
+
+
+def _within(piece: EvidenceTiming, window_seconds: int) -> str:
+    """One piece of evidence against the window, in the block under its own name.
+
+    The span leads because that is the figure the verdict is about, and the window is
+    named rather than referred to: `inside the window` in a block with four evidence rows
+    on it does not say which window.
+    """
+    return (
+        f"{_gap(piece.span_seconds)} across, "
+        + ("inside" if piece.within(window_seconds) else "outside")
+        + f" the {_window_of(window_seconds)} window"
+    )
+
+
+def _filtered_by_cohesion(cohesion: CohesionSystem) -> str:
+    """Every candidate the cohesion system removed, named with what removed it.
+
+    Printed on every run, including one where there are none, for the reason the two
+    sections above it are: a section that appears only when it is bad is a section a
+    reader cannot tell from a missing one. This one says `filtered` rather than
+    `deprioritised`, because unlike them it removes — that is the difference ADR-0009
+    asks for and the reason the baseline is published beside it rather than replaced by
+    it, so a candidate listed here is still in the file and still in the table above with
+    its own evidence under it.
+
+    Each line is the same sentence the block above the table printed for that candidate,
+    so the two views cannot be read as two accounts of one decision.
+    """
+    total = len(CORROBORATIONS)
+    if not cohesion.filtered:
+        return (
+            f"filtered by cohesion  none: every candidate above holds at least {QUORUM} "
+            f"of the {total}"
+        )
+    lines = [
+        f"filtered by cohesion  {count_of(len(cohesion.filtered), cohesion.baseline, 'candidate')} "
+        f"removed: fewer than {QUORUM} of the {total} corroborations under "
+        f"{_plural(len(cohesion.filtered), 'it', 'them')} hold"
+    ]
+    for candidate in cohesion.filtered:
+        lines.append(
+            f"  {candidate.candidate_id}  {_count(len(candidate.accounts), 'account')}, "
+            f"{_count(len(candidate.posts), 'post')}  {_cohesion_of(candidate)}"
+        )
+    return "\n".join(lines)
+
+
+def _plural(number: int, one: str, many: str) -> str:
+    """The word that agrees with a count: one candidate holds, none hold."""
+    return one if number == 1 else many
 
 
 def _withheld(shared: SharedFilter) -> str:
@@ -2412,7 +2985,12 @@ def _kinds(item: WithheldRegistration) -> tuple[str, ...]:
     return tuple(dict.fromkeys(host.kind.value.replace("_", " ") for host in item.hosts))
 
 
-def _footer(shared: SharedFilter, temporal: Corroboration, similarity: SimilarityCorroboration) -> str:
+def _footer(
+    shared: SharedFilter,
+    temporal: Corroboration,
+    similarity: SimilarityCorroboration,
+    cohesion: CohesionSystem,
+) -> str:
     """What the run can and cannot claim, and where the filter comes from.
 
     The list is named rather than described, because the claim that the junk is gone
@@ -2424,6 +3002,27 @@ Every candidate above rests on a shared registrable domain, a shared Contact Poi
 both, and on nothing else. Timing and content similarity are read as corroboration
 and neither could produce a candidate on its own, which is what ADR-0005 and
 ADR-0026 require.
+
+The two tiers are published as a pair because ADR-0009 asks for both and neither alone
+(ADR-0028). The baseline is what direct adjacency found: {_count(cohesion.baseline, 'candidate')}
+over {_count(cohesion.accounts, 'account')}, decided by nothing but the links and the Contact
+Points. The cohesion system is what it retained of that, {_count(cohesion.retained, 'candidate')}
+over {_count(cohesion.retained_accounts, 'account')}, once temporal proximity, content similarity
+and agreement on Scam Category have each had their say. A candidate is retained on
+{QUORUM} of the {len(CORROBORATIONS)}, and every candidate says which held and which went against
+it. Nothing here is published as the result on its own, because a reader shown the lower
+number with nothing beside it cannot tell a filtering decision from a bug, and one shown
+the higher number cannot tell what corroboration bought. This run removes
+{cohesion.removed} of {cohesion.baseline}, each named below the table with the evidence that
+removed it.
+
+The first removal this module makes for any reason but known-shared infrastructure is
+this one. The clock and the vectors may order and deprioritise, and the categories join
+them in that, but none of them may create a candidate at any window or any threshold; the
+cohesion system filters candidates that shared infrastructure already proposed, and it
+publishes each one it removes rather than deleting it. The baseline is left in the file
+exactly as it was, with its identifiers where they were, so the pre-corroboration number
+is a record rather than something a reader has to reconstruct.
 
 Timing corroborates a grouping and never creates one. Two accounts that post in the same
 minute and share nothing are not grouped, and this run would not group them whatever the
@@ -2452,6 +3051,17 @@ this Corpus's own Planted Campaign does, and a signal that corroborates nothing 
 no signal at all. So the threshold is stated beside every figure it was counted against,
 the candidates it corroborates nothing under are named with the nearest distance rather
 than discarded, and the only candidate-level verdict it can carry is corroboration.
+
+Agreement on Scam Category corroborates a grouping and never establishes one either. A
+candidate whose posts all landed in one class is a group of accounts making the same
+pitch, which is a stronger claim than shared infrastructure and a weaker one than
+identity: there are only ten classes, two desks running two different pitches share a
+class by coincidence, and the placing itself is a phrase list read off a post's own words
+(ADR-0017), so a candidate of complaints about one desk agrees with the desk it is
+complaining about. The tally is printed beside every candidate for the same reason the
+distances are: a class a reader cannot count is a class they have to accept. `Other` is
+never agreed on, because a post no list matched makes no claim at all, and a component
+whose posts split evenly is reported as `no majority` rather than settled by a tie-break.
 
 The two edges are not equally good, and each candidate says which one it rests on. A
 registration is somebody's property and this project resolves it against the published

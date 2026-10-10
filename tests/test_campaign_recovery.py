@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from conftest import SCRATCH_TABLE, needs_database, seed_vectors
+from reddit_fraud_intelligence.campaigns import CORROBORATIONS as COHESION
 from reddit_fraud_intelligence.cli import (
     DEFAULT_CANDIDATES_PATH,
     DEFAULT_CORPUS_PATH,
@@ -197,6 +198,7 @@ def candidate(
     *domains: str,
     points: Iterable[str] = (),
     closest_seconds: int = 0,
+    category: str = "Work and Payroll",
 ) -> Row:
     """One row of `campaign-candidates.jsonl`, hand-written.
 
@@ -208,6 +210,14 @@ def candidate(
     hand the evaluator a candidate whose clock disagrees with itself. Every piece here is
     written with a gap of nothing, which is what a Corpus of posts written at one instant
     gives; `closest_seconds` moves the whole row when a test needs a gap.
+
+    The cohesion row is written for the same reason and derived the same way the reader
+    derives it: the clock corroborates when the row names any evidence at all, the vectors
+    always corroborate, and the categories corroborate unless `category` is `Other`. So a
+    test writes the candidate it means rather than the verdict it wants, and the reader
+    still has something to disagree with. `Other` is how a candidate whose posts are placed
+    in no class at all is written, and it is the way to write one the cohesion system
+    removes.
     """
     accounts = sorted(accounts)
     posts = sorted(posts)
@@ -227,6 +237,7 @@ def candidate(
         }
         for index, post in enumerate(posts)
     ]
+    holds = (bool(gaps), True, category != "Other")
     return {
         "candidate_id": candidate_id,
         "accounts": accounts,
@@ -257,6 +268,20 @@ def candidate(
             "pieces": len(posts),
             "corroborated": len(posts),
             "closest_distance": 0.0,
+        },
+        "cohesion": {
+            "against": [
+                name
+                for name, held in zip(
+                    COHESION, (bool(gaps), True, category != "Other")
+                )
+                if not held
+            ],
+            "category": {"tally": [[category, len(posts)]]},
+            "corroborating": [
+                name for name, held in zip(COHESION, holds) if held
+            ],
+            "retained": sum(holds) >= 2,
         },
         "first_seen": "2026-01-05T09:00:00Z",
     }
@@ -2091,3 +2116,304 @@ def test_the_command_refuses_to_write_the_report_over_the_membership(
         )
 
     assert not truth.exists()
+
+
+# --- the cohesion system, and the baseline it filters ----------------------------
+
+
+def filtered_candidate(candidate_id: str = "cc-01") -> Row:
+    """A candidate the cohesion system removes: one corroboration out of three.
+
+    The clock does not corroborate it — two accounts that reached one registration two
+    days apart are not what a 24-hour window calls one operator — the categories do not
+    agree — every post landed in Other, which makes no claim about anything — and the
+    vectors do corroborate it, because every post has a twin at no distance at all. One
+    of the three is not enough, so the cohesion system filters it.
+
+    The timing and the cohesion row are both written here rather than left to the helper's
+    defaults, because this is the one candidate the clock does not corroborate and both
+    rows have to agree about it: the reader checks the names against the clock, the
+    vectors and the tally on the same row, so a helper that derived the names before the
+    timing was overridden would hand it a file it must refuse.
+    """
+    return {
+        **candidate(
+            candidate_id,
+            ("syn_alpha_0001", "syn_beta_0002"),
+            ("syn_p_0001", "syn_p_0002"),
+            "vantage-ledger.example",
+            closest_seconds=172_800,
+            category="Other",
+        ),
+        "timing": {
+            "window_seconds": 86_400,
+            "pieces": 1,
+            "corroborated": 0,
+            "closest_seconds": 172_800,
+        },
+        "cohesion": {
+            "against": ["temporal proximity", "category agreement"],
+            "category": {"tally": [["Other", 2]]},
+            "corroborating": ["content similarity"],
+            "retained": False,
+        },
+    }
+
+
+def one_campaign(directory: Path) -> tuple[Path, Path, Path]:
+    """A Corpus of two posts and the membership and manifest that go with it.
+
+    Both are written here rather than pointed at the committed files, because the point
+    of the test is what the run does with a candidate the cohesion system removed, and a
+    membership naming accounts this Corpus does not hold would be refused by a check that
+    has nothing to do with the section under test.
+    """
+    corpus = corpus_of(
+        directory,
+        post("syn_p_0001", "syn_alpha_0001"),
+        post("syn_p_0002", "syn_beta_0002"),
+    )
+    truth = write_rows(
+        directory / "truth.jsonl",
+        [campaign("syn-campaign-one", ("syn_alpha_0001", "syn_beta_0002"), ("syn_p_0001",))],
+    )
+    nuisance_path = write_rows(
+        directory / "nuisance.jsonl",
+        [nuisance("syn-nuisance-single", NuisanceKind.SINGLE_ACCOUNT_DOMAIN)],
+    )
+    return corpus, truth, nuisance_path
+
+
+def test_the_baseline_and_the_cohesion_system_are_reported_side_by_side(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ticket #26's own acceptance, on the run that measures the claim.
+
+    The console names both tiers on adjacent lines and the difference between them is in
+    the second of the two, because a reader shown `3 of 4` with nothing beside it cannot
+    tell a filtering decision from a bug. The page holds the same pair as a table, so
+    neither view can be read without the other, and neither can quietly drop the baseline
+    — which is the failure this ticket exists to prevent.
+    """
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+    flat = " ".join(printed.split())
+
+    assert (
+        "baseline 4 candidates over 12 accounts by direct adjacency, recovering 1 of 2 "
+        "Planted Campaigns" in flat
+    )
+    assert (
+        "cohesion 3 of 4 candidates and 9 of 12 accounts retained by the cohesion system, "
+        "1 filtered, recovering 1 of 2 Planted Campaigns" in flat
+    )
+
+    assert "| Direct adjacency (baseline) | 4 | 12 |" in page
+    assert "| Cohesion system | 3 | 9 |" in page
+
+
+def test_a_planted_campaign_the_cohesion_system_filters_is_named_with_the_reason(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The miss this ticket is about, and the diagnosability #26 asks for.
+
+    The baseline recovers the campaign whole, and the cohesion system would not have
+    proposed the candidate holding it at all. A report that said only `1 of 2` would be
+    describing the baseline and calling it the result, so the run has to name the
+    campaign, name the candidate that carried it, and name the corroborations that went
+    against that candidate — the three facts a reader needs to disagree with the removal
+    or to go and look at the corpus themselves.
+    """
+    corpus, truth, nuisance_path = one_campaign(tmp_path)
+    candidates = write_rows(tmp_path / "campaign-candidates.jsonl", [filtered_candidate()])
+
+    _, report, printed = run(
+        tmp_path,
+        corpus=corpus,
+        candidates=candidates,
+        truth=truth,
+        nuisance=nuisance_path,
+        capsys=capsys,
+    )
+    page = report.read_text(encoding="utf-8")
+
+    assert "filtered by cohesion  1 of 1 Campaign Candidate removed" in printed
+    section = printed.split("filtered by cohesion")[1]
+    assert "on  content similarity" in section
+    assert "against  temporal proximity, category agreement" in section
+    assert (
+        "syn-campaign-one  the cohesion system reaches it only through cc-01, which it "
+        "removes; the baseline above reaches it as recovered" in section
+    )
+    assert "1 of 1 Planted Campaign is named only by a removed candidate" in section
+
+    assert "syn-campaign-one" in page
+    flat_page = " ".join(page.split())
+    assert "carrying **1 of the 1** Planted Campaigns with it" in flat_page
+    assert "removes for temporal proximity, category agreement" in flat_page
+
+
+def test_no_planted_campaign_is_filtered_and_the_run_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The shipped Corpus's own answer, and the reason it is worth printing.
+
+    The one candidate the cohesion system removes here is the desk behind the obfuscated
+    handles, which is no Planted Campaign at all — so removing it costs the recovery
+    figure nothing, and the run says that in the same breath as the removal. A section
+    that appears only when it is bad cannot be told from one that never ran, and a miss
+    nobody can see is a miss nobody can diagnose.
+    """
+    _, report, printed = run(tmp_path, capsys=capsys)
+    page = report.read_text(encoding="utf-8")
+
+    assert "filtered by cohesion  1 of 4 Campaign Candidates removed" in printed
+    assert (
+        "0 of 2 Planted Campaigns are named only by a removed candidate" in printed
+    )
+    assert (
+        "none: syn-campaign-alpha, syn-campaign-beta each reach a candidate the system "
+        "retains" in printed
+    )
+    assert "carries **none of the 2** Planted Campaigns with it" in " ".join(page.split())
+
+
+def test_the_cohesion_system_removing_nothing_is_still_a_figure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A baseline and a system that agree are a finding, and it has to be printable.
+
+    Every candidate hand-written here is corroborated on all three, so the two tiers are
+    the same number and the difference is nothing. That has to read as `0 filtered` and
+    as an empty section rather than as a missing section: a reader looking for what the
+    system dropped has to be able to tell "it dropped nothing" from "it was never asked".
+    """
+    corpus, truth, nuisance_path = one_campaign(tmp_path)
+    candidates = write_rows(
+        tmp_path / "campaign-candidates.jsonl",
+        [
+            candidate(
+                "cc-01",
+                ("syn_alpha_0001", "syn_beta_0002"),
+                ("syn_p_0001", "syn_p_0002"),
+                "vantage-ledger.example",
+            )
+        ],
+    )
+
+    _, _, printed = run(
+        tmp_path,
+        corpus=corpus,
+        candidates=candidates,
+        truth=truth,
+        nuisance=nuisance_path,
+        capsys=capsys,
+    )
+    flat = " ".join(printed.split())
+
+    assert (
+        "cohesion 1 of 1 candidates and 2 of 2 accounts retained by the cohesion system, "
+        "0 filtered, recovering 1 of 1 Planted Campaigns" in flat
+    )
+    assert (
+        "filtered by cohesion none: every Campaign Candidate above is corroborated on at "
+        "least 2 of the 3" in flat
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "said"),
+    (
+        pytest.param(
+            {"cohesion": {"against": ["content similarity"],
+                           "category": {"tally": [["Work and Payroll", 2]]},
+                           "corroborating": ["content similarity"],
+                           "retained": True}},
+            "names ['content similarity'] as corroborated",
+            id="a name the three verdicts beside it deny",
+        ),
+        pytest.param(
+            {"cohesion": {"against": [],
+                           "category": {"tally": [["Work and Payroll", 2]]},
+                           "corroborating": ["temporal proximity", "content similarity",
+                                             "category agreement"],
+                           "retained": False}},
+            "names 3 of the 3 corroborations, which retains a candidate on 2",
+            id="a retained flag its own names contradict",
+        ),
+        pytest.param(
+            {"cohesion": {"against": ["content similarity"],
+                           "category": {"tally": [["Extortion", 1], ["Other", 1]]},
+                           "corroborating": ["temporal proximity", "content similarity",
+                                             "category agreement"],
+                           "retained": True}},
+            "names ['category agreement', 'content similarity', 'temporal proximity'] "
+            "as corroborated",
+            id="a tally that splits and claims agreement",
+        ),
+        pytest.param(
+            {"cohesion": {"against": ["content similarity"],
+                           "category": {"tally": [["Conspiracy", 2]]},
+                           "corroborating": ["temporal proximity", "content similarity",
+                                             "category agreement"],
+                           "retained": True}},
+            "a category this build does not publish",
+            id="a tally naming no Scam Category",
+        ),
+        pytest.param(
+            {"cohesion": {"against": [],
+                           "category": {"tally": []},
+                           "corroborating": ["temporal proximity", "content similarity",
+                                             "category agreement"],
+                           "retained": True}},
+            "publishes no posts in any Scam Category",
+            id="an empty tally over a candidate holding posts",
+        ),
+        pytest.param(
+            {"cohesion": {"against": ["content similarity"],
+                           "category": {"tally": [["Work and Payroll", 2]]},
+                           "corroborating": ["temporal proximity"],
+                           "retained": False}},
+            "which is not the 3 corroborations between them",
+            id="a corroboration named on neither list",
+        ),
+        pytest.param(
+            {"cohesion": {"against": ["content similarity"],
+                           "category": {"tally": [["Work and Payroll", 2]]},
+                           "corroborating": ["temporal proximity", "temporal proximity"],
+                           "retained": True}},
+            "names one thing twice",
+            id="a corroboration named twice",
+        ),
+        pytest.param(
+            {"cohesion": {"against": [],
+                           "category": {"tally": [["Work and Payroll", 2]]},
+                           "corroborating": ["temporal proximity", "content similarity",
+                                             "category agreement"],
+                           "retained": "yes"}},
+            "which is not a yes or a no",
+            id="a verdict this build does not read",
+        ),
+    ),
+)
+def test_the_run_refuses_a_candidates_file_whose_cohesion_disagrees_with_itself(
+    tmp_path: Path, overrides: Mapping[str, object], said: str
+) -> None:
+    """The same argument as the timing and similarity rows, about the third corroboration.
+
+    The evaluator does no placing of its own, so a row claiming a Cohesion Score the rest
+    of the row does not bear out would be printed as though the system had said it — and
+    this is the figure the whole ticket is about, so it is the one a quiet drift in it
+    would be worst to find later. Eight ways: a name the three verdicts deny, a retained
+    flag its own name list contradicts, a tally that splits evenly and still claims
+    agreement, a class the projection does not publish, a tally naming no posts at all
+    over a candidate that holds them, a corroboration on neither list, one named twice,
+    and a verdict this build does not read.
+    """
+    corpus, candidates = similarity_disagreement(tmp_path, **overrides)
+
+    with pytest.raises(SystemExit) as refusal:
+        main(recovery_argv(tmp_path, corpus, candidates))
+
+    assert said in str(refusal.value), str(refusal.value)
+    assert not (tmp_path / "recovery.jsonl").exists()

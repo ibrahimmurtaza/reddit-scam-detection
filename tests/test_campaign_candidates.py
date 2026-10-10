@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from conftest import SCRATCH_TABLE, needs_database, seed_vectors
-from reddit_fraud_intelligence.campaigns import DEFAULT_SIMILARITY_THRESHOLD
+from reddit_fraud_intelligence.campaigns import CORROBORATIONS, DEFAULT_SIMILARITY_THRESHOLD
 from reddit_fraud_intelligence.cli import DEFAULT_CORPUS_PATH, DEFAULT_SEED, main
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
 
@@ -129,6 +129,18 @@ def measure(row: Row, field: str) -> float:
 def nested(row: Row, field: str) -> Row:
     value = row[field]
     assert isinstance(value, dict), f"{field} is not a row: {value!r}"
+    return value
+
+
+def yes_or_no(row: Row, field: str) -> bool:
+    """One boolean field, checked as a boolean.
+
+    `Row` values come back out of JSON as `object`, so a bare `is True` would compare a
+    mapping against a literal and be refused by the type checker rather than by the
+    assertion it exists to make.
+    """
+    value = row[field]
+    assert isinstance(value, bool), f"{field} is not a yes or a no: {value!r}"
     return value
 
 
@@ -2340,3 +2352,300 @@ def test_the_run_covers_every_seed_of_the_corpus_without_a_change(
             if line.startswith("cc-") and line.rstrip().endswith("corroborated")
         ]
         assert indexed[: len(written)] == [text(row, "candidate_id") for row in written]
+
+
+# --- the cohesion system, both numbers side by side ------------------------------
+
+
+def cohesion_corpus(tmp_path: Path) -> Path:
+    """Two candidates, and the corroborations they hold written out.
+
+    Both components share a registrable domain, so both are in the baseline whatever the
+    corroboration says — which is the point of the whole section: the baseline is a
+    function of the links alone and the cohesion system is a function of what else holds.
+
+    The first is `syn_nightlark` / `syn_daybreak`, posting within half an hour of each
+    other in words that do not overlap, and both landing in Work and Payroll. So the clock
+    corroborates it, the Scam Categories agree, and the vectors do not: two of the three,
+    which is enough to retain it. The second is `syn_thornfield` / `syn_wrenmoor`,
+    posting four months apart in the same Scam Category and in words that do not overlap:
+    the categories agree and nothing else does, so one of the three, which is not enough.
+
+    The words are written to be far apart rather than near, because a candidate the
+    vectors corroborate would be a second component retained for the wrong reason and the
+    test would stop being about the count of corroborations.
+    """
+    return write_corpus(
+        tmp_path / "corpus.jsonl",
+        (
+            post(
+                "syn_p_9401",
+                "syn_nightlark_0001",
+                "https://vantage-ledger.example/entry",
+                body="Paid desk taking entries for the month. Withdrawal rules posted daily.",
+                created_at="2026-05-30T09:30:00Z",
+            ),
+            post(
+                "syn_p_9402",
+                "syn_daybreak_0002",
+                "https://vantage-ledger.example/intake",
+                body="Second month on the same desk. Signals desk is running a copy trading room.",
+                created_at="2026-05-30T10:00:00Z",
+            ),
+            post(
+                "syn_p_9403",
+                "syn_thornfield_0003",
+                "https://signal-harbor.example/entry",
+                body="Paid desk still taking entries for the month. Withdrawal rules posted daily.",
+                created_at="2026-01-05T09:00:00Z",
+            ),
+            post(
+                "syn_p_9404",
+                "syn_wrenmoor_0004",
+                "https://signal-harbor.example/intake",
+                body="Second month on the same desk. Signals desk is running a copy trading room.",
+                created_at="2026-05-20T09:00:00Z",
+            ),
+        ),
+    )
+
+
+def test_the_baseline_and_the_cohesion_system_are_reported_side_by_side(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The two numbers ADR-0009 promises, on adjacent lines, with the difference visible.
+
+    The baseline is direct adjacency and nothing else: four candidates over twelve
+    accounts, which is what the union-find finds once the known-shared registrations are
+    withheld. The cohesion system is what it retains of that, three of the four and nine
+    of the twelve accounts, and the difference between the two is the whole of what
+    corroboration bought. They are never printed one without the other, because a reader
+    shown the lower number alone has no way to tell a filtering decision from a bug.
+    """
+    _, printed = run(tmp_path, capsys=capsys)
+
+    assert "baseline      4 candidates over 12 accounts, by direct adjacency alone" in printed
+    assert (
+        "cohesion      3 of 4 candidates and 9 of 12 accounts retained by the cohesion "
+        "system, 1 filtered" in printed
+    )
+
+
+def test_the_cohesion_system_retains_on_two_of_the_three_and_names_what_it_filtered(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The rule, in the shape that decides it: two of the three, and no more.
+
+    The first candidate holds the clock and the categories and loses on the words, and is
+    retained. The second holds the categories and loses on both the clock and the words,
+    and is removed — and is named below the table with the two corroborations that went
+    against it, because a candidate a reader cannot account for is the thing that makes a
+    number uninterpretable.
+    """
+    _, printed = run(tmp_path, cohesion_corpus(tmp_path), capsys)
+
+    assert (
+        "cohesion      1 of 2 candidates and 2 of 4 accounts retained by the cohesion "
+        "system, 1 filtered" in printed
+    )
+    assert "filtered by cohesion  1 of 2 candidates removed" in printed
+    filtered = printed.split("filtered by cohesion  1 of 2 candidates removed")[1]
+    assert "syn_thornfield_0003" in printed
+    assert (
+        "filtered on 1 of 3: category agreement; against: temporal proximity, "
+        "content similarity" in filtered
+    )
+
+
+def test_every_candidate_names_the_corroborations_that_held_and_the_ones_that_did_not(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Ticket #26's own acceptance, at the command level.
+
+    The cohesion verdict is a count of named verdicts rather than a number nobody can take
+    apart, so the block under a candidate has to say which of the three held and which
+    two did not, and say the same way in both directions — a reader who has to learn two
+    phrasings cannot compare two candidates.
+    """
+    candidates_path, printed = run(tmp_path, capsys=capsys)
+
+    written = rows(candidates_path)
+    assert len(written) == 4
+    for row in written:
+        cohesion = nested(row, "cohesion")
+        tally = nested(cohesion, "category")["tally"]
+        assert isinstance(tally, list)
+        assert sum(int(count) for _, count in tally) == len(texts(row, "posts"))
+        corroborated = texts(cohesion, "corroborating")
+        against = texts(cohesion, "against")
+        assert set(corroborated) | set(against) == set(CORROBORATIONS)
+        assert not set(corroborated) & set(against)
+        assert len(corroborated) == len(set(corroborated))
+        assert yes_or_no(cohesion, "retained") == (len(corroborated) >= 2)
+
+    assert (
+        "  cohesion      retained on 2 of 3: temporal proximity, content similarity; "
+        "against: category agreement" in printed
+    )
+    assert (
+        "  categories    agreeing on Work and Payroll, from 3 of 3 posts placed: "
+        "Work and Payroll 3" in printed
+    )
+    assert (
+        "  categories    too few placed, from 1 of 3 posts placed: "
+        "Work and Payroll 1, Other 2" in printed
+    )
+
+
+def test_the_category_a_candidate_agrees_on_is_a_majority_of_its_placed_posts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The third corroboration, and the rule it is decided by.
+
+    The tally is published per candidate, widest class first and Other last, exactly as
+    the registrations table publishes the Associated Scam Category (ADR-0021), because it
+    is the same rule read at a different scope: a strict majority of the postings a list
+    placed, out of the two at least that have to be placed before any of them counts. A
+    reader who disagrees with a candidate's category can count the tally and know why the
+    run said what it said.
+    """
+    candidates_path, _ = run(tmp_path, cohesion_corpus(tmp_path), capsys)
+
+    written = {tuple(texts(row, "accounts")): row for row in rows(candidates_path)}
+    assert written
+    for accounts, row in written.items():
+        assert nested(nested(row, "cohesion"), "category")["tally"] == [
+            ["Investment and Money Offers", 2]
+        ], accounts
+
+
+def test_the_cohesion_score_is_published_beside_the_figures_it_is_counted_from(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The file is what the evaluator reads and the evaluator does no grouping of its own,
+    so a row naming a Cohesion Score the timing and the similarity on the same row does
+    not bear out would be a figure the report prints without checking. The three verdicts
+    are re-derived here rather than the count compared, because the names are what a
+    reader weighs and a count that happens to be right for the wrong reason is the case
+    this file exists to catch.
+    """
+    candidates_path, _ = run(tmp_path, capsys=capsys)
+
+    for row in rows(candidates_path):
+        timing = nested(row, "timing")
+        similarity = nested(row, "content_similarity")
+        tally = nested(nested(row, "cohesion"), "category")["tally"]
+        assert isinstance(tally, list)
+        placed = [entry for entry in tally if entry[0] != "Other"]
+        counted = sum(int(count) for _, count in placed)
+        holds = {
+            "temporal proximity": integer(timing, "corroborated") > 0,
+            "content similarity": integer(similarity, "corroborated")
+            == integer(similarity, "pieces"),
+            # ADR-0021's floor, re-derived rather than imported: two placements before
+            # any of them counts, then a strict majority of them.
+            "category agreement": counted >= 2
+            and 2 * max(int(count) for _, count in placed) > counted,
+        }
+        assert set(texts(nested(row, "cohesion"), "corroborating")) == {
+            name for name, held in holds.items() if held
+        }
+
+
+def test_the_cohesion_system_creates_nothing_that_direct_adjacency_did_not_find(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Three corroborations, and the refusal ADR-0005 was written for.
+
+    Four accounts posting in the same minute, in the same Scam Category, with words close
+    enough that a lexical model reads every one of them as a near-twin, and sharing
+    nothing but a link shortener every one of them uses. Every corroboration this project
+    has would fire on that component, and the cohesion system filters components rather
+    than joining accounts, so the file is still empty and the console says so.
+    """
+    advert = (
+        "Remote annotation work, 26 an hour, six hours a day, kit posted out, starts "
+        "Monday. No experience needed, they train you over the first two days."
+    )
+    corpus = write_corpus(
+        tmp_path / "corpus.jsonl",
+        tuple(
+            post(
+                f"syn_p_941{index}",
+                f"syn_pasted_{index:04d}",
+                "https://hopcut.example/a",
+                body=advert,
+            )
+            for index in range(4)
+        ),
+    )
+
+    candidates_path, printed = run(tmp_path, corpus, capsys)
+
+    assert rows(candidates_path) == []
+    assert "baseline      0 candidates over 0 accounts" in printed
+    assert (
+        "cohesion      0 of 0 candidates and 0 of 0 accounts retained by the cohesion "
+        "system, 0 filtered" in printed
+    )
+    assert (
+        "filtered by cohesion  none: every candidate above holds at least 2 of the 3"
+        in printed
+    )
+
+
+def test_the_cohesion_system_filters_nothing_and_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A section that appears only when it is bad cannot be told from a missing one.
+
+    At a threshold of one, every post on this Corpus has a near-twin by another account,
+    so the vectors corroborate every candidate and the categories corroborate them too:
+    all four are retained and the difference between the two numbers is nothing. The
+    output has to say `0 filtered` and print the empty section, because a reader looking
+    for the candidates the system dropped and finding none has to be able to tell that
+    from a run that never asked.
+    """
+    _, printed = run(tmp_path, capsys=capsys, threshold=1.0)
+
+    assert (
+        "cohesion      4 of 4 candidates and 12 of 12 accounts retained by the cohesion "
+        "system, 0 filtered" in printed
+    )
+    assert (
+        "filtered by cohesion  none: every candidate above holds at least 2 of the 3"
+        in printed
+    )
+
+
+def test_the_committed_candidates_carry_the_cohesion_of_every_candidate(
+    tmp_path: Path,
+) -> None:
+    """The shipped Corpus's own verdicts, so a change to the rule moves the committed file.
+
+    Both planted campaigns rest on the clock and the categories together and lose their
+    vectors, because their posts are staggered paraphrases of one another (ADR-0026) — so
+    on the clock alone they are held at one corroboration and the cohesion system would
+    filter them. That is the case #24's own acceptance is about and the case this one
+    turns on: without the third corroboration the system would discard the one campaign
+    recovered whole and the candidate holding the other's membership.
+    """
+    candidates_path, _ = run(tmp_path)
+    written = {text(row, "candidate_id"): row for row in rows(candidates_path)}
+
+    assert texts(nested(written["cc-01"], "cohesion"), "corroborating") == [
+        "temporal proximity",
+        "content similarity",
+    ]
+    assert texts(nested(written["cc-02"], "cohesion"), "corroborating") == [
+        "temporal proximity",
+        "category agreement",
+    ]
+    assert texts(nested(written["cc-03"], "cohesion"), "corroborating") == [
+        "temporal proximity",
+        "category agreement",
+    ]
+    assert texts(nested(written["cc-04"], "cohesion"), "corroborating") == [
+        "category agreement"
+    ]
+    assert yes_or_no(nested(written["cc-04"], "cohesion"), "retained") is False

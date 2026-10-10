@@ -1,14 +1,16 @@
 """A post's Scam Category, and the phrase lists that place it (ADR-0017).
 
-Two commands read this rule and have to agree about it. `rfi corpus-composition` places
+Three commands read this rule and have to agree about it. `rfi corpus-composition` places
 every post so it can set the Corpus's own distribution beside CAFC's published base
-rates, and `rfi policy-score` places every post so it can tell whether a post's Scam
+rates, `rfi policy-score` places every post so it can tell whether a post's Scam
 Category disagrees with the category the Registrable Domain it links is associated with
-(ADR-0021). A post the first command places in Work and Payroll and the second places in
-Investment and Money Offers would make two published figures incomparable, and neither
-command would have any way of noticing: each reads only its own output. So the lists and
-the placing live here and both commands import them, and the two cannot drift unless this
-function is wrong — which its own tests hold it to.
+(ADR-0021), and `rfi campaign-candidates` places every post so it can say whether the
+accounts inside one Campaign Candidate are making the same pitch. A post the first
+command places in Work and Payroll and the second places in Investment and Money Offers
+would make two published figures incomparable, and no command would have any way of
+noticing: each reads only its own output. So the lists and the placing live here and all
+three import them, and the three cannot drift unless this function is wrong — which their
+own tests hold it to.
 
 The rule itself is ADR-0017's and nothing here widens it. A post is placed by matching its
 own title and body against one published list per Scam Category, the lists are tried in
@@ -18,6 +20,12 @@ no list matches lands in Other. A list is a rule and not a number, so it is publ
 being printed rather than held in a file: a reader who disagrees with one has to be able
 to see it and quote it, and a run that printed only the placements would be asking a
 reviewer to accept a class they cannot check.
+
+What a tally of those placements adds up to is here for the same reason. ADR-0021 decides
+that a Registrable Domain carries the Scam Category a strict majority of its placed
+postings agree on, and the cohesion system reads the same majority at the scope of a
+Campaign Candidate rather than a registration (ADR-0028). One function, two callers, and
+a rule two published figures could otherwise state two ways.
 
 Nothing here reads the truth file or the Nuisance Structure manifest, and nothing reads
 the CAFC base rates: the placement is a function of one post's own text and the published
@@ -33,6 +41,13 @@ from dataclasses import dataclass
 from reddit_fraud_intelligence.categories import OTHER, SCAM_CATEGORIES
 from reddit_fraud_intelligence.corpus import CorpusItem
 from reddit_fraud_intelligence.text import sentences, spans, wrap
+
+# The fewest postings a list has to have placed before any of them counts for an
+# association. Two, because one posting is a claim rather than a pattern, and an
+# association decided on one of them is a guess. Named rather than written at the call
+# site because the two callers print it in the same sentences and a rule a figure rests
+# on is the one thing that may not be written twice.
+MIN_PLACED = 2
 
 # Every phrase that places a post in a Scam Category, and the whole of each list:
 # nothing outside these strings places one. Published by being printed rather than held
@@ -289,8 +304,8 @@ def check_placements() -> None:
     the way a weight file and a Signal enum can. A class nothing can place a post in is
     the case worth catching: its row in the comparison would hold a base rate, no posts,
     and a difference of the full base rate, which reads as a finding rather than as a gap.
-    Both commands call this before they place anything, so neither publishes a placement
-    the lists cannot account for.
+    All three commands call this before they place anything, so none of them publishes a
+    placement the lists cannot account for.
     """
     known = {scam.name for scam in SCAM_CATEGORIES}
     missing = sorted(known - set(CATEGORY_PHRASES))
@@ -302,6 +317,45 @@ def check_placements() -> None:
             f"projection does not have: {unknown or 'none'}. Every one of the ten needs "
             "a list, and no list may name a category the projection does not have."
         )
+
+
+def in_print_order(tally: Sequence[tuple[str, int]]) -> tuple[tuple[str, int], ...]:
+    """One tally of placements, widest class first and Other last.
+
+    A printing order and not an input to anything: `agreed_category` finds the widest class
+    itself, so a reader counting the tally by eye and the code deciding the majority cannot
+    reach the same answer by two different routes. The order still matters, because the
+    leading entry of a tally is what a reader takes as the class, and Other can never be
+    that.
+
+    Shared rather than written twice because a Registrable Domain's tally and a Campaign
+    Candidate's are the same shape read at two scopes (ADR-0021, ADR-0028), and two sorts
+    that agreed today would be free to drift tomorrow.
+    """
+    return tuple(sorted(tally, key=lambda entry: (entry[0] == OTHER.name, -entry[1], entry[0])))
+
+
+def agreed_category(tally: Sequence[tuple[str, int]]) -> str | None:
+    """The Scam Category a tally of placements agrees on, or none where it decides nothing.
+
+    A strict majority of the postings a list placed, out of the `MIN_PLACED` at least
+    that have to be there. Strict, because a tie is a tie: settling it by the order the
+    projection happens to declare the ten in would make an association a fact about this
+    file's reading order rather than about the Corpus.
+
+    Other is out of the count, and it is the one class that can never be agreed on. A post
+    no list matched makes no claim, so it can neither associate anything with a pitch nor
+    disagree with one — and a tally of nothing but Other is the case where a reader needs
+    to be told there was no claim to read rather than handed the bucket as though it were
+    one. The count is still published by the caller, because dropping it would hide why a
+    component of five posts reached nothing at all.
+    """
+    placed = [(name, count) for name, count in tally if name != OTHER.name]
+    counted = sum(count for _, count in placed)
+    if counted < MIN_PLACED:
+        return None
+    top, count = max(placed, key=lambda entry: entry[1])
+    return top if 2 * count > counted else None
 
 
 def phrase_count() -> int:

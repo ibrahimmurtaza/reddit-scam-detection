@@ -43,8 +43,13 @@ from enum import StrEnum
 from pathlib import Path
 
 from reddit_fraud_intelligence.campaigns import (
+    CORROBORATIONS,
+    QUORUM,
     CampaignCandidate,
+    CohesionSystem,
     Evidence,
+    count_of,
+    names_of,
     read_campaign_candidates,
 )
 from reddit_fraud_intelligence.corpus import CorpusItem, read_corpus
@@ -139,6 +144,12 @@ class CampaignRecovery:
     It is empty exactly when the campaign is in the recall bound, and it is what makes
     that figure checkable rather than asserted — a reader can look at the memberships
     and see for themselves which of them share anything.
+
+    `removed` is every match naming a candidate the cohesion system filtered
+    (ADR-0028). It is not a fourth outcome and does not change one: a campaign is still
+    recovered or partial or missed against the baseline, which is what the figure is
+    about. It is carried because the figure above it is the baseline's and the reader is
+    entitled to know which campaigns the system would not have reached at all.
     """
 
     campaign_id: str
@@ -146,6 +157,7 @@ class CampaignRecovery:
     posts: tuple[str, ...]
     matches: tuple[Match, ...]
     within: tuple[tuple[Evidence, str], ...] = ()  # each as (which edge, what it names)
+    removed: tuple[Match, ...] = ()
 
     @property
     def outcome(self) -> Outcome:
@@ -190,6 +202,19 @@ class CampaignRecovery:
         and conflating the two questions would report a bound as a result.
         """
         return not self.within
+
+    @property
+    def unproposed(self) -> bool:
+        """Whether every candidate naming this membership was filtered by cohesion.
+
+        The membership is unreached when every candidate that names one of its accounts
+        was removed, and reached when even one was kept. A property of the cohort of
+        candidates rather than of this campaign's own outcome: a campaign the baseline
+        recovers whole can still be one the cohesion system would not have proposed,
+        and a campaign the baseline misses altogether cannot be made worse by a filter
+        that never saw it — which is why `matches` has to be non-empty here.
+        """
+        return bool(self.matches) and len(self.removed) == len(self.matches)
 
     def shared_within(self) -> str:
         """What the membership shares that reaches a candidate, grouped by which edge.
@@ -372,12 +397,20 @@ class Recovery:
     `unmatched` is computed as what is left of them, so the two views of the candidates
     cannot add up differently: every candidate either reached a campaign or is printed
     as one that reached none.
+
+    `cohesion` is the grouping's own figure over the candidates this run read, built by
+    `CohesionSystem` rather than reworked here: the two tiers are counted by one function
+    from one tuple, so this command's copy of the baseline and the grouping's own cannot
+    drift (ADR-0028). It is a function of a published file rather than of a live grouping,
+    which is the whole of what ADR-0018 requires — the arithmetic is shared, the run is
+    not.
     """
 
     facts: RecoveryFacts
     recoveries: tuple[CampaignRecovery, ...]
     joined: frozenset[str]
     unmatched: tuple[Unmatched, ...]
+    cohesion: CohesionSystem
     nuisance: NuisanceBaseline
     false_groupings: tuple[FalseGrouping, ...]
     precision: tuple[QueuePrecision, ...]
@@ -450,6 +483,74 @@ class Recovery:
         """
         return len(self.recoveries) - len(self.beyond)
 
+    @property
+    def filtered_ids(self) -> frozenset[str]:
+        """The identifiers the cohesion system removed, as a set to test membership in."""
+        return frozenset(candidate.candidate_id for candidate in self.cohesion.filtered)
+
+    @property
+    def baseline(self) -> int:
+        """What direct adjacency proposed, which is the number the system filters."""
+        return self.cohesion.baseline
+
+    @property
+    def accounts(self) -> int:
+        """The accounts in the baseline, over both edges and counted once each."""
+        return self.cohesion.accounts
+
+    @property
+    def retained(self) -> int:
+        """What the cohesion system kept of the baseline."""
+        return self.cohesion.retained
+
+    @property
+    def retained_accounts(self) -> int:
+        """The accounts in what the cohesion system kept."""
+        return self.cohesion.retained_accounts
+
+    @property
+    def filtered(self) -> tuple[CampaignCandidate, ...]:
+        """Every Campaign Candidate the cohesion system removed (ADR-0028).
+
+        Read straight off the grouping's own figure rather than reworked here, so this
+        command's two tiers and `rfi campaign-candidates`'s are the same arithmetic over
+        the same rows and cannot be two answers to one question.
+        """
+        return self.cohesion.filtered
+
+    @property
+    def unproposed(self) -> tuple[CampaignRecovery, ...]:
+        """The Planted Campaigns the cohesion system would not have proposed at all.
+
+        A campaign the baseline reaches only through candidates the system removed, in
+        membership order so the figure beside it can be taken apart. This is the miss the
+        ticket asks to be diagnosable, and it is published rather than described because
+        a fallback a reader is told about in prose is a fallback nobody opens.
+        """
+        return tuple(recovery for recovery in self.recoveries if recovery.unproposed)
+
+    @property
+    def recovered_by_cohesion(self) -> int:
+        """The Planted Campaigns the cohesion system would recover on whole membership.
+
+        Counted the same way `recovered` is — a candidate holding a membership and
+        nothing else — but over the candidates the system retained rather than over the
+        baseline. That is what makes the pair above it a pair: both figures answer the
+        same question of two different tiers, so a difference between them is a campaign
+        the filter cost and a match between them is a filter that cost nothing.
+
+        Asked of the matches rather than of the outcomes, because the outcome above is a
+        property of the whole cohort of candidates and this is a property of the subset
+        that survived. A campaign the baseline recovers whole through a removed candidate
+        is the case this figure exists to show.
+        """
+        removed = self.filtered_ids
+        return sum(
+            1
+            for recovery in self.recoveries
+            if any(match.whole and match.candidate_id not in removed for match in recovery.matches)
+        )
+
 
 def recover(
     corpus_path: Path,
@@ -485,7 +586,10 @@ def recover(
     manifest = read_nuisance(nuisance_path)
     _check(items, candidates, campaigns)
 
-    recoveries = tuple(_recovery(campaign, candidates) for campaign in campaigns)
+    filtered = frozenset(
+        candidate.candidate_id for candidate in candidates if not candidate.cohesion.retained
+    )
+    recoveries = tuple(_recovery(campaign, candidates, filtered) for campaign in campaigns)
     joined = {
         candidate_id
         for recovery in recoveries
@@ -520,6 +624,7 @@ def recover(
             for candidate in candidates
             if candidate.candidate_id not in joined
         ),
+        cohesion=CohesionSystem(candidates),
         nuisance=_baseline(nuisance_path, manifest),
         false_groupings=_false_groupings(candidates, campaigns, manifest),
         precision=_precision(queue.entries, campaigns, depths),
@@ -585,7 +690,9 @@ def _check_posts(
 
 
 def _recovery(
-    campaign: PlantedCampaign, candidates: Sequence[CampaignCandidate]
+    campaign: PlantedCampaign,
+    candidates: Sequence[CampaignCandidate],
+    filtered: frozenset[str],
 ) -> CampaignRecovery:
     """One campaign's membership against every candidate that names part of it.
 
@@ -595,6 +702,11 @@ def _recovery(
     report a mismatch on a campaign recovered exactly. The accounts are sorted on both
     sides, which is what lets the outcome be one equality rather than a rule about
     which side came first.
+
+    `filtered` is the identifiers the cohesion system removed, read off the candidates
+    file rather than worked out here, and the same match is carried on both lists so the
+    run can name a campaign it would not have proposed and the candidate that carried it
+    without re-deriving anything (ADR-0028).
     """
     members = set(campaign.accounts)
     matches = tuple(
@@ -614,6 +726,7 @@ def _recovery(
         posts=tuple(sorted(campaign.posts)),
         matches=matches,
         within=_within(members, candidates),
+        removed=tuple(match for match in matches if match.candidate_id in filtered),
     )
 
 
@@ -875,6 +988,7 @@ def render_table(recovery: Recovery) -> str:
         _campaigns_table(recovery),
         _bound(recovery),
         _unmatched_table(recovery),
+        _filtered_by_cohesion(recovery),
         _false_groupings_table(recovery),
         _precision_table(recovery),
         _nuisance_table(recovery),
@@ -923,6 +1037,20 @@ def _figures(recovery: Recovery) -> str:
         ),
         ("missed", f"{recovery.missed} Planted Campaigns"),
         (
+            "baseline",
+            f"{recovery.baseline} candidates over {recovery.accounts} accounts by direct "
+            f"adjacency, recovering {recovery.recovered} of {recovery.facts.campaigns} "
+            "Planted Campaigns",
+        ),
+        (
+            "cohesion",
+            f"{recovery.retained} of {recovery.baseline} candidates and "
+            f"{recovery.retained_accounts} of {recovery.accounts} accounts retained by "
+            f"the cohesion system, {len(recovery.filtered)} filtered, recovering "
+            f"{recovery.recovered_by_cohesion} of {recovery.facts.campaigns} Planted "
+            "Campaigns",
+        ),
+        (
             "bound",
             f"{len(recovery.beyond)} of {facts.campaigns} Planted Campaigns have nothing "
             "inside them reaching a candidate",
@@ -951,6 +1079,69 @@ def _figures(recovery: Recovery) -> str:
         wrapped = wrap(value, indent=len(head), width=100)
         lines.append(head + wrapped[0].lstrip())
         lines.extend(wrapped[1:])
+    return "\n".join(lines)
+
+
+def _filtered_by_cohesion(recovery: Recovery) -> str:
+    """Every candidate the cohesion system removed, and every Planted Campaign with it.
+
+    The second half is the whole of why the first half may be printed. Removing a
+    candidate is a decision, and the only question a reader has about one is what went
+    wrong with it — so each is named with the evidence the grouping published against it,
+    and then the Planted Campaigns are counted: how many were carried out of the figure
+    above by a filter that is not part of it, and which those were.
+
+    A campaign is carried only when *every* candidate naming one of its accounts was
+    removed. One removed candidate beside one retained is not a lost campaign, and
+    reporting it as one would put a lower bound on the figure where there is none. The
+    reason is not restated per campaign because it is already printed above the campaign's
+    own line: the candidate that carried it, and the two corroborations that removed it.
+
+    Printed on every run, including one where nothing was removed, for the reason the
+    rest of this output's sections are: a section that appears only when it is bad is a
+    section a reader cannot tell from one that never ran.
+    """
+    filtered = recovery.filtered
+    campaigns = len(recovery.recoveries)
+    if not filtered:
+        return (
+            "filtered by cohesion  none: every Campaign Candidate above is corroborated "
+            f"on at least {QUORUM} of the {len(CORROBORATIONS)}"
+        )
+    unproposed = recovery.unproposed
+    lines = [
+        "filtered by cohesion  "
+        f"{count_of(len(filtered), recovery.baseline, 'Campaign Candidate')}"
+        " removed, carrying "
+        f"{count_of(len(unproposed), campaigns, 'Planted Campaign')} with it"
+    ]
+    for candidate in filtered:
+        lines.append(
+            f"  {candidate.candidate_id}  {_count(len(candidate.accounts), 'account')}, "
+            f"{_count(len(candidate.posts), 'post')}  {candidate.joined_on()}"
+        )
+        lines.append(f"    on  {names_of(candidate.cohesion.corroborating)}")
+        lines.append(f"    against  {names_of(candidate.cohesion.against)}")
+    lines.append(
+        f"  {count_of(len(unproposed), campaigns, 'Planted Campaign')} "
+        f"{_plural(len(unproposed), 'is', 'are')} named only by a removed candidate"
+    )
+    for entry in unproposed:
+        lines.append(
+            f"    {entry.campaign_id}  the cohesion system reaches it only through "
+            f"{', '.join(match.candidate_id for match in entry.removed)}, which it "
+            f"removes; the baseline above reaches it as {entry.outcome.value}"
+        )
+    if not unproposed:
+        named = [entry.campaign_id for entry in recovery.recoveries if entry.matches]
+        lines.append(
+            "    none: "
+            + (
+                f"{', '.join(named)} each reach a candidate the system retains"
+                if named
+                else "no Planted Campaign reaches a candidate at all"
+            )
+        )
     return "\n".join(lines)
 
 
@@ -1310,7 +1501,12 @@ command rewrites it byte for byte.
 {headline}
 
 The three outcomes partition the membership in `{facts.truth_path}`, so a reader can add
-them up and get N rather than take the numerator on trust.
+them up and get N rather than take the numerator on trust. **The figure belongs to the
+direct-adjacency baseline**, and it is published as a pair rather than on its own: the
+cohesion system retains {_count(recovery.retained, 'candidate')} of the
+{recovery.baseline} and recovers {recovery.recovered_by_cohesion} of the {facts.campaigns}
+on the same rule, and both numbers are in the section *The cohesion system and the baseline
+it filters* below (ADR-0009, ADR-0028).
 
 | Planted Campaign | Outcome | Accounts | Posts | Candidates |
 | --- | --- | ---: | ---: | --- |
@@ -1353,6 +1549,10 @@ candidates were measured against.
 {bound_rows}
 
 {_bound_prose(recovery)}
+
+## The cohesion system and the baseline it filters
+
+{_cohesion_report(recovery)}
 
 ## False groupings
 
@@ -1476,6 +1676,162 @@ this page was written:
 | `{facts.nuisance_path}` | `{facts.nuisance_sha256}` |
 | `{facts.scores_path}` | `{facts.scores_sha256}` |
 """
+
+
+def _cohesion_report(recovery: Recovery) -> str:
+    """Both tiers as a table, what the system removed, and what that cost the figure.
+
+    The pair comes first and on its own, because a reader who lands on this page looking
+    for the recovery figure has to be told which tier it belongs to before anything else:
+    it is the baseline's, and the baseline is the higher of the two. The difference
+    between them is on the next line rather than left for the reader to subtract, since a
+    fallback a reader has to compute is a fallback most will not.
+
+    The removed candidates and the campaigns they carried are then named, which is the
+    diagnosability this section exists for. The corroborations are printed in the
+    grouping's own words because this command cannot recompute them — it reads the
+    candidates file and does no placing, no timing and no vector arithmetic (ADR-0018) —
+    so what it publishes is the grouping's claim, checked row by row on the way in.
+    """
+    facts = recovery.facts
+    unproposed = recovery.unproposed
+    named = "\n".join(
+        f"- **`{entry.campaign_id}`** — the cohesion system reaches it only through "
+        f"{', '.join(f'`{match.candidate_id}`' for match in entry.removed)}, which it "
+        f"removes for {_against(recovery, entry.removed)}. The baseline above reaches it "
+        f"as `{entry.outcome.value}`, so the figure stands for both tiers and this is "
+        "what would have been lost had the baseline not been kept."
+        for entry in unproposed
+    )
+    removed = f"**{len(recovery.filtered)} of the {recovery.baseline}**"
+    if unproposed:
+        carried = (
+            f"The cohesion system removes {removed} baseline candidates, carrying "
+            f"**{len(unproposed)} of the {facts.campaigns}** Planted Campaigns with it. "
+            "Each is named below with the corroborations that removed it, because a "
+            "recovery figure and a filter that quietly cost it a campaign are two claims "
+            "about the same run and a reader is entitled to see both (ADR-0009, ADR-0028)."
+        )
+    else:
+        carried = (
+            f"The cohesion system removes {removed} baseline candidates and carries "
+            f"**none of the {facts.campaigns}** Planted Campaigns with it."
+        )
+    # The two recovery figures are stated beside each other and never compared, because
+    # they need not agree: a campaign the baseline recovers whole through a removed
+    # candidate while a retained candidate holds part of it is lost from the recovery
+    # figure and is not named only by a removed candidate. Asserting they matched would
+    # be a claim about this Corpus wearing the clothes of a rule.
+    recovered = (
+        f"It recovers **{recovery.recovered_by_cohesion} of the {facts.campaigns}** "
+        f"Planted Campaigns on whole membership, against the {recovery.recovered} the "
+        "baseline above recovers."
+    )
+    return "\n\n".join(
+        (
+            "\n".join(
+                wrap(
+                    "Two tiers, and both of them published, because publishing either "
+                    "alone makes it a claim rather than a measurement (ADR-0009). The "
+                    "baseline is what direct adjacency found — the union-find over shared "
+                    "registrations and shared Contact Points, with the known-shared "
+                    "registrations withheld — and it is the number the figure above "
+                    "belongs to. The cohesion system is what that baseline retains once "
+                    "temporal proximity, content similarity and agreement on Scam "
+                    "Category have each had their say: a candidate is kept when at least "
+                    f"{QUORUM} of the {len(CORROBORATIONS)} corroborations hold, and "
+                    "removed when they do not (ADR-0028).",
+                    indent=0,
+                    width=88,
+                )
+            ),
+            f"""| Tier | Candidates | Accounts |
+| --- | ---: | ---: |
+| Direct adjacency (baseline) | {recovery.baseline} | {recovery.accounts} |
+| Cohesion system | {recovery.retained} | {recovery.retained_accounts} |""",
+            "\n".join(wrap(carried, indent=0, width=88)),
+            "\n".join(wrap(recovered, indent=0, width=88)),
+            _cohesion_rows(recovery),
+            named or "No Planted Campaign is named only by a removed candidate.",
+            "\n".join(
+                wrap(
+                    "What it removed is a proposal, not a finding: every candidate named "
+                    f"above is still in `{facts.candidates_path}` with its evidence under "
+                    "it, and the baseline figures beside them are the pre-corroboration "
+                    "record rather than something a reader has to reconstruct. The rule "
+                    "is a rule a reader can undo: the two thresholds it weighs are "
+                    "published — `rfi campaign-candidates` takes `--window-hours` and "
+                    "`--similarity-threshold` — and the Scam Category lists are printed "
+                    "by `rfi corpus-composition`, so a run at a different window or a "
+                    "different threshold moves both figures rather than only the lower "
+                    "one.",
+                    indent=0,
+                    width=88,
+                )
+            ),
+        )
+    )
+
+
+def _cohesion_rows(recovery: Recovery) -> str:
+    """The removed candidates as a table, or the sentence saying there are none."""
+    if not recovery.filtered:
+        return (
+            "No Campaign Candidate was removed on this Corpus, so the two tiers are the "
+            "same number and the difference between them is nothing."
+        )
+    facts = recovery.facts
+    lost = {entry.campaign_id for entry in recovery.unproposed}
+    rows = "\n".join(
+        f"| `{candidate.candidate_id}` | {len(candidate.accounts)} | "
+        f"{candidate.joined_on()} | {names_of(candidate.cohesion.corroborating)} | "
+        f"{names_of(candidate.cohesion.against)} | "
+        f"{', '.join(f'`{entry}`' for entry in _campaigns_of(recovery, candidate) if entry in lost) or '—'} |"
+        for candidate in recovery.filtered
+    )
+    heading = (
+        "| Removed candidate | Accounts | Joined on | Corroborated by | Against it | "
+        "Planted Campaigns carried |\n| --- | ---: | --- | --- | --- | --- |"
+    )
+    return f"""{heading}
+{rows}
+
+The `Corroborated by` and `Against it` columns are the two halves of the candidate's
+Cohesion Score as `rfi campaign-candidates` published it, read out of
+`{facts.candidates_path}`, which this command does no grouping to produce."""
+
+
+def _campaigns_of(recovery: Recovery, candidate: CampaignCandidate) -> tuple[str, ...]:
+    """The Planted Campaigns one candidate names an account of.
+
+    Asked of the whole run rather than carried on the candidate, because a candidate has
+    no membership of its own and may name accounts from two campaigns — which is what a
+    false grouping is, and what the section below this one measures.
+    """
+    return tuple(
+        entry.campaign_id
+        for entry in recovery.recoveries
+        if any(match.candidate_id == candidate.candidate_id for match in entry.matches)
+    )
+
+
+def _against(recovery: Recovery, matches: Sequence[Match]) -> str:
+    """What removed one campaign's candidate, in the grouping's own words.
+
+    Read off the candidates file rather than recomputed, because this command does no
+    timing, no placing and no vector arithmetic (ADR-0018). What it prints is the
+    grouping's claim about that candidate, which the reader checked row by row when this
+    command read the file.
+    """
+    candidates = {
+        candidate.candidate_id: candidate for candidate in recovery.cohesion.candidates
+    }
+    return ", ".join(
+        name
+        for match in matches
+        if match.candidate_id in candidates
+        for name in candidates[match.candidate_id].cohesion.against
+    ) or "nothing this output names"
 
 
 def _bound_line(recovery: Recovery) -> str:

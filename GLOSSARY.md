@@ -194,7 +194,8 @@ review. Reserve "scam" for a judgment a reviewer has actually made.
 A proposed grouping of accounts sharing at least one registrable domain or
 Contact Point. A hypothesis produced by cohesion analysis, never a confirmed
 claim about anyone's behaviour. It is the system's output; a Planted Campaign is
-what it is measured against.
+what it is measured against. Both Direct Adjacency and the Cohesion System
+publish candidates, and the two are always reported as a pair.
 _Avoid_: Campaign, ring, operation, network, cluster of scammers
 
 **Temporal Proximity**:
@@ -228,10 +229,56 @@ each shared registration or Contact Point, and the distances between the posts
 inside the component, each measured against a stated threshold. Corroboration
 orders and deprioritises and never creates, so two accounts with no shared
 registration and no shared Contact Point are never a candidate however close
-together they post or however alike their words.
+together they post or however alike their words. Category Agreement is the third
+corroboration and is read by the cohesion system rather than by either command
+that established the first two.
 _Avoid_: Evidence (too broad — a shared registration is the grouping's evidence
 and corroboration is what the clock and the vectors add to it), confidence (that
 is the model's, ADR-0003)
+
+**Category Agreement**:
+The Scam Category a Campaign Candidate's own posts agree on, counted by the same
+strict-majority rule as an Associated Scam Category and out of the same floor of
+two placed postings: a strict majority of the postings a list placed inside that
+candidate. Other can never be agreed on, and a candidate whose placed postings
+split evenly or number under the floor is reported as `no majority` or `too few
+placed` rather than settled by a tie-break. It is corroboration and never
+sufficient: there are only ten classes, two desks running two pitches share one
+by coincidence, and the placing is a phrase list read off a post's own words, so
+a candidate of complaints about one desk agrees with the desk it complains about.
+_Avoid_: Domain category (that is the Associated Scam Category, which is about a
+registration), topic, theme
+
+**Cohesion Score**:
+How many of a Campaign Candidate's three Corroborations hold, out of three, with
+the names of them published beside the count and of the ones that went against it.
+A count of named verdicts rather than a weighted total, because a number a reader
+cannot take apart is a number they have to take on trust, and each of the three
+keeps its own published threshold so a reader can move it. Two of the three is
+the bar: a candidate on one corroboration alone is one reading agreeing with
+itself. Never establishes anything — it filters candidates shared infrastructure
+already proposed.
+_Avoid_: Cohesion analysis (that is the whole tier, not the score), confidence
+(that is the model's, ADR-0003), score (say which of the three)
+
+**Direct Adjacency**:
+The tier of Campaign Candidates that is the union-find over shared registrable
+domains and shared Contact Points and nothing else, once the known-shared
+registrations are withheld. Published unchanged and beside the Cohesion System,
+never replaced by it, because it is the number a reader has to see next to the
+lower one to know that the lower one was a decision rather than a bug.
+_Avoid_: Baseline (that word is also the Nuisance Structure a figure is measured
+against — say which), raw output, unfiltered candidates
+
+**Cohesion System**:
+Direct Adjacency filtered by the Cohesion Score: every candidate is scored against
+the three Corroborations and the ones fewer than two hold are removed, each named
+with the corroborations that went against it. It is the only step in the grouping
+that removes a candidate for a reason other than known-shared infrastructure, and
+it never creates one. Both tiers are always reported as a pair, and neither is
+published as the result on its own.
+_Avoid_: The cohesion result, the filtered candidates (they are still published),
+the second tier (say which of the two)
 
 **Contact Point**:
 An off-platform contact identifier extracted from content — a Telegram handle,
