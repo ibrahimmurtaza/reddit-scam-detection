@@ -150,6 +150,20 @@ def published_rows() -> Sequence[Confidence]:
     return read_confidences(COMMITTED_CONFIDENCES)
 
 
+def _views(run: Confidences) -> tuple[tuple[str, str], ...]:
+    """The console output and the report, each with the name the assertions name it by.
+
+    Both views of one run, in the order the console output is checked before the report, so
+    that every test asking "do both views say this?" asks it the same way. The claim those
+    tests make is about the two views agreeing with each other, and a loop that named them
+    inline would be a third place to fix when a name changed.
+    """
+    return (
+        (render_table(run), "the console output"),
+        (render_report(run), "the report"),
+    )
+
+
 def run(
     directory: Path,
     corpus: Path = DEFAULT_CORPUS_PATH,
@@ -797,6 +811,30 @@ def test_the_calibration_is_computed_without_reading_the_policy_scores(tmp_path:
     ], "the Policy Score baseline must be the one thing the scores file moves"
 
 
+def test_both_views_print_the_same_row_for_every_bin() -> None:
+    """The two views are one run rendered twice, so no cell of one table may differ from the other.
+
+    A reliability table is a figure a reader recomputes bin by bin, and the console output and
+    the report are two renderings of it. A cell one view prints as a dash and the other as a
+    zero is two answers to the same cell — and it is exactly the drift a test checking the
+    spans and the headline figures cannot see, which is how it survived a first reading.
+    """
+    one_run = measured()
+    lines = render_table(one_run).splitlines() + render_report(one_run).splitlines()
+
+    for one in one_run.evaluation.calibration.bins:
+        rows = [
+            [token.strip("`") for token in re.split(r"[|\s]+", line) if token]
+            for line in lines
+            if line.strip().startswith(one.span) or line.strip().startswith(f"| `{one.span}`")
+        ]
+        assert len(rows) == 2, f"{one.span} is printed {len(rows)} times, not once in each view"
+        assert rows[0] == rows[1], (
+            f"the console output and the report print different rows for {one.span}: "
+            f"{rows[0]} and {rows[1]}"
+        )
+
+
 def test_both_views_print_the_calibration_over_the_binning_they_state() -> None:
     """The figure, the table it is computed from, and the method — in both views.
 
@@ -808,7 +846,7 @@ def test_both_views_print_the_calibration_over_the_binning_they_state() -> None:
     one_run = measured()
     figure = one_run.evaluation.calibration
 
-    for view, where in ((render_table(one_run), "the console output"), (render_report(one_run), "the report")):
+    for view, where in _views(one_run):
         joined = " ".join(view.split())
         assert "expected calibration error" in joined, where
         assert f"{figure.error:.4f}" in joined, where
@@ -832,7 +870,7 @@ def test_both_views_keep_calibration_apart_from_the_policy_score() -> None:
     """
     one_run = measured()
 
-    for view, where in ((render_table(one_run), "the console output"), (render_report(one_run), "the report")):
+    for view, where in _views(one_run):
         joined = " ".join(view.split())
         assert "not a probability" in joined, f"{where} does not say what the Policy Score is"
         assert "calibration" in joined and "Policy Score" in joined, where
@@ -853,7 +891,7 @@ def test_both_views_say_the_confidence_is_still_displayed_nowhere() -> None:
     """
     one_run = measured()
 
-    for view, where in ((render_table(one_run), "the console output"), (render_report(one_run), "the report")):
+    for view, where in _views(one_run):
         joined = " ".join(view.split())
         assert "displayed nowhere" in joined, where
         assert "whatever the" in joined, (
@@ -1321,7 +1359,7 @@ def test_both_views_say_outright_that_the_model_loses() -> None:
     # Compared with whitespace joined, because both views wrap to their own width and the
     # sentence a reader reads is the sentence regardless of where a line fell. Comparing the
     # raw string would fail on a line break rather than on a missing finding.
-    for view, where in ((render_table(one_run), "the console output"), (render_report(one_run), "the report")):
+    for view, where in _views(one_run):
         assert one_run.evaluation.verdict in " ".join(view.split()), (
             f"{where} gives three figures and no sentence comparing them, so a reader has to "
             "work out the finding themselves"

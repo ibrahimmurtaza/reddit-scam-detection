@@ -187,8 +187,8 @@ gap weighted by the share of the posts sitting in it. It is an average, and an a
 bin hides - which is why the worst bin is published beside it rather than folded into it.
 
 **Worst single bin 0.8098**, at `[0.8, 0.9)`, where the model says 0.8098 and 0 of the 1 post in it
-is planted. One post is all that bin is: it is published because it is the number a reader would
-otherwise have to find in the table, not because one post settles anything.
+is planted. That bin holds 1 post: it is published because it is the number a reader would otherwise
+have to find in the table, not because a bin that thin settles anything.
 
 **Mean Confidence 0.1425 against a base rate of 0.2059**: the model understates the probability by
 0.0634 on average, which is the whole of the finding in one subtraction. That one needs no binning

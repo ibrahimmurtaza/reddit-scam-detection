@@ -1769,11 +1769,12 @@ def test_the_policy_score_is_computed_from_signal_weights_and_no_model_output(
     toward what a model says would be the fused figure ADR-0003 rules out, arrived at by
     quietly correcting one number to match the other.
 
-    Checked two ways, because either alone is a habit rather than a fact. Structurally: no
-    module this one reaches imports the Confidence or the Content Embedding, so there is no
-    path by which a probability could arrive. And by running it: a Confidence file full of
-    probabilities sitting beside the Corpus, which the run never opens, produces byte for byte
-    the scores it produces without one there.
+    Checked three ways, because any one of them alone is a habit rather than a fact.
+    Structurally: no module this one reaches imports the Confidence or the Content Embedding,
+    so there is no path by which a probability could arrive. By running it: a Confidence file
+    full of probabilities sitting beside the Corpus, which the run never opens, produces byte
+    for byte the scores it produces without one there. And by vocabulary: no published row
+    carries a field a model's output would use.
     """
     reachable = _reachable(SOURCE / "signals.py")
     forbidden = sorted(
@@ -1819,15 +1820,17 @@ def test_the_policy_score_is_computed_from_signal_weights_and_no_model_output(
         "the run opened the Confidence file at all"
     )
 
-    # And what the score is made of, worked out from the weight file rather than from the
-    # run: every post's points are the weights of the Signals its row carries, and nothing
-    # else goes into the number (ADR-0014). This is the "computed only from Signal weights"
-    # half of the claim, and the run above is what holds it there.
-    weights = published_weights()
+    # And that what the score is made of is what its row says it is made of. The arithmetic
+    # of the subset-sum is held by
+    # `test_every_post_in_the_corpus_scores_the_published_weights_of_the_signals_it_carries`,
+    # which is where it belongs; what is new here is the vocabulary, because a row carrying a
+    # model's probability beside the score would fuse the two numbers in the file itself
+    # rather than in the arithmetic (ADR-0003, ADR-0008).
+    forbidden_fields = {"confidence", "probability", "likelihood", "model", "recipe"}
     for row in rows(with_confidences):
-        carried = {signal for signal in signals(row)}
-        assert sum(weights[signal] for signal in carried) == count(row, "points"), (
-            f"{text(row, 'post_id')} is not the sum of the published weights it carries"
+        assert not forbidden_fields & set(row), (
+            f"{text(row, 'post_id')} carries a field a model output would use: "
+            f"{sorted(forbidden_fields & set(row))}"
         )
 
 

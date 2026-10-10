@@ -1329,8 +1329,8 @@ network for nothing at all.
 - `GLOSSARY.md` — the vocabulary, enforced by `tests/test_vocabulary.py` against
   the phrases the project must never utter.
 - `docs/confidence.md` — the report ADR-0027 asked for: the Confidence, its model, its
-  features, its out-of-fold figure beside two baselines, and a section saying what the figure
-  is not.
+  features, its out-of-fold figure beside two baselines, the calibration ADR-0029 added, and a
+  section saying what the figures are not.
 - `docs/adr/` — the decisions. The ones this code implements are 0001 (Corpus
   Provider), 0004 (evaluate by recovering Planted Campaigns), 0005 (Campaign
   Candidates require registrable infrastructure), 0007 (Signals come only from
@@ -1372,4 +1372,7 @@ network for nothing at all.
   fold against a constant and the Policy Score, stored in a file of its own, and displayed
   nowhere), and 0028 (the cohesion system retains a Campaign Candidate on two of its
   three corroborations and removes the rest, the direct-adjacency baseline ships beside
-  it unchanged, and neither tier is published as the result on its own).
+  it unchanged, and neither tier is published as the result on its own), and 0029
+  (calibration is measured over a stated binning beside the discrimination figures rather
+  than folded into them, the worst bin is published beside the average gap, neither number
+  is corrected toward the other, and the Confidence stays displayed nowhere).

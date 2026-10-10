@@ -151,3 +151,16 @@ that would combine it with the Policy Score. The Confidence is stored because AD
 says it is stored in its own column and never displayed, and a quantity that exists only
 in a report would be a claim; storing it and reading it nowhere is what makes it a fact
 that can later be measured rather than asserted.
+
+## Amendment
+
+The option above reads "**Calibrate the Confidence here.** Rejected, and it is ticket #27",
+and that is now decided rather than outstanding: ADR-0029 measures it, in this command and
+over the same held-out probabilities, with the binning and the bar published beside the
+figures. The rejection still stands for what it rejected — no recalibration is fitted over
+the model's output, and the published probabilities remain what the folds' fits produced —
+so what is amended is only the sentence that called the question outstanding. Everything
+else here is unchanged: the model, the seven features, the folds, the two baselines, the
+twelve decimal places, the file of its own, and the number on no screen. On this Corpus
+the measurement finds the model miscalibrated, and the report says so in the first line of
+its calibration section rather than in a footnote.

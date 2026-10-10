@@ -487,9 +487,11 @@ class Calibration:
     only as its average is a miscalibrated model reported flatteringly.
 
     `tolerance` travels on the figure rather than being read from the module at each render,
-    so the bar `calibrated` is judged against is the bar the output prints. `verdict` is
-    computed from all of it rather than written into the page, because a verdict that is prose
-    in a template stops being true the moment the numbers move and nothing notices.
+    so the bar `calibrated` is judged against is the bar the output prints. `verdict` is a
+    property rather than a field, computed from every other one of them rather than written
+    into the page: a verdict that is prose in a template stops being true the moment the
+    numbers move and nothing notices, and a verdict built from the figure's own figures
+    cannot be compared against a bar the figure does not carry.
     """
 
     bins: tuple[Bin, ...]
@@ -499,7 +501,6 @@ class Calibration:
     base_rate: float
     error: float
     tolerance: float
-    verdict: str
 
     @property
     def worst(self) -> Bin:
@@ -516,7 +517,7 @@ class Calibration:
         """How far the mean Confidence sits above the base rate, positive or negative.
 
         The reading of the sign is in the verdict rather than here: a caller printing this
-        number has to know which way "up" is wrong, and `understates` is the word for it.
+        number has to know which way "up" is wrong, and `_drift` is the word for it.
         """
         return self.mean_confidence - self.base_rate
 
@@ -524,6 +525,26 @@ class Calibration:
     def understates(self) -> bool:
         """Whether the model says less than what happened, on average."""
         return self.offset < 0.0
+
+    @property
+    def verdict(self) -> str:
+        """What the bins say when they are compared, in one sentence a reader has not to work out.
+
+        The same sentence both views print: the console under its figures, the report as the
+        heading of its section.
+        """
+        worst = self.worst
+        subject = "post in it is" if worst.posts == 1 else "posts in it are"
+        return (
+            f"The Confidence is {'calibrated' if self.calibrated else 'not calibrated'} on this "
+            f"Corpus: its expected calibration error over {CALIBRATION_BINS} equal-width bins is "
+            f"{self.error:.4f}, {'at or under' if self.calibrated else 'against'} a bar of "
+            f"{self.tolerance:.4f} this project publishes; its mean Confidence is "
+            f"{self.mean_confidence:.4f} against a base rate of {self.base_rate:.4f}, so "
+            f"{_drift(self.offset)}; and its worst single bin is off by {worst.gap:.4f}, at "
+            f"{worst.span}, where it says {worst.mean_confidence:.4f} and {worst.planted} of the "
+            f"{worst.posts} {subject} planted."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1041,47 +1062,25 @@ def calibration(scored: Sequence[tuple[float, bool]]) -> Calibration:
         base_rate=base_rate,
         error=error,
         tolerance=CALIBRATION_TOLERANCE,
-        verdict=_calibration_verdict(error, mean, base_rate, _worst(bins)),
     )
 
 
-def _calibration_verdict(
-    error: float, mean: float, base_rate: float, worst: Bin
-) -> str:
-    """What the bins say when they are compared, in one sentence a reader has not to work out.
+def _drift(offset: float) -> str:
+    """Which way the average is wrong, as both views say it.
 
-    Computed rather than written, for the reason `_verdict` is: a verdict that is prose in a
-    template stops being true the moment the numbers move and nothing notices. Four things
-    are stated and each can be checked against the table above it — whether the model is
-    calibrated, the error against the bar it is judged by, which way the average is wrong,
-    and the single bin that carries the error.
+    Three cases rather than two, because a model whose mean is exactly the base rate has
+    drifted nowhere and a sentence saying it over- or under-states by 0.0000 would be the one
+    reading of the figure a reader could not trust.
 
-    It opens with the finding rather than leading to it, because both views print this as the
-    one sentence that says what the table found: the console under its figures, the report as
-    the heading of its section.
+    One rule for the figure's own verdict and for the report's line beside the table, because
+    a page that says the model understates in one sentence and overstates in the next is a
+    page whose figure has been read two ways.
     """
-    within = _within_bar(error, CALIBRATION_TOLERANCE)
-    bar = (
-        f"at or under the bar of {CALIBRATION_TOLERANCE:.4f} this project publishes"
-        if within
-        else f"against a bar of {CALIBRATION_TOLERANCE:.4f} this project publishes"
-    )
-    gap = mean - base_rate
-    if gap < 0.0:
-        drift = f"the model understates the probability by {abs(gap):.4f} on average"
-    elif gap > 0.0:
-        drift = f"the model overstates the probability by {gap:.4f} on average"
-    else:
-        drift = "the model's average is the base rate"
-    subject = "post in it is" if worst.posts == 1 else "posts in it are"
-    return (
-        f"The Confidence is {'calibrated' if within else 'not calibrated'} on this Corpus: its "
-        f"expected calibration error over {CALIBRATION_BINS} equal-width bins is "
-        f"{error:.4f}, {bar}; its mean Confidence is {mean:.4f} against a base rate of "
-        f"{base_rate:.4f}, so {drift}; and its worst single bin is off by {worst.gap:.4f}, at "
-        f"{worst.span}, where it says {worst.mean_confidence:.4f} and {worst.planted} of the "
-        f"{worst.posts} {subject} planted."
-    )
+    if offset < 0.0:
+        return f"the model understates the probability by {abs(offset):.4f} on average"
+    if offset > 0.0:
+        return f"the model overstates the probability by {offset:.4f} on average"
+    return "the model's average is the base rate"
 
 
 def _policy_scores(scores_path: Path, items: Sequence[CorpusItem]) -> dict[str, float]:
@@ -1596,16 +1595,18 @@ def _calibration(figure: Calibration) -> str:
     it claims. Both answers are published and neither is evidence for the other, and the
     prose under the table says so in the same words the report does.
 
-    The counts are printed beside every bin even where the bin is empty. Over 34 posts and
-    ten bins that is what says how much of the table is evidence at all, and a reliability
-    diagram that quietly drops the thin bins is one that reports its own figure flatteringly.
+    The counts are printed beside every bin even where the bin is empty — an empty bin holds no
+    post and no planted post, and those are counts, so they read `0` where the two figures that
+    are not counts read a dash. Over 34 posts and ten bins the counts are what say how much of
+    the table is evidence at all, and a reliability diagram that quietly drops the thin bins is
+    one that reports its own figure flatteringly.
     """
     headings = ("bin", "posts", "planted", "predicted", "observed", "gap")
     rows = [
         (
             one.span,
             str(one.posts),
-            str(one.planted) if one.posts else "-",
+            str(one.planted),
             _figure(one.mean_confidence),
             _figure(one.observed),
             _figure(one.gap),
@@ -1831,15 +1832,16 @@ def render_report(confidences: Confidences) -> str:
         f"**Worst single bin {calibration.worst.gap:.4f}**, at `{calibration.worst.span}`, "
         f"where the model says {_figure(calibration.worst.mean_confidence)} and "
         f"{calibration.worst.planted} of the {_count(calibration.worst.posts, 'post')} in it "
-        f"{_are(calibration.worst.posts)} planted. One post is all that bin is: it is "
+        f"{_are(calibration.worst.posts)} planted. {_thickness(calibration.worst)}: it is "
         "published because it is the number a reader would otherwise have to find in the table, "
-        "not because one post settles anything."
+        "not because a bin that thin settles anything."
     )
     mean_line = _prose(
         f"**Mean Confidence {calibration.mean_confidence:.4f} against a base rate of "
-        f"{calibration.base_rate:.4f}**: {_drift(calibration)}. That one needs no binning at "
-        f"all - it is the published column added up and divided by {evaluation.posts} - and a "
-        "model can be right about it while its bins are wrong."
+        f"{calibration.base_rate:.4f}**: {_drift(calibration.offset)}, which is the whole of "
+        f"the finding in one subtraction. That one needs no binning at all - it is the "
+        f"published column added up and divided by {evaluation.posts} - and a model can be "
+        "right about it while its bins are wrong."
     )
     thin_line = _prose(
         f"**The bins are thin, and the counts say so rather than leaving it to be inferred.** "
@@ -2087,9 +2089,10 @@ deviation of its feature.
 
 def _figure_row(figure: Figure) -> str:
     """One report table row: the name, both metrics or a dash, and what it was measured over."""
-    log_loss = "-" if figure.log_loss is None else f"{figure.log_loss:.4f}"
-    brier = "-" if figure.brier is None else f"{figure.brier:.4f}"
-    return f"{figure.name} | {figure.auc:.4f} | {log_loss} | {brier} | {figure.detail}"
+    return (
+        f"{figure.name} | {figure.auc:.4f} | {_figure(figure.log_loss)} | "
+        f"{_figure(figure.brier)} | {figure.detail}"
+    )
 
 
 def _bin_row(one: Bin) -> str:
@@ -2105,26 +2108,6 @@ def _bin_row(one: Bin) -> str:
     )
 
 
-def _drift(figure: Calibration) -> str:
-    """Which way the average is wrong, in the report's own words.
-
-    The three cases rather than two, because a model whose mean is exactly the base rate has
-    drifted nowhere and a sentence saying it over- or under-states by 0.0000 would be the one
-    reading of the figure a reader could not trust.
-    """
-    if figure.understates:
-        return (
-            f"the model understates the probability by {abs(figure.offset):.4f} on average, "
-            "which is the whole of the finding in one subtraction"
-        )
-    if figure.offset > 0.0:
-        return (
-            f"the model overstates the probability by {figure.offset:.4f} on average, which "
-            "is the whole of the finding in one subtraction"
-        )
-    return "the model's average is the base rate, so it drifts nowhere on average"
-
-
 def _empty(figure: Calibration) -> int:
     """How many of the bins hold no post at all."""
     return sum(1 for one in figure.bins if one.posts == 0)
@@ -2138,6 +2121,16 @@ def _single(figure: Calibration) -> int:
 def _are(posts: int) -> str:
     """The verb agreeing with a count of posts, for the sentence a bin's row is read in."""
     return "is" if posts == 1 else "are"
+
+
+def _thickness(one: Bin) -> str:
+    """How thin the worst bin is, in a sentence whose length the reader can check.
+
+    Computed rather than written, because "one post is all that bin is" is a claim about this
+    run's numbers written into a page that recomputes every other number it prints: on a
+    Corpus where the worst bin held three, that sentence would still say one.
+    """
+    return f"That bin holds {_count(one.posts, 'post')}"
 
 
 def _count(number: int, noun: str) -> str:

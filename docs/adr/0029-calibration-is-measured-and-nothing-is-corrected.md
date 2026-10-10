@@ -23,7 +23,10 @@ rather than by its rank among the other 33 — so dropping one post cannot move 
 post into a different bin, which is the same reason the Features are per-post
 (ADR-0007). The cost is real and is paid in the table rather than hidden: 34 posts over
 ten bins leaves bins holding one post and bins holding none, so every bin's count is
-printed beside its figures, and a bin with no posts prints dashes rather than zeros.
+printed beside its figures. An empty bin prints `0` for its two counts, because those are
+counts, and a dash for the three figures it does not have, because there is no average in
+an empty bin to print — and the two views are held to printing the same row, so a dash in
+one and a zero in the other cannot survive.
 
 **Calibration and discrimination are different questions and are never printed as each
 other's evidence.** AUC asks whether the Confidence *orders* the planted posts above the
