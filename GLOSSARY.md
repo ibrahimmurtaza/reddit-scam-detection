@@ -162,9 +162,22 @@ not a probability.
 _Avoid_: Risk score, score, scam score
 
 **Confidence**:
-The model's calibrated probability that an item exhibits the pattern it was
-trained to find. Held internally; never displayed as a severity number.
+The model's probability that an item exhibits the pattern it was trained to find,
+which in this build is Planted Campaign membership. Held internally, stored in a
+file of its own, and never displayed as a severity number, never rendered as a
+figure out of a hundred, and never summed with the Policy Score. Measured out of
+fold against the base rate and the Policy Score's own ordering before it is
+published; whether the probability is calibrated is a separate measurement of its own.
 _Avoid_: Risk score, score, probability of being a scam, likelihood
+
+**Feature**:
+One measured input the Confidence is fitted over. Read from a single Content
+Item's own text, its own links and what those links resolve to, never from an
+account and never across the Corpus — a count that read across the Corpus would
+be a Signal, and a Signal weighted into the Policy Score is a different thing
+entirely. Every Feature is a count a reviewer can make by hand, which is what
+lets them be printed beside their fitted weights.
+_Avoid_: Signal (that names the weighted contribution), indicator, heuristic
 
 **Triage Priority**:
 The ordering a reviewer uses to work the review queue. Derived from Policy

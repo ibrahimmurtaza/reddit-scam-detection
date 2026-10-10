@@ -7,7 +7,7 @@ registrable-domain report, the generated Contact Points and their report, the
 generated Scam Category projection, the generated Corpus composition and its
 report, the generated
 Campaign Candidates, the generated Policy Scores, the generated Content
-Embedding records, and the generated recovery
+Embedding records, the generated Confidences, and the generated recovery
 report and its join — the project's own prose
 wherever it lands. Not scanned: this
 directory, which is where the phrases live; `data/cafc/base_rates.jsonl`, which holds
@@ -78,11 +78,13 @@ def scanned() -> list[Path]:
         REPO_ROOT / "data" / "contacts" / "post-contacts.jsonl",
         REPO_ROOT / "data" / "domains" / "post-domains.jsonl",
         REPO_ROOT / "data" / "embeddings" / "content-embeddings.jsonl",
+        REPO_ROOT / "data" / "model" / "confidences.jsonl",
         REPO_ROOT / "data" / "evaluation" / "recovery.jsonl",
         REPO_ROOT / "data" / "infrastructure" / "shared-hosts.jsonl",
         REPO_ROOT / "data" / "signals" / "policy-scores.jsonl",
         REPO_ROOT / "docs" / "campaign-recovery.md",
         REPO_ROOT / "docs" / "cafc-base-rates.md",
+        REPO_ROOT / "docs" / "confidence.md",
         REPO_ROOT / "docs" / "contact-points.md",
         REPO_ROOT / "docs" / "corpus-composition.md",
         REPO_ROOT / "docs" / "post-domains.md",
