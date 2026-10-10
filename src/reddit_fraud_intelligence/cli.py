@@ -52,6 +52,11 @@ from reddit_fraud_intelligence.domains import (
     write_post_domains,
 )
 from reddit_fraud_intelligence.embeddings import DEFAULT_TABLE
+from reddit_fraud_intelligence.graph import (
+    read_graphs,
+    render_table as render_graphs,
+    write_graphs,
+)
 from reddit_fraud_intelligence.evaluation import (
     DEFAULT_DEPTHS,
     RECOVERY_PATH,
@@ -117,6 +122,7 @@ DEFAULT_CONTACTS_REPORT_PATH = Path("docs/contact-points.md")
 DEFAULT_CATEGORY_MAPPING_PATH = Path("data/cafc/scam-categories.jsonl")
 DEFAULT_CATEGORY_REPORT_PATH = Path("docs/scam-categories.md")
 DEFAULT_CANDIDATES_PATH = Path("data/campaigns/campaign-candidates.jsonl")
+DEFAULT_GRAPHS_PATH = Path("docs/campaign-graph")
 DEFAULT_RECOVERY_PATH = Path(RECOVERY_PATH)
 DEFAULT_RECOVERY_REPORT_PATH = Path("docs/campaign-recovery.md")
 DEFAULT_COMPOSITION_PATH = Path("data/corpus/composition.jsonl")
@@ -243,6 +249,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 scores_path=Path(str(args.scores)),
                 candidates_path=Path(str(args.candidates)),
                 depth=int(args.depth),
+            )
+        case "campaign-graph":
+            return _campaign_graph(
+                candidates_path=Path(str(args.candidates)),
+                graphs_path=Path(str(args.graphs)),
             )
         case "content-embeddings":
             return _content_embeddings(
@@ -818,6 +829,49 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_REVIEW_DEPTH,
         help=f"how many entries of the queue to print (default: {DEFAULT_REVIEW_DEPTH})",
+    )
+
+    graph = commands.add_parser(
+        "campaign-graph",
+        help="draw every Campaign Candidate as a self-contained HTML file with inline SVG",
+        description=(
+            "The visual argument, in one file per Campaign Candidate. Accounts, posts, "
+            "registrations and Contact Points are drawn as four kinds of node and the four "
+            "relationships between them as four kinds of line, with the shared thing an "
+            "account reaches drawn bowed underneath the rest, because that line is the "
+            "reason the accounts are in one candidate at all (ADR-0005). It is the "
+            "relationship argument made visible without a toolchain: the styles, the "
+            "graphics and the data are inline, there is no script and nothing is fetched, "
+            "so a page opens from a thumb drive with no network, no build step and no "
+            "node_modules - which is what the deferred dashboard was deferred in favour of. "
+            "The picture is drawn from the published candidates file and from nothing else, "
+            "so it cannot drift from what the run produced and cannot reach the Corpus or "
+            "the membership to do it (ADR-0008). Every candidate the file holds is drawn, "
+            "not the clearest one; a page is named for its candidate and states on its face "
+            "that a Campaign Candidate is a proposal and not a finding, carries the three "
+            "corroborations and whether the cohesion system kept it or removed it "
+            "(ADR-0028), and says that a Contact Point is the weaker of the two readings. "
+            "The Confidence is displayed nowhere here either (ADR-0027). Reads no network "
+            "and needs no database."
+        ),
+    )
+    graph.add_argument(
+        "--candidates",
+        type=Path,
+        default=DEFAULT_CANDIDATES_PATH,
+        help=(
+            "the published Campaign Candidates to read, one page per row "
+            f"(default: {DEFAULT_CANDIDATES_PATH})"
+        ),
+    )
+    graph.add_argument(
+        "--graphs",
+        type=Path,
+        default=DEFAULT_GRAPHS_PATH,
+        help=(
+            "where to write the pages; a page this run did not write is removed, so the "
+            f"directory cannot keep a candidate the file no longer holds (default: {DEFAULT_GRAPHS_PATH})"
+        ),
     )
 
     composition = commands.add_parser(
@@ -1479,6 +1533,30 @@ def _review_queue(*, scores_path: Path, candidates_path: Path, depth: int) -> in
         raise SystemExit(refusal) from refusal
 
     print(render_queue(queue))
+    return 0
+
+
+def _campaign_graph(*, candidates_path: Path, graphs_path: Path) -> int:
+    """Draw every published candidate, and clear the directory of what it did not draw.
+
+    The only input is the candidates file, for the reason the Review Queue takes only two:
+    a picture a reader is most likely to believe on sight is the last place to re-derive
+    anything (ADR-0018). So the grouping is not re-run, the Corpus is not opened, and a
+    run over a candidates file that no longer holds a candidate takes that candidate's
+    page out rather than leaving it committed beside the file.
+    """
+    _require_present(
+        {"the Campaign Candidates": candidates_path},
+        "Run `rfi campaign-candidates` first; this command draws what that published.",
+    )
+
+    try:
+        graphs = read_graphs(candidates_path)
+        written = write_graphs(graphs, graphs_path)
+    except ValueError as refusal:
+        raise SystemExit(refusal) from refusal
+
+    print(render_graphs(graphs, written))
     return 0
 
 
