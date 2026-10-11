@@ -43,6 +43,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import needs_database
 from reddit_fraud_intelligence.campaigns import render_table as render_candidates
 from reddit_fraud_intelligence.cli import (
     DEFAULT_CORPUS_PATH,
@@ -956,6 +957,7 @@ def test_the_review_queue_never_prints_a_confidence() -> None:
     )
 
 
+@needs_database
 def test_the_campaign_candidate_report_never_prints_a_confidence(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -963,7 +965,10 @@ def test_the_campaign_candidate_report_never_prints_a_confidence(
 
     The grouping needs the stored vectors and so a database, which is why this half of the check
     lives beside `tests/test_campaign_candidates.py` rather than here: a test that skips would
-    leave the acceptance criterion resting on the Review Queue alone.
+    leave the acceptance criterion resting on the Review Queue alone. The marker keeps the skip
+    honest when no database is configured at all, and the `except` below keeps it honest when one
+    is configured but the stored vectors cannot be read from it — both are the environment, not
+    the Campaign Candidate report, so neither may fail as if the report had printed one.
     """
     from reddit_fraud_intelligence.campaigns import group as group_accounts
 
@@ -974,9 +979,9 @@ def test_the_campaign_candidate_report_never_prints_a_confidence(
             COMMITTED_SHARED_HOSTS,
         )
     except ValueError as refusal:
-        # The grouping's own refusals about a database are the two cases this check cannot be
-        # made over: no vectors stored, or no extension. Both mean the report could not be
-        # rendered here, and skipping with the reason says so rather than passing quietly.
+        # The grouping's own refusals about a database it could read but could not use:
+        # no vectors stored, or no extension. Both mean the report could not be rendered
+        # here, and skipping with the reason says so rather than passing quietly.
         if "no vectors" in str(refusal) or "not activated" in str(refusal):
             pytest.skip(f"the stored vectors are not readable on this machine: {refusal}")
         raise
