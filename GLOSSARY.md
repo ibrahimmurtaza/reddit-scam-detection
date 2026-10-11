@@ -291,9 +291,11 @@ _Avoid_: The cohesion result, the filtered candidates (they are still published)
 the second tier (say which of the two)
 
 **Contact Point**:
-An off-platform contact identifier extracted from content — a Telegram handle,
-Discord ID, email address, or crypto wallet. Published in any of several spellings;
-what a reader extracts is the identifier underneath the spelling.
+An off-platform contact identifier extracted from content — an email address or a
+Telegram handle, the two kinds this build reads. Published in any of several spellings;
+what a reader extracts is the identifier underneath the spelling. A Discord ID and a
+crypto wallet are Contact Points the idea admits and this build does not read; ADR-0016
+records why.
 _Avoid_: PII, contact info, handle, identifier
 
 **Scam Category**:

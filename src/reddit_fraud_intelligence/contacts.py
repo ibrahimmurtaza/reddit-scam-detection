@@ -218,10 +218,12 @@ _FIELDS = ("title", "body")
 class ContactKind(StrEnum):
     """The two kinds this build reads, and the only two the output may name.
 
-    The glossary's Contact Point also covers a Discord ID and a crypto wallet. Neither
-    is read here, and the enum is the contract between the rules below and the report
-    above them: a kind the report does not name cannot appear in the file beside it,
-    which is what keeps the prose and the data describing the same set.
+    A Discord ID and a crypto wallet are Contact Points the idea admits and this
+    build does not read, for the reasons recorded in ADR-0016. The glossary names
+    the same two kinds the output may, and the enum is the contract between the
+    rules below and the report above them: a kind the report does not name cannot
+    appear in the file beside it, which is what keeps the prose and the data
+    describing the same set.
     """
 
     EMAIL = "email"
