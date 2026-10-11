@@ -1260,10 +1260,20 @@ Every figure is computed by reading the cache, never transcribed, so a figure an
 the bytes behind it cannot drift apart — and `fetch-cafc` refuses to replace a
 cache that is already there, because a new quarterly release would move every base
 rate and silently change what the Corpus is compared against. Nothing after the
-fetch needs the network, so the comparison is reproducible offline. Two commands
-in this repository reach for the network — `fetch-cafc` and `fetch-suffix-list` —
-and both refuse to replace a cache that is already committed; everything else
-reads committed bytes and works offline.
+fetch needs the network, so the comparison is reproducible offline. Three commands
+in this repository reach for the network — `fetch-cafc`, `fetch-suffix-list` and
+`fetch-external` — and the first two refuse to replace a cache that is already
+committed; everything else reads committed bytes and works offline.
+
+`fetch-external` is the exception to "committed", and deliberately so. The external
+labelled set is real third-party text, so `.gitignore` holds both the split and the
+Corpus view built from it, and what is committed is the provenance record beside them —
+source URL, MIT licence, row counts and the SHA-256. A reader who wants to check the
+figure runs `fetch-external` and compares the digest, so the bytes are verifiable
+without the repository redistributing someone else's content. The consequence is the
+one worth stating: `external-validation` cannot run on a fresh clone without that
+fetch, and the tests that need the set skip with the reason rather than passing
+quietly.
 
 Two limits are stated in the report rather than buried here. The extract has **no
 free-text field** — no column of it can hold a sentence — so it constrains the

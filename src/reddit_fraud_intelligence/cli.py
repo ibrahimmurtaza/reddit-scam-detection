@@ -396,10 +396,12 @@ def _parser() -> argparse.ArgumentParser:
         description=(
             "Cache one split of the DIFrauD benchmark (MIT licence): real job "
             "advertisements, 60 of them labelled fraudulent by people other than this "
-            "project. Written to the repository so every external figure is recomputable "
-            "from committed bytes rather than from a download. Nothing is fitted on it — "
-            "the Policy Score has no training step and the phrase lists predate it — which "
-            "is what makes it held out."
+            "project. Written outside version control — the bytes are third-party real "
+            "content and the repository does not redistribute them — and recorded beside "
+            "themselves in a committed provenance record carrying the digest, the counts "
+            "and the licence, so a fetched file can be checked against the figures read "
+            "from it. Nothing is fitted on it: the Policy Score has no training step and "
+            "the phrase lists predate it, which is what makes it held out."
         ),
     )
     fetch_external.add_argument(
@@ -1347,7 +1349,10 @@ def _external_validation(
     weights_path: Path,
     report_path: Path,
 ) -> int:
-    rows = read_external(external_path)
+    try:
+        rows = read_external(external_path)
+    except FileNotFoundError as refusal:
+        raise SystemExit(refusal) from refusal
     facts = external_facts(external_path)
     write_corpus(corpus_path, external_corpus(rows))
     scored = score_corpus(corpus_path, list_path, shared_path, weights_path)

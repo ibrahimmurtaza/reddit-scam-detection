@@ -35,6 +35,20 @@ COMMITTED_REPORT = REPO_ROOT / "docs" / "external-validation.md"
 TRUTH = REPO_ROOT / "data" / "corpus" / "truth.jsonl"
 WEIGHTS = REPO_ROOT / "data" / "signals" / "weights.jsonl"
 
+# The external set is fetched rather than committed (the .gitignore says why), so every test
+# that reads it is a test about a file the machine running it may not have. It skips with the
+# reason rather than failing, the same rule `needs_database` follows, and the tests below
+# that build their own labelled rows still run without it — those are the ones about the
+# harness, and they are the reason a fresh clone can check the refusals at all.
+needs_external_set = pytest.mark.skipif(
+    not COMMITTED_EXTERNAL.exists(),
+    reason=(
+        "the external labelled set is not present: it is real third-party text, fetched "
+        f"rather than committed. Run `rfi fetch-external` to write {COMMITTED_EXTERNAL}, "
+        "then run these again. The tests that build their own labelled rows do not need it"
+    ),
+)
+
 
 def run(directory: Path, external: Path = COMMITTED_EXTERNAL) -> tuple[Path, str]:
     corpus = directory / "external-corpus.jsonl"
@@ -80,6 +94,7 @@ def tiny(directory: Path, *, deceptive: int, truthful: int) -> Path:
     return path
 
 
+@needs_external_set
 def test_the_committed_external_set_is_real_and_labelled_by_somebody_else() -> None:
     """The figure is only worth anything because these bytes came from elsewhere.
 
@@ -141,6 +156,7 @@ def _imported(path: Path) -> list[str]:
     return names
 
 
+@needs_external_set
 def test_the_planted_truth_file_and_the_external_labels_never_meet(tmp_path: Path) -> None:
     """The external label is not the planted label, and the run must not turn it into one.
 
@@ -169,6 +185,7 @@ def test_the_planted_truth_file_and_the_external_labels_never_meet(tmp_path: Pat
     )
 
 
+@needs_external_set
 def test_the_external_corpus_invents_no_account_and_no_timestamp(tmp_path: Path) -> None:
     """One constant account, one instant, no links — and none of it is a real observation.
 
@@ -188,6 +205,7 @@ def test_the_external_corpus_invents_no_account_and_no_timestamp(tmp_path: Path)
     assert {row["subreddit"] for row in corpus} == {""}
 
 
+@needs_external_set
 def test_the_link_signals_are_reported_unmeasurable_rather_than_at_zero(
     tmp_path: Path,
 ) -> None:
@@ -233,6 +251,7 @@ def _scores(tmp_path: Path, rows_: tuple[Labelled, ...]) -> tuple[PostScore, ...
     ).scores
 
 
+@needs_external_set
 def test_the_report_states_the_set_cannot_speak_for_reddit_or_for_the_campaign(
     tmp_path: Path,
 ) -> None:
@@ -253,6 +272,7 @@ def test_the_report_states_the_set_cannot_speak_for_reddit_or_for_the_campaign(
         assert refusal in text, f"the report no longer refuses: {refusal}"
 
 
+@needs_external_set
 def test_the_report_leads_with_the_ranking_rather_than_the_mean_gap(tmp_path: Path) -> None:
     """The mean scores differ by twentyfold and mean nothing; the AUC says so.
 
@@ -276,6 +296,7 @@ def test_a_set_with_one_class_in_it_has_no_auc_and_says_so(tmp_path: Path) -> No
     assert "0.5000" in report.read_text(encoding="utf-8")
 
 
+@needs_external_set
 def test_scores_from_a_different_set_are_refused(tmp_path: Path) -> None:
     """Pairing one population's scores with another's labels is the mistake this guards.
 
@@ -303,6 +324,38 @@ def test_scores_from_a_different_set_are_refused(tmp_path: Path) -> None:
         validate(rows_, short)
 
 
+def test_a_missing_set_names_the_command_that_fetches_it(tmp_path: Path) -> None:
+    """The set is fetched, so the first thing a new clone meets is its absence.
+
+    Refused in a sentence rather than as a `FileNotFoundError` out of pathlib, because the
+    reader who runs this without the set has done nothing wrong and the useful thing to tell
+    them is which command writes the file and which digest to check it against. Held
+    against the command rather than against `read` so the refusal is the one the user sees.
+    """
+    missing = tmp_path / "not-fetched.jsonl"
+
+    with pytest.raises(SystemExit) as raised:
+        main(
+            [
+                "external-validation",
+                "--external",
+                str(missing),
+                "--corpus",
+                str(tmp_path / "corpus.jsonl"),
+                "--report",
+                str(tmp_path / "report.md"),
+            ]
+        )
+
+    message = str(raised.value)
+    assert "rfi fetch-external" in message
+    assert str(missing) in message
+    assert not (tmp_path / "report.md").exists(), (
+        "a refused run wrote a report anyway; the refusal has to stop the command before "
+        "any output, or the page would describe a set that was never read"
+    )
+
+
 def test_a_row_that_is_not_text_and_a_label_is_refused(tmp_path: Path) -> None:
     """A third field would mean this is not the file the provenance names.
 
@@ -328,6 +381,7 @@ def test_a_label_this_project_cannot_read_is_refused(tmp_path: Path) -> None:
         read(path)
 
 
+@needs_external_set
 def test_the_committed_files_are_what_the_command_writes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -340,17 +394,20 @@ def test_the_committed_files_are_what_the_command_writes(
     committed location, and the check is that it wrote the same bytes back — which is the
     claim, since a run that changed them would have failed before this and left a dirty
     tree rather than a failing test.
+
+    Of the two files, only the report is committed. The Corpus view beside it is real text
+    and is fetched with the set, so this asserts the report is byte-stable and that a run
+    regenerates the view deterministically from whatever it was handed.
     """
     monkeypatch.chdir(REPO_ROOT)
     before_report = COMMITTED_REPORT.read_bytes()
-    before_corpus = EXTERNAL_CORPUS.read_bytes()
 
     assert main(["external-validation"]) == 0
 
     assert COMMITTED_REPORT.read_bytes() == before_report
-    assert EXTERNAL_CORPUS.read_bytes() == before_corpus
 
 
+@needs_external_set
 def test_running_twice_writes_byte_identical_files(tmp_path: Path) -> None:
     """The rows are the file's order and the figures are counted, so the bytes are fixed."""
     first_report, first_corpus = run(tmp_path / "first")
@@ -360,8 +417,14 @@ def test_running_twice_writes_byte_identical_files(tmp_path: Path) -> None:
     assert first_corpus == second_corpus
 
 
+@needs_external_set
 def test_the_run_needs_no_network(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Same argument as every other command: the numbers come from committed bytes."""
+    """Same argument as every other command: the numbers come from the fetched bytes.
+
+    Fetching and validating are separate commands on purpose. This one must not reach for
+    the network even when the cache is absent, because a reader running it to check a figure
+    is reading what is on disk, not re-downloading whatever the publisher serves today.
+    """
 
     def refuse(*args: object, **kwargs: object) -> None:
         raise AssertionError("the external-validation command reached for the network")

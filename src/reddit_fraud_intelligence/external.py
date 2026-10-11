@@ -3,8 +3,14 @@
 Everything this project measures so far is measured against a Corpus the project planted
 itself (ADR-0004), which bounds every figure it can honestly make. This module supplies the
 one thing a synthetic Corpus cannot: labelled text that was written by somebody else, for a
-purpose of their own, before this project existed. It is read from committed bytes like
-every other input here, so a reader who does not trust the figure can recompute it.
+purpose of their own, before this project existed.
+
+It is **fetched rather than committed**. The bytes are third-party real content and the
+project does not redistribute them; `.gitignore` holds the split and the Corpus view built
+from it. What is committed is `provenance.jsonl` beside them, which carries the SHA-256, the
+row counts and the licence — so a reader who runs `rfi fetch-external` can check what
+arrived against what the figures were read from, and a figure that moved would move visibly
+rather than silently.
 
 What it is: the job-advertisement split of DIFrauD, a domain-independent deception
 benchmark published under the MIT licence, whose job-scams component is the Employment
@@ -53,7 +59,8 @@ from reddit_fraud_intelligence.jsonl import write_lines
 # One file, one split. The benchmark publishes train/validation/test, and the test split is
 # the one this project reads: a held-out claim made from a split the validation never saw is
 # worth more than a larger one the model has effectively been tuned against, and 1.8 MB of
-# committed bytes is a price the repository can carry.
+# fetched bytes is a price the repository never has to carry, because the repository does
+# not carry them.
 SOURCE_URL = (
     "https://huggingface.co/datasets/difraud/difraud/resolve/main/job_scams/test.jsonl"
 )
@@ -94,12 +101,13 @@ class Labelled:
 
 @dataclass(frozen=True, slots=True)
 class ExternalFacts:
-    """What reading the cached bytes establishes, stated as a claim about bytes.
+    """What reading the fetched bytes establishes, stated as a claim about bytes.
 
-    A digest of the committed file rather than of the response, because the figure is read
-    from the file and a reader recomputing it has the file. Reported the way CAFC reports
-    its own extract: every number here is countable, and the report prints them beside the
-    figure rather than citing them in prose.
+    A digest of the file rather than of the response, because the figure is read from the
+    file and a reader recomputing it has the file. Reported the way CAFC reports its own
+    extract: every number here is countable, and the report prints them beside the figure
+    rather than citing them in prose. The digest is what makes a fetched file checkable
+    against a committed provenance record.
     """
 
     path: Path
@@ -127,12 +135,29 @@ def download(destination: Path) -> int:
 
 
 def digest(path: Path) -> str:
-    """SHA-256 of the committed file, which is the bytes the figures were read from."""
+    """SHA-256 of the file, which is the bytes the figures were read from."""
     checksum = hashlib.sha256()
     with path.open("rb") as handle:
         for chunk in iter(lambda: handle.read(_CHUNK_BYTES), b""):
             checksum.update(chunk)
     return checksum.hexdigest()
+
+
+def require(path: Path) -> None:
+    """Refuse a missing set by naming the command that fetches it.
+
+    The set is not committed, so this is the first thing a reader meets who runs the
+    validation without fetching, and a bare `FileNotFoundError` from deep in pathlib reads
+    as a broken install rather than as an input that has to be supplied. The refusal is
+    raised before the file is opened so the message is the whole of what they see.
+    """
+    if not path.exists():
+        raise FileNotFoundError(
+            f"the external labelled set is not there: {path}. It is real third-party text, "
+            "fetched rather than committed, so run `rfi fetch-external` to write it and then "
+            "run this again. The provenance record beside it is committed and carries the "
+            "digest, so you can check what arrives against the figures below"
+        )
 
 
 def read(path: Path) -> tuple[Labelled, ...]:
@@ -144,6 +169,7 @@ def read(path: Path) -> tuple[Labelled, ...]:
     held-out set has to get right, since a silently dropped row is a label this project
     never saw and would have counted as agreement.
     """
+    require(path)
     rows: list[Labelled] = []
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         if not line.strip():
