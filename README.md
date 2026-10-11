@@ -276,6 +276,14 @@ section below says. This command still builds no grouping of its own: the shared
 are the evidence the grouping reads, and they are measured here first so that the edge is
 not an unmeasured input into the recovery figure ADR-0004 is measured against.
 
+**The recall above is low, and is not a recall estimate for anything.** It is the recall of
+one reading over one planted Corpus, and it is a floor rather than a rate: the misses are
+structural rather than careless — a Contact Point published as a picture of one carries no
+text to read, and one written as words carries no `@` for any reader to find, so neither is a
+shortcoming a more careful reading of the same post could have fixed. What the figure supports
+is the weaker and accurate claim: the planted obfuscations are found, except where the
+information is not in the text at all.
+
 Every figure the command prints is a lower bound, and the measured recall above is what
 bounds it: the Contact Points this Corpus publishes that were not read are named in the
 report, so the shortfall can be read rather than inferred from a count. One more limit is
