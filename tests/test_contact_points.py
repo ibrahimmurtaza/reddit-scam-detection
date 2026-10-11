@@ -1692,6 +1692,80 @@ def test_the_committed_files_are_what_the_command_writes(tmp_path: Path) -> None
     assert report_path.read_bytes() == COMMITTED_REPORT.read_bytes()
 
 
+def test_the_report_acknowledges_the_recall_is_low(tmp_path: Path) -> None:
+    """Ticket #43: the recall is called low, and the sentence is tied to the run's own figures.
+
+    The report already prints a count like `2 of 3`, which on its own reads as a rate.
+    Held here because nothing else in the file would notice the sentence going missing:
+    every other test is about a number, and the claim being made is about how much weight
+    a reader should give that number, which a report saying nothing at all still satisfies.
+
+    The count is checked against the Corpus this test plants rather than written out, so
+    the sentence cannot drift into claiming a figure the run beside it did not measure.
+    """
+    _, report_path, _ = run(
+        tmp_path,
+        corpus=write_corpus(
+            tmp_path / "corpus.jsonl",
+            (
+                post("syn_p_9001", "syn_plain_0001", body="write to @syn_writtenout"),
+                post(
+                    "syn_p_9002",
+                    "syn_shot_0002",
+                    body="the handle is in the screenshot",
+                    links=("https://shot.example/handle",),
+                ),
+            ),
+        ),
+        published={
+            "syn_p_9001": ((ContactKind.TELEGRAM, "syn_writtenout", Writing.PLAIN),),
+            "syn_p_9002": ((ContactKind.TELEGRAM, "syn_shotonly", Writing.IMAGE),),
+        },
+    )
+    report = report_path.read_text(encoding="utf-8")
+
+    assert "The recall above is low" in report, (
+        "the report must call the recall low, so its weight in the result is not "
+        "overstated: a count printed without the limit reads as a rate"
+    )
+    assert "is not a recall estimate for anything" in report
+    # One of the two published was read, so the floor has to name the one that was not
+    # and say why it was not rather than leaving a bare figure.
+    assert "1 of the 2 this Corpus publishes was not read" in report
+    assert "structural rather than careless" in report
+    assert "no text to read at all" in report, (
+        "the miss that carries no text has to be distinguished from one a careful reader "
+        "could have found, because that is what makes the figure a floor rather than a rate"
+    )
+
+
+def test_a_corpus_with_nothing_missed_still_calls_the_figure_a_floor(tmp_path: Path) -> None:
+    """The other branch of the same sentence: 100% recall is not a claim to generalise from.
+
+    A reader who saw only a run that found everything would have the strongest possible
+    reason to over-read the number, so the report has to refuse it in exactly the words it
+    refuses a partial figure.
+    """
+    _, report_path, _ = run(
+        tmp_path,
+        corpus=write_corpus(
+            tmp_path / "corpus.jsonl",
+            (post("syn_p_9001", "syn_plain_0001", body="write to @syn_writtenout"),),
+        ),
+        published={
+            "syn_p_9001": ((ContactKind.TELEGRAM, "syn_writtenout", Writing.PLAIN),),
+        },
+    )
+    report = report_path.read_text(encoding="utf-8")
+
+    assert "The recall above is low" in report
+    assert "every Contact Point this Corpus publishes was read" in report
+    assert "there is nothing below it" in report, (
+        "a run that missed nothing has to say the bound still holds, because a Corpus of "
+        "other content would plant what this one does not"
+    )
+
+
 def test_the_report_states_what_was_read_and_how_a_contact_point_is_read(
     tmp_path: Path,
 ) -> None:

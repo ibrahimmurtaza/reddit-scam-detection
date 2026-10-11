@@ -99,6 +99,23 @@ list. The seed fixes the window the Corpus covers, the minute of each post, and 
 spare Nuisance Structure material gets planted. Which Synthetic Entities exist is
 fixed, because every test in the repository reads the Corpus by name.
 
+**Scaling past the committed Corpus is a run, not a rewrite.** `--background N` adds N
+ordinary posts from accounts that carry no link and name no Contact Point, so none can
+form or join a Campaign Candidate, and the recovery figures are measuring the same thing
+over a larger population rather than a different problem:
+
+```
+uv run rfi generate-corpus --background 500 --corpus elsewhere/corpus.jsonl   # same seed, 500 posts more
+```
+
+Raising the background does not renumber or move the posts already there — post
+identifiers and the timestamps keyed on them are unchanged — so the committed 34-post
+Corpus is a prefix of the larger one and the two are directly comparable. What does not
+scale is the Planted Campaigns and the Nuisance Structure: each is planted by hand
+because a particular failure would otherwise go unmeasured, so `--background 5000`
+means five thousand posts to recover the same two campaigns from, not five thousand
+pieces of evidence.
+
 ## The Nuisance Structure
 
 Recovering Planted Campaigns is this project's one substantive claim, and a
@@ -275,6 +292,14 @@ alpha Planted Campaign's candidate and costs the project a recovery, as the reco
 section below says. This command still builds no grouping of its own: the shared blocks
 are the evidence the grouping reads, and they are measured here first so that the edge is
 not an unmeasured input into the recovery figure ADR-0004 is measured against.
+
+**The recall above is low, and is not a recall estimate for anything.** It is the recall of
+one reading over one planted Corpus, and it is a floor rather than a rate: the misses are
+structural rather than careless — a Contact Point published as a picture of one carries no
+text to read, and one written as words carries no `@` for any reader to find, so neither is a
+shortcoming a more careful reading of the same post could have fixed. What the figure supports
+is the weaker and accurate claim: the planted obfuscations are found, except where the
+information is not in the text at all.
 
 Every figure the command prints is a lower bound, and the measured recall above is what
 bounds it: the Contact Points this Corpus publishes that were not read are named in the
@@ -1235,10 +1260,20 @@ Every figure is computed by reading the cache, never transcribed, so a figure an
 the bytes behind it cannot drift apart — and `fetch-cafc` refuses to replace a
 cache that is already there, because a new quarterly release would move every base
 rate and silently change what the Corpus is compared against. Nothing after the
-fetch needs the network, so the comparison is reproducible offline. Two commands
-in this repository reach for the network — `fetch-cafc` and `fetch-suffix-list` —
-and both refuse to replace a cache that is already committed; everything else
-reads committed bytes and works offline.
+fetch needs the network, so the comparison is reproducible offline. Three commands
+in this repository reach for the network — `fetch-cafc`, `fetch-suffix-list` and
+`fetch-external` — and the first two refuse to replace a cache that is already
+committed; everything else reads committed bytes and works offline.
+
+`fetch-external` is the exception to "committed", and deliberately so. The external
+labelled set is real third-party text, so `.gitignore` holds both the split and the
+Corpus view built from it, and what is committed is the provenance record beside them —
+source URL, MIT licence, row counts and the SHA-256. A reader who wants to check the
+figure runs `fetch-external` and compares the digest, so the bytes are verifiable
+without the repository redistributing someone else's content. The consequence is the
+one worth stating: `external-validation` cannot run on a fresh clone without that
+fetch, and the tests that need the set skip with the reason rather than passing
+quietly.
 
 Two limits are stated in the report rather than buried here. The extract has **no
 free-text field** — no column of it can hold a sentence — so it constrains the

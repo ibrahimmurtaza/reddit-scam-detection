@@ -52,6 +52,14 @@ from reddit_fraud_intelligence.domains import (
     write_post_domains,
 )
 from reddit_fraud_intelligence.embeddings import DEFAULT_TABLE
+from reddit_fraud_intelligence.external import (
+    LICENCE as EXTERNAL_LICENCE,
+    SOURCE_URL as EXTERNAL_SOURCE_URL,
+    download as download_external,
+    facts as external_facts,
+    read as read_external,
+    write_provenance as write_external_provenance,
+)
 from reddit_fraud_intelligence.graph import (
     read_graphs,
     render_table as render_graphs,
@@ -94,6 +102,11 @@ from reddit_fraud_intelligence.signals import (
     score_corpus,
     write_policy_scores,
 )
+from reddit_fraud_intelligence.validation import (
+    as_corpus as external_corpus,
+    render_report as render_external_report,
+    validate as external_validate,
+)
 from reddit_fraud_intelligence.suffixes import (
     SOURCE_URL as SUFFIX_LIST_SOURCE_URL,
     PublicSuffixes,
@@ -113,6 +126,10 @@ DEFAULT_EXTRACT_PATH = Path("data/cafc/cafc-extract.csv.gz")
 DEFAULT_PROVENANCE_PATH = Path("data/cafc/provenance.jsonl")
 DEFAULT_BASE_RATES_PATH = Path("data/cafc/base_rates.jsonl")
 DEFAULT_BASE_RATES_REPORT_PATH = Path("docs/cafc-base-rates.md")
+DEFAULT_EXTERNAL_PATH = Path("data/external/job-scams-test.jsonl")
+DEFAULT_EXTERNAL_PROVENANCE_PATH = Path("data/external/provenance.jsonl")
+DEFAULT_EXTERNAL_CORPUS_PATH = Path("data/external/external-corpus.jsonl")
+DEFAULT_EXTERNAL_REPORT_PATH = Path("docs/external-validation.md")
 DEFAULT_SUFFIX_LIST_PATH = Path("data/public-suffix/public_suffix_list.dat")
 DEFAULT_SUFFIX_PROVENANCE_PATH = Path("data/public-suffix/provenance.jsonl")
 DEFAULT_DOMAINS_PATH = Path("data/domains/post-domains.jsonl")
@@ -169,11 +186,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 labelled_path=_labelled_beside(args.labelled, args.corpus),
                 nuisance_path=Path(str(args.nuisance)),
                 shared_path=Path(str(args.shared_infrastructure)),
+                background=int(args.background),
             )
         case "fetch-cafc":
             return _fetch_cafc(
                 extract_path=Path(str(args.extract)),
                 force=bool(args.force),
+            )
+        case "fetch-external":
+            return _fetch_external(
+                external_path=Path(str(args.external)),
+                provenance_path=Path(str(args.provenance)),
+                force=bool(args.force),
+            )
+        case "external-validation":
+            return _external_validation(
+                external_path=Path(str(args.external)),
+                corpus_path=Path(str(args.corpus)),
+                list_path=Path(str(args.list)),
+                shared_path=Path(str(args.shared_infrastructure)),
+                weights_path=Path(str(args.weights)),
+                report_path=Path(str(args.report)),
             )
         case "cafc-report":
             return _cafc_report(
@@ -340,6 +373,110 @@ def _parser() -> argparse.ArgumentParser:
             "where to write the known-shared infrastructure list "
             f"(default: {DEFAULT_SHARED_INFRASTRUCTURE_PATH})"
         ),
+    )
+    generate.add_argument(
+        "--background",
+        type=int,
+        default=0,
+        help=(
+            "how many ordinary background posts to add on top of the planted ones "
+            "(default: 0). These are the posts that are neither evidence nor nuisance: "
+            "they carry no link and name no Contact Point, so they cannot form or join a "
+            "Campaign Candidate, and a larger Corpus makes the recovery figure harder to "
+            "win by accident. The Planted Campaigns and the Nuisance Structure are a "
+            "fixed set and do not scale with this — each is planted because a particular "
+            "failure would otherwise go unmeasured. Same seed and same background, same "
+            "bytes, and raising the background does not rewrite the posts already there."
+        ),
+    )
+
+    fetch_external = commands.add_parser(
+        "fetch-external",
+        help="cache the external labelled set: real text, held out, never trained on",
+        description=(
+            "Cache one split of the DIFrauD benchmark (MIT licence): real job "
+            "advertisements, 60 of them labelled fraudulent by people other than this "
+            "project. Written outside version control — the bytes are third-party real "
+            "content and the repository does not redistribute them — and recorded beside "
+            "themselves in a committed provenance record carrying the digest, the counts "
+            "and the licence, so a fetched file can be checked against the figures read "
+            "from it. Nothing is fitted on it: the Policy Score has no training step and "
+            "the phrase lists predate it, which is what makes it held out."
+        ),
+    )
+    fetch_external.add_argument(
+        "--external",
+        type=Path,
+        default=DEFAULT_EXTERNAL_PATH,
+        help=f"where to write the cached split (default: {DEFAULT_EXTERNAL_PATH})",
+    )
+    fetch_external.add_argument(
+        "--provenance",
+        type=Path,
+        default=DEFAULT_EXTERNAL_PROVENANCE_PATH,
+        help=(
+            "where to write where the bytes came from and under what licence "
+            f"(default: {DEFAULT_EXTERNAL_PROVENANCE_PATH})"
+        ),
+    )
+    fetch_external.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing cache, and expect every external figure to move",
+    )
+
+    validation = commands.add_parser(
+        "external-validation",
+        help="measure the per-post readers against the external labels, separately",
+        description=(
+            "Run the Policy Score and the Scam Category placement over the cached external "
+            "set and report the result in its own page. Reported separately from every "
+            "adversarial figure and never merged with one, because the two answer different "
+            "questions: this one asks whether the readers fire on content this project did "
+            "not write. It cannot measure the grouping, the recovery rate, or the Confidence."
+        ),
+    )
+    validation.add_argument(
+        "--external",
+        type=Path,
+        default=DEFAULT_EXTERNAL_PATH,
+        help=f"the cached external split to read (default: {DEFAULT_EXTERNAL_PATH})",
+    )
+    validation.add_argument(
+        "--corpus",
+        type=Path,
+        default=DEFAULT_EXTERNAL_CORPUS_PATH,
+        help=(
+            "where to write the external rows as Content Items for the readers to take "
+            f"(default: {DEFAULT_EXTERNAL_CORPUS_PATH})"
+        ),
+    )
+    validation.add_argument(
+        "--list",
+        type=Path,
+        default=DEFAULT_SUFFIX_LIST_PATH,
+        help=f"the published Public Suffix List (default: {DEFAULT_SUFFIX_LIST_PATH})",
+    )
+    validation.add_argument(
+        "--shared-infrastructure",
+        type=Path,
+        default=DEFAULT_SHARED_INFRASTRUCTURE_PATH,
+        help=(
+            "where to read known-shared infrastructure from "
+            f"(default: {DEFAULT_SHARED_INFRASTRUCTURE_PATH})"
+        ),
+    )
+    validation.add_argument(
+        "--weights",
+        type=Path,
+        default=DEFAULT_WEIGHTS_PATH,
+        help=f"the published Signal weights (default: {DEFAULT_WEIGHTS_PATH})",
+    )
+    validation.add_argument(
+        "--report",
+        type=Path,
+        default=DEFAULT_EXTERNAL_REPORT_PATH,
+        help=f"where to write the report (default: {DEFAULT_EXTERNAL_REPORT_PATH})",
     )
 
     fetch = commands.add_parser(
@@ -1073,7 +1210,14 @@ def _generate_corpus(
     labelled_path: Path,
     nuisance_path: Path,
     shared_path: Path,
+    background: int = 0,
 ) -> int:
+    if background < 0:
+        raise SystemExit(
+            f"--background has to be a whole number of posts or more, is {background!r}. It "
+            "is how many ordinary posts to add, not how many to remove — a Corpus with none "
+            "of them is what --background 0 writes"
+        )
     _refuse_shared_paths(
         {
             "the Corpus": corpus_path,
@@ -1084,10 +1228,10 @@ def _generate_corpus(
         }
     )
 
-    items = corpus_items(seed)
-    campaigns = planted_campaigns(seed)
-    nuisance = nuisance_records(seed)
-    published = published_posts(seed)
+    items = corpus_items(seed, background)
+    campaigns = planted_campaigns(seed, background)
+    nuisance = nuisance_records(seed, background)
+    published = published_posts(seed, background)
     write_corpus(corpus_path, items)
     write_truth(truth_path, campaigns)
     write_published(labelled_path, published)
@@ -1102,6 +1246,11 @@ def _generate_corpus(
             characters[character.value] = characters.get(character.value, 0) + 1
 
     print(f"seed           {seed}")
+    if background:
+        print(
+            f"background     {background} ordinary posts, none of which carries a link or "
+            "names a Contact Point, so none can form or join a Campaign Candidate"
+        )
     print(f"corpus         {corpus_path} ({len(items)} posts, {len(accounts)} accounts)")
     print(
         f"truth          {truth_path} "
@@ -1169,6 +1318,67 @@ def _fetch_cafc(*, extract_path: Path, force: bool) -> int:
     print(f"extract        {extract_path} ({written:,} bytes uncompressed, cached gzipped)")
     print(f"source         {SOURCE_URL}")
     print("now run `rfi cafc-report` to record what it holds")
+    return 0
+
+
+def _fetch_external(*, external_path: Path, provenance_path: Path, force: bool) -> int:
+    if external_path.exists() and not force:
+        raise SystemExit(
+            f"refusing to replace a cache that is already there: {external_path}. "
+            "Pass --force to fetch a new split, and expect every external figure to move."
+        )
+
+    written = download_external(external_path)
+    facts = external_facts(external_path)
+    write_external_provenance(provenance_path, facts)
+    print(f"external       {external_path} ({written:,} bytes, {facts.rows} rows)")
+    print(f"  deceptive    {facts.deceptive}   not deceptive  {facts.truthful}")
+    print(f"  sha256       {facts.sha256}")
+    print(f"source         {EXTERNAL_SOURCE_URL}")
+    print(f"licence        {EXTERNAL_LICENCE}")
+    print("now run `rfi external-validation` to measure the readers against it")
+    return 0
+
+
+def _external_validation(
+    *,
+    external_path: Path,
+    corpus_path: Path,
+    list_path: Path,
+    shared_path: Path,
+    weights_path: Path,
+    report_path: Path,
+) -> int:
+    try:
+        rows = read_external(external_path)
+    except FileNotFoundError as refusal:
+        raise SystemExit(refusal) from refusal
+    facts = external_facts(external_path)
+    write_corpus(corpus_path, external_corpus(rows))
+    scored = score_corpus(corpus_path, list_path, shared_path, weights_path)
+    validation = external_validate(rows, scored.scores)
+    _write_text(report_path, render_external_report(validation, facts))
+
+    print(f"external       {external_path} ({facts.rows} rows, {facts.deceptive} deceptive)")
+    print(f"corpus         {corpus_path} (the external rows as Content Items)")
+    print(f"trained on     nothing: the weights and phrase lists predate these bytes")
+    print(f"auc            {validation.auc:.4f} (0.5 is a score that orders nothing)")
+    print(
+        f"  at zero      {validation.deceptive_at_zero} of {validation.deceptive} deceptive, "
+        f"{validation.truthful_at_zero} of {validation.truthful} not"
+    )
+    unmeasurable = sorted(
+        rate.signal.value for rate in validation.signals if not rate.measurable
+    )
+    print(
+        f"unmeasurable   {', '.join(unmeasurable)} — this set carries no URLs, so these "
+        "three cannot be counted rather than being counted at zero"
+    )
+    print(f"report         {report_path}")
+    print(
+        "this is measured on content this project did not write, and says nothing about "
+        "Reddit, about whether content is fraudulent, or about campaign recovery"
+    )
     return 0
 
 

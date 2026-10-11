@@ -4,3 +4,10 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+
+# The external labelled set and the Corpus view derived from it. Real text, held out and
+# never trained on, but not committed: `rfi fetch-external` writes these from the
+# publisher and the shipped report is read from them. The provenance record beside them is
+# committed, because it carries the digest a reader checks a fresh download against.
+data/external/job-scams-test.jsonl
+data/external/external-corpus.jsonl

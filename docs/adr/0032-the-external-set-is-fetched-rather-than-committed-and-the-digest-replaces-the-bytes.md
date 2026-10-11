@@ -1,0 +1,25 @@
+# The external set is fetched rather than committed, and the digest is what replaces the bytes
+
+The external labelled set landed in this repository committed, alongside every other input, and it is being taken back out. The reason is not that it stopped being useful — it is the only evidence in the project that the Policy Score does not generalise, and `docs/research/purino-finding.md` rests on the same kind of measurement. The reason is that it is somebody else's real content and the project's own vocabulary already had an answer about who redistributes it, and the answer was recorded before the bytes arrived.
+
+## What changed and what did not
+
+`data/external/job-scams-test.jsonl` and `data/external/external-corpus.jsonl` — the split and the Corpus view written from it — move out of version control and into `.gitignore`. `data/external/provenance.jsonl` stays committed, and it is the whole of what the change rests on: source URL, MIT licence, the row and class counts, and the SHA-256 `905790a8…20d2fc0`.
+
+Nothing else moved. `external.py`, `validation.py`, the `fetch-external` and `external-validation` commands, and the report at `docs/external-validation.md` are unchanged in what they compute, and the figures are the same figures: AUC 0.5159, 58 of 60 fraudulent rows at zero. Story #68 asks for held-out validation on a real, non-Reddit labelled set reported separately from the adversarial holdout, and that is still implemented and still runnable — `fetch-external` writes the bytes and `external-validation` measures them, and the second command never touches the network, so the figures still come from a file on disk rather than from whatever a publisher serves at the moment of reading.
+
+## Considered Options
+
+- **Revert the external validation entirely and let story #68 go unimplemented in v1.** Rejected, and not because the work is good. Story #68 is in issue #1 as written, and the scope this project is holding itself to is the scope in that issue. Dropping a story to make the repository smaller is the wrong trade: the honest version is to implement it and be explicit about what a reader must fetch, not to quietly redefine v1 as smaller than the issue that describes it.
+- **Keep the bytes committed and rely on MIT.** Rejected. The licence is published and the provenance record cites it, so this was the cheaper option by some distance. What settles it is that a licence being permissive and a repository redistributing 1,430 rows of real job advertisements are two different questions, and only one of them was actually checked here — the card carries the licence, and this project is not the party that granted it. `docs/research/external-sources.md` records the same judgement about every other source considered, and holding Purino's Meta-derived text to a stricter standard than DIFrauD's while DIFrauD sat in the tree would have been inconsistent.
+- **Keep the bytes committed but stop describing them as recomputable from the repository.** Rejected as a half-measure that hides the problem rather than fixing it. The claim a repository makes about its own inputs is not separable from the thing it ships, and a reader who had been told every figure here is recomputable from committed bytes would have been told something that stopped being true the moment the file left. Say the true thing instead.
+
+## Consequences
+
+A reader on a fresh clone cannot run `rfi external-validation` until they fetch the set, and the ten tests that read it skip with the reason rather than passing quietly. Five of the fifteen tests in `tests/test_external_validation.py` build their own labelled rows and run anywhere, because they are about the harness — the refusals, the vocabulary of a row, the degenerate one-class set — and a fresh clone can still check those. That asymmetry is deliberate: what a reader can verify without fetching is the part that is this project's own work.
+
+The reproducibility claim survives in a weaker and more honest form. It used to be "the bytes are here"; it is now "the digest of the bytes is here, and here is the command that fetches them." A reader who fetches gets a file whose SHA-256 they can compare against the committed provenance record, and a mismatch is visible immediately rather than producing figures that quietly differ from the report. That is strictly more than a URL in a footnote, and it is less than the bytes were. Both halves of that sentence belong in the README, and are.
+
+The report now says at the top that the set is not in this repository and names the digest to check, because a page of figures that does not say where its input came from invites a reader to treat it as an internal result.
+
+Nothing about the pipeline changed. The synthetic Corpus, the weights, the phrase lists, the grouping and every figure measured on the planted corpus are exactly as they were; this decision is about the provenance of one held-out input and about what this repository chooses to redistribute.

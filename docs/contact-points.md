@@ -139,6 +139,18 @@ not, because it has not acquired a second reach.
 
 ## What this cannot claim
 
+**The recall above is low, and is not a recall estimate for anything.** It is the
+recall of one reading over one planted Corpus, and it is a floor rather than a rate:
+2 of the 13 this Corpus publishes were not read, and those misses are structural rather than careless: 1 is published only as a picture of one, which is no text to read at all; 1 is written as words, with no `@` in the post for any reader to find.
+
+That is the limit that decides how much weight the figure can carry. A reader who took
+`11 of 13` as "this extractor finds about that share of the Contact
+Points in general" would be reading a number measured over a Corpus this project wrote,
+on a Corpus whose misses are the shapes this build is worst at, as though it described
+the problem. It does not. What it supports is the weaker and accurate claim: the
+planted obfuscations are found, except where the information is not in the text at all,
+and the shortfall is named row by row rather than hidden inside an average.
+
 Every figure above is a lower bound, and the measured recall above is what bounds it: the
 Contact Points this Corpus publishes that were not read are named one per row in the
 section above, so the shortfall can be read rather than inferred from a count. What the
