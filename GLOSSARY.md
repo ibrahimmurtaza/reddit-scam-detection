@@ -294,8 +294,8 @@ the second tier (say which of the two)
 An off-platform contact identifier extracted from content — an email address or a
 Telegram handle, the two kinds this build reads. Published in any of several spellings;
 what a reader extracts is the identifier underneath the spelling. A Discord ID and a
-crypto wallet are Contact Points the idea admits and this build does not read; ADR-0016
-records why.
+crypto wallet are Contact Points the idea admits, are scheduled to be read in a later
+version, and are not read here yet; ADR-0016 records why they are absent now.
 _Avoid_: PII, contact info, handle, identifier
 
 **Scam Category**:
