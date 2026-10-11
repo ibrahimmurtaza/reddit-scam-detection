@@ -53,7 +53,9 @@ PLANTED_PITCH = (
 )
 
 
-def run_generator(directory: Path, seed: int = DEFAULT_SEED) -> tuple[Path, Path, Path]:
+def run_generator(
+    directory: Path, seed: int = DEFAULT_SEED, background: int = 0
+) -> tuple[Path, Path, Path]:
     corpus_path = directory / "corpus.jsonl"
     truth_path = directory / "truth.jsonl"
     labelled_path = directory / "labelled-contacts.jsonl"
@@ -62,6 +64,8 @@ def run_generator(directory: Path, seed: int = DEFAULT_SEED) -> tuple[Path, Path
             "generate-corpus",
             "--seed",
             str(seed),
+            "--background",
+            str(background),
             "--corpus",
             str(corpus_path),
             "--truth",
@@ -153,6 +157,122 @@ def test_the_committed_corpus_is_what_the_default_seed_produces(tmp_path: Path) 
 
     assert corpus_path.read_bytes() == COMMITTED_CORPUS.read_bytes()
     assert labelled_path.read_bytes() == COMMITTED_LABELLED.read_bytes()
+
+
+def test_a_background_population_adds_posts_without_moving_the_ones_already_there(
+    tmp_path: Path,
+) -> None:
+    """Story #7: scaling is a run, and a run at another size is the same Corpus plus more.
+
+    The property this rests on is the one `_key` already provides for timestamps. If
+    growing the background renumbered a post, every timestamp keyed on it would move, and
+    the 34-post Corpus a reviewer checks against would no longer be a prefix of the 236-post
+    one — which would make the two incomparable and the scaling meaningless.
+    """
+    plain_path, _, _ = run_generator(tmp_path / "plain")
+    scaled_path, _, _ = run_generator(tmp_path / "scaled", background=200)
+
+    plain = {text(row, "post_id"): row for row in rows(plain_path)}
+    scaled = {text(row, "post_id"): row for row in rows(scaled_path)}
+
+    assert len(scaled) == len(plain) + 200
+    # Matched on the identifier rather than on position, because the Corpus is written in
+    # chronological order and a background post lands wherever its timestamp falls.
+    assert {key: scaled[key] for key in plain} == plain, (
+        "the posts already in the Corpus have to come through a larger run unchanged, "
+        "identifiers and timestamps alike, or the two runs are not the same Corpus"
+    )
+
+
+def test_a_background_population_is_same_seed_same_bytes(tmp_path: Path) -> None:
+    """The determinism the committed Corpus is held to extends to the parameter."""
+    first, _, first_labelled = run_generator(tmp_path / "first", background=200)
+    second, _, second_labelled = run_generator(tmp_path / "second", background=200)
+
+    assert first.read_bytes() == second.read_bytes()
+    assert first_labelled.read_bytes() == second_labelled.read_bytes()
+
+
+def test_a_background_population_carries_nothing_two_posts_could_share(tmp_path: Path) -> None:
+    """Safe by construction, not by inspection — and this is what makes it safe.
+
+    A background post can reach another account only through a shared registrable domain
+    or a shared Contact Point (ADR-0005). So the parameter that makes a Corpus larger has
+    to add posts that do neither, and the text has to hold no `@` either, or a scaled run
+    would plant false positives of its own and move the invented figure `rfi
+    contact-points` measures — a defect introduced by asking for a bigger Corpus rather
+    than by anything the build did wrong.
+    """
+    plain_path, _, _ = run_generator(tmp_path / "plain")
+    scaled_path, _, scaled_labelled = run_generator(tmp_path / "scaled", background=200)
+    added = [
+        row
+        for row in rows(scaled_path)
+        if text(row, "account").startswith("syn_background_")
+    ]
+
+    assert len(added) == 200
+    assert all(not texts(row, "links") for row in added), (
+        "a background post reaching a domain could share it with another account and form a "
+        "Campaign Candidate the scale parameter planted"
+    )
+    assert all("@" not in text(row, "title") + text(row, "body") for row in added), (
+        "a background post whose text carries an @ is a Contact Point the generator did not "
+        "declare, and the Labelled Set would be wrong about it"
+    )
+    accounts = [text(row, "account") for row in added]
+    assert len(set(accounts)) == len(accounts), (
+        "an account appearing in two background posts would be a shared identifier, which is "
+        "the other edge a post could be joined on"
+    )
+    background_ids = {text(row, "post_id") for row in added}
+    assert all(
+        not entry["published"]
+        for entry in rows(scaled_labelled)
+        if text(entry, "post_id") in background_ids
+    ), "every background post has to be labelled as publishing nothing"
+
+
+def test_a_background_population_does_not_scale_the_planted_evidence(tmp_path: Path) -> None:
+    """What does not scale is stated here because it is the honest limit of story #7.
+
+    The Planted Campaigns and the Nuisance Structure are planted individually, each to make
+    a particular failure measurable, so they are a fixed set. A larger Corpus therefore
+    means more population to recover the same campaigns from, not more campaigns — and a
+    reader who took `--background 5000` as five thousand posts of evidence would be reading
+    a claim the parameter does not make.
+    """
+    _, plain_truth, _ = run_generator(tmp_path / "plain")
+    _, scaled_truth, _ = run_generator(tmp_path / "scaled", background=500)
+
+    assert rows(scaled_truth) == rows(plain_truth), (
+        "the Planted Campaigns are the same two at every scale: growing the background grows "
+        "the population they have to be recovered from, not the number of them"
+    )
+
+
+def test_a_negative_background_population_is_refused(tmp_path: Path) -> None:
+    """Refused by name rather than producing an empty Corpus that looks like a clean sweep."""
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "generate-corpus",
+                "--seed",
+                str(DEFAULT_SEED),
+                "--background",
+                "-1",
+                "--corpus",
+                str(tmp_path / "corpus.jsonl"),
+                "--truth",
+                str(tmp_path / "truth.jsonl"),
+                "--labelled",
+                str(tmp_path / "labelled-contacts.jsonl"),
+                "--nuisance",
+                str(tmp_path / "nuisance.jsonl"),
+                "--shared-infrastructure",
+                str(tmp_path / "shared-hosts.jsonl"),
+            ]
+        )
 
 
 def test_generation_refuses_to_write_both_files_to_one_path(tmp_path: Path) -> None:

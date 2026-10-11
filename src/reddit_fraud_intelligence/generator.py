@@ -48,6 +48,76 @@ _ANCHOR = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
 _CORPUS_WINDOW_DAYS = 365
 _UNGROUPED_SPREAD_MINUTES = 30 * 24 * 60
 
+# What a background post says, and where it says it. Drawn from rather than composed, for
+# the reasons `_background` gives, and deliberately ordinary: these are the posts that are
+# neither evidence nor nuisance, so there is nothing in them to measure and nothing in
+# them that should be measured. None carries an `@` or an address, and none names a
+# category the projection would score it into — they land in `Other`, which is where an
+# ordinary post belongs, and a reader comparing a scaled Corpus against a 34-post one can
+# see exactly which posts the extra population added.
+_BACKGROUND_SUBREDDITS = ("OffTopic", "dailychat", "Misc", "general", "casual")
+_BACKGROUND_TEXT = (
+    (
+        "Has anyone else had this slow this week?",
+        "Nothing has changed on my end as far as I can tell. Posting mainly to see if it "
+        "is just me.",
+    ),
+    (
+        "Reminder to back up your own files",
+        "Mine was three years old and I had forgotten what was on it. A weekly copy would "
+        "have saved me an afternoon.",
+    ),
+    (
+        "What are you all reading at the moment?",
+        "Looking for something that does not need a second week to get into. I have a "
+        "pile I keep starting and abandoning.",
+    ),
+    (
+        "The weather finally broke",
+        "Two days of it and I had forgotten what the street looks like in the light. That "
+        "is the whole update.",
+    ),
+    (
+        "Small win: finished the thing I had been putting off",
+        "Took most of the year. Writing it down so that next year has something to point "
+        "at when I feel like I have achieved nothing.",
+    ),
+    (
+        "Anyone else reorganising their notes this month?",
+        "Every spring I decide the system is wrong and rebuild it, and every year I find "
+        "the previous version in a folder and use it instead.",
+    ),
+    (
+        "Public transport was on time for once",
+        "I am aware this is not a popular opinion here, but it happened and it should be "
+        "recorded somewhere.",
+    ),
+    (
+        "Looking for a mechanic I can trust",
+        "Somewhere that will actually tell me what is wrong rather than replacing four "
+        "parts and hoping. Recommendations welcome.",
+    ),
+    (
+        "The building work next door finished early",
+        "Six weeks of noise and then nothing. I did not realise how much I had been dreading "
+        "it until it stopped.",
+    ),
+    (
+        "First proper cold of the year",
+        "Slept fourteen hours and woke up to a different season. The heating has an opinion "
+        "about it too.",
+    ),
+    (
+        "Lost my keys, found them in the fridge",
+        "No idea how long. I am going to stop writing things down at two in the morning.",
+    ),
+    (
+        "Anyone know a decent printer for occasional use?",
+        "Not scanning, not copying, not doing anything clever. Just printing, occasionally, "
+        "without a fight.",
+    ),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class _Plan:
@@ -65,22 +135,22 @@ class _Planted:
     planted: tuple[tuple[str, SyntheticPost], ...]
 
 
-def corpus_items(seed: int) -> list[CorpusItem]:
+def corpus_items(seed: int, background: int = 0) -> list[CorpusItem]:
     """The Corpus, and nothing about how it was planted."""
-    return list(_plan(seed).posts)
+    return list(_plan(seed, background).posts)
 
 
-def planted_campaigns(seed: int) -> list[PlantedCampaign]:
+def planted_campaigns(seed: int, background: int = 0) -> list[PlantedCampaign]:
     """The membership record the evaluator joins, after inference has finished."""
-    return list(_plan(seed).campaigns)
+    return list(_plan(seed, background).campaigns)
 
 
-def nuisance_records(seed: int) -> list[NuisanceRecord]:
+def nuisance_records(seed: int, background: int = 0) -> list[NuisanceRecord]:
     """What the Corpus holds that is not a Planted Campaign, and why it is there."""
-    return list(_plan(seed).nuisance)
+    return list(_plan(seed, background).nuisance)
 
 
-def published_posts(seed: int) -> list[PublishedPost]:
+def published_posts(seed: int, background: int = 0) -> list[PublishedPost]:
     """The Labelled Set: what every post publishes, and the posts that publish nothing.
 
     One row per post, built from what the post declared rather than from reading its
@@ -89,10 +159,10 @@ def published_posts(seed: int) -> list[PublishedPost]:
     projection smooths over. A post that publishes nothing is labelled as publishing
     nothing, which is the row the false-positive rate is counted against.
     """
-    return list(_plan(seed).published)
+    return list(_plan(seed, background).published)
 
 
-def _plan(seed: int) -> _Plan:
+def _plan(seed: int, background: int = 0) -> _Plan:
     window_start = _ANCHOR + timedelta(days=seed % _CORPUS_WINDOW_DAYS)
     post_ids = count(1)
     posts: list[CorpusItem] = []
@@ -148,6 +218,19 @@ def _plan(seed: int) -> _Plan:
             published.append(PublishedPost(post_id=post_id, published=post.published))
         structures.append(_Planted(structure, tuple(planted_posts)))
 
+    # Last, so that growing the background cannot renumber anything above it: post ids
+    # and the timestamps keyed on them are what the committed Corpus is held to.
+    for post in _background(seed, background):
+        post_id = _next_post_id(post_ids)
+        posts.append(
+            _item(
+                post,
+                post_id,
+                _scattered_at(seed, post_id, window_start, _UNGROUPED_SPREAD_MINUTES),
+            )
+        )
+        published.append(PublishedPost(post_id=post_id, published=post.published))
+
     return _Plan(
         posts=tuple(posts),
         campaigns=tuple(campaigns),
@@ -160,6 +243,55 @@ def _plan(seed: int) -> _Plan:
             ),
             *_shared_infrastructure(structures),
         ),
+    )
+
+
+def _background(seed: int, count: int) -> tuple[SyntheticPost, ...]:
+    """Ordinary posts from ordinary accounts, for a Corpus larger than the committed one.
+
+    This is what "scaling past the committed file is a matter of running it" means. The
+    Planted Campaigns and the Nuisance Structure are hand-written evidence — each one is
+    planted because a particular failure would otherwise go unmeasured — so they are a
+    fixed set and cannot be scaled by a number. The background population is the opposite:
+    it exists to make the figures harder to win by accident, and growing it is arithmetic.
+
+    Every post here is safe by construction rather than by inspection. It carries no link,
+    so it reaches no registrable domain; it names no Contact Point, so it joins no account
+    to another; and its account appears once, so it cannot be a shared identifier. A
+    background post therefore cannot form or join a Campaign Candidate on its own, and the
+    recovery figure over a larger Corpus is measuring what it measures at 34 posts rather
+    than a larger population of planted evidence that was never there. Content similarity
+    is the one thing these posts can be alike in, and it corroborates and never
+    establishes (ADR-0026), so a thousand identical background posts still form no group.
+
+    The text is drawn from a fixed set of ordinary sentences rather than generated, so a
+    reader can read what a scaled Corpus contains instead of trusting a template. None of
+    them carries an `@` or anything address-shaped, because a background post that
+    published a Contact Point would be a false positive planted by the scale parameter
+    rather than by the Nuisance Structure, and would move the invented figure that
+    `rfi contact-points` measures.
+    """
+    if count < 0:
+        raise ValueError(f"a background population cannot be {count} posts")
+    return tuple(_background_post(seed, index) for index in range(count))
+
+
+def _background_post(seed: int, index: int) -> SyntheticPost:
+    """One background post, at an index the seed decides everything else about.
+
+    Keyed on the index rather than on a running total, so growing the population does
+    not rewrite the posts that were already there — the same property `_key` gives the
+    timestamps, and the reason `--background 200` is the same Corpus as `--background 0`
+    with more of it rather than a different Corpus.
+    """
+    rng = _rng(seed, f"background:{index}")
+    title, body = _BACKGROUND_TEXT[rng.randrange(len(_BACKGROUND_TEXT))]
+    return SyntheticPost(
+        account=f"syn_background_{index:04d}",
+        subreddit=_BACKGROUND_SUBREDDITS[rng.randrange(len(_BACKGROUND_SUBREDDITS))],
+        title=title,
+        body=body,
+        links=(),
     )
 
 

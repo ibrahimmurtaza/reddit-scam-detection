@@ -169,6 +169,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 labelled_path=_labelled_beside(args.labelled, args.corpus),
                 nuisance_path=Path(str(args.nuisance)),
                 shared_path=Path(str(args.shared_infrastructure)),
+                background=int(args.background),
             )
         case "fetch-cafc":
             return _fetch_cafc(
@@ -339,6 +340,21 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "where to write the known-shared infrastructure list "
             f"(default: {DEFAULT_SHARED_INFRASTRUCTURE_PATH})"
+        ),
+    )
+    generate.add_argument(
+        "--background",
+        type=int,
+        default=0,
+        help=(
+            "how many ordinary background posts to add on top of the planted ones "
+            "(default: 0). These are the posts that are neither evidence nor nuisance: "
+            "they carry no link and name no Contact Point, so they cannot form or join a "
+            "Campaign Candidate, and a larger Corpus makes the recovery figure harder to "
+            "win by accident. The Planted Campaigns and the Nuisance Structure are a "
+            "fixed set and do not scale with this — each is planted because a particular "
+            "failure would otherwise go unmeasured. Same seed and same background, same "
+            "bytes, and raising the background does not rewrite the posts already there."
         ),
     )
 
@@ -1073,7 +1089,14 @@ def _generate_corpus(
     labelled_path: Path,
     nuisance_path: Path,
     shared_path: Path,
+    background: int = 0,
 ) -> int:
+    if background < 0:
+        raise SystemExit(
+            f"--background has to be a whole number of posts or more, is {background!r}. It "
+            "is how many ordinary posts to add, not how many to remove — a Corpus with none "
+            "of them is what --background 0 writes"
+        )
     _refuse_shared_paths(
         {
             "the Corpus": corpus_path,
@@ -1084,10 +1107,10 @@ def _generate_corpus(
         }
     )
 
-    items = corpus_items(seed)
-    campaigns = planted_campaigns(seed)
-    nuisance = nuisance_records(seed)
-    published = published_posts(seed)
+    items = corpus_items(seed, background)
+    campaigns = planted_campaigns(seed, background)
+    nuisance = nuisance_records(seed, background)
+    published = published_posts(seed, background)
     write_corpus(corpus_path, items)
     write_truth(truth_path, campaigns)
     write_published(labelled_path, published)
@@ -1102,6 +1125,11 @@ def _generate_corpus(
             characters[character.value] = characters.get(character.value, 0) + 1
 
     print(f"seed           {seed}")
+    if background:
+        print(
+            f"background     {background} ordinary posts, none of which carries a link or "
+            "names a Contact Point, so none can form or join a Campaign Candidate"
+        )
     print(f"corpus         {corpus_path} ({len(items)} posts, {len(accounts)} accounts)")
     print(
         f"truth          {truth_path} "

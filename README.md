@@ -99,6 +99,23 @@ list. The seed fixes the window the Corpus covers, the minute of each post, and 
 spare Nuisance Structure material gets planted. Which Synthetic Entities exist is
 fixed, because every test in the repository reads the Corpus by name.
 
+**Scaling past the committed Corpus is a run, not a rewrite.** `--background N` adds N
+ordinary posts from accounts that carry no link and name no Contact Point, so none can
+form or join a Campaign Candidate, and the recovery figures are measuring the same thing
+over a larger population rather than a different problem:
+
+```
+uv run rfi generate-corpus --background 500 --corpus elsewhere/corpus.jsonl   # same seed, 500 posts more
+```
+
+Raising the background does not renumber or move the posts already there — post
+identifiers and the timestamps keyed on them are unchanged — so the committed 34-post
+Corpus is a prefix of the larger one and the two are directly comparable. What does not
+scale is the Planted Campaigns and the Nuisance Structure: each is planted by hand
+because a particular failure would otherwise go unmeasured, so `--background 5000`
+means five thousand posts to recover the same two campaigns from, not five thousand
+pieces of evidence.
+
 ## The Nuisance Structure
 
 Recovering Planted Campaigns is this project's one substantive claim, and a
