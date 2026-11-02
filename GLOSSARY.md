@@ -306,5 +306,3 @@ placement carries a one-line rationale. The size of the "Other" bucket is a
 finding, and is measured.
 _Avoid_: Scam type, label, taxonomy (CAFC's categories are the source, not this
 term)
-
-Well, lets see what happens next
